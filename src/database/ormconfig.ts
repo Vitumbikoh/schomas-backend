@@ -13,7 +13,7 @@ export default new DataSource({
   database: configService.get('DB_DATABASE'),
   entities: ['dist/**/*.entity.js'],
   migrations: ['dist/database/migrations/*.js'],
-  // synchronize: configService.get('NODE_ENV') !== 'production',
-  synchronize: false,
+  synchronize: configService.get('NODE_ENV') !== 'production',
+  // synchronize: false,
   logging: configService.get('NODE_ENV') === 'development',
 });

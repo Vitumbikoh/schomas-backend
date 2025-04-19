@@ -24,6 +24,13 @@ import { ExamAttempt } from './exam-attempt.entity';
   
     @Column({ type: 'text', nullable: true })
     description: string;
+
+    @Column({
+      type: 'enum',
+      enum: ['draft', 'published', 'completed', 'upcoming'],
+      default: 'draft'
+    })
+    status: 'draft' | 'published' | 'completed' | 'upcoming';
   
     @Column({ type: 'timestamp' })
     startTime: Date;

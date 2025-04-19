@@ -66,4 +66,6 @@ export class Student extends BaseEntity {
 
   @OneToMany(() => ExamAttempt, (attempt) => attempt.student)
   examAttempts: ExamAttempt[];
+
+  
 }
