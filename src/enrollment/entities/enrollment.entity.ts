@@ -1,0 +1,33 @@
+// src/enrollment/entities/enrollment.entity.ts
+import { Entity, PrimaryGeneratedColumn, ManyToOne, JoinColumn, Column, CreateDateColumn } from 'typeorm';
+import { Course } from 'src/course/entities/course.entity';
+import { Student } from 'src/user/entities/student.entity';
+
+@Entity()
+export class Enrollment {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @ManyToOne(() => Course, (course) => course.enrollments)
+  @JoinColumn({ name: 'courseId' })
+  course: Course;
+
+  @Column({ type: 'uuid' })
+  courseId: string;
+
+  @ManyToOne(() => Student, (student) => student.enrollments)
+  @JoinColumn({ name: 'studentId' })
+  student: Student;
+
+  @Column({ type: 'uuid' })
+  studentId: string;
+
+  @Column({ type: 'date', nullable: true })
+  enrollmentDate: Date;
+
+  @Column({ default: 'active' })
+  status: 'active' | 'completed' | 'dropped';
+
+  @CreateDateColumn()
+  createdAt: Date;
+}
