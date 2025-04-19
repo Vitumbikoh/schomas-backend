@@ -62,7 +62,7 @@ export class AdminDashboardController {
       courseManagement: [Role.ADMIN, Role.TEACHER],
       teacherManagement: [Role.ADMIN],
       financeManagement: [Role.ADMIN, Role.FINANCE],
-      examGrades: [Role.ADMIN, Role.TEACHER],
+      examsGrades: [Role.ADMIN, Role.TEACHER],
       attendanceTracking: [Role.ADMIN, Role.TEACHER],
       timetableScheduling: [Role.ADMIN],
       parentTeacherPortal: [Role.ADMIN, Role.TEACHER],
