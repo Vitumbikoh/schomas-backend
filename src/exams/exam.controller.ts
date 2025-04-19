@@ -9,7 +9,7 @@ import {
     Body,
     UseGuards,
     Request,
-    NotFoundException,
+    // NotFoundException,
     ForbiddenException,
   } from '@nestjs/common';
   import { ExamService } from './exam.service';
