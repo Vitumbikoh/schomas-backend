@@ -1,0 +1,213 @@
+E:\Projects\Web Apps\Javascript\schomas\schomas-backend\src>tree /f
+Folder PATH listing for volume G
+Volume serial number is 3CC7-459A
+E:.
+│   app.controller.spec.ts
+│   app.controller.ts
+│   app.module.ts
+│   app.service.ts
+│   main.ts
+│   project-structure.txt
+│   seed-admin.ts
+│
+├───admins
+│   │   admins.controller.ts
+│   │   admins.module.ts
+│   │   admins.service.ts
+│   │
+│   └───dto
+│           create-admin.dto.ts
+│
+├───auth
+│   │   auth.controller.spec.ts
+│   │   auth.controller.ts
+│   │   auth.guard.ts
+│   │   auth.module.ts
+│   │   auth.service.spec.ts
+│   │   auth.service.ts
+│   │   constants.ts
+│   │   jwt.strategy.ts
+│   │   local.strategy.ts
+│   │
+│   └───guards
+│           jwt-auth.guard.ts
+│           local-auth.guard.ts
+│           roles.guard.ts
+│
+├───class
+│       class.service.ts
+│
+├───common
+│   ├───constants
+│   │       constants.ts
+│   │
+│   ├───decorators
+│   │       roles.decorator.ts
+│   │
+│   ├───exceptions
+│   │       http-exception.filter.ts
+│   │
+│   ├───interceptors
+│   │       logging.interceptor.ts
+│   │       response.interceptor.ts
+│   │
+│   ├───middleware
+│   │       rbac.middleware.ts
+│   │
+│   ├───pipes
+│   │       validation.pipe.ts
+│   │
+│   └───types
+│           permissions.ts
+│
+├───config
+│       config.module.ts
+│       config.service.ts
+│
+├───course
+│   │   course.module.ts
+│   │   course.service.ts
+│   │
+│   ├───dto
+│   │       create-course.dto.ts
+│   │       update-course.dto.ts
+│   │
+│   └───entities
+│           course.entity.ts
+│
+├───dashboard
+│   │   admin-dashboard.controller.ts
+│   │   dashboard.controller.ts
+│   │   dashboard.module.ts
+│   │   student-dashboard.controller.ts
+│   │
+│   └───controllers
+│           admin-course.controller.ts
+│           admin-enrollment.controller.ts
+│           admin-student.controller.ts
+│           admin-teacher.controller.ts
+│
+├───database
+│       data-source.ts
+│       database.module.ts
+│       database.providers.ts
+│       ormconfig.ts
+│
+├───enrollment
+│   │   enrollment.module.ts
+│   │   enrollment.service.ts
+│   │
+│   ├───dto
+│   │       create-enrollment.dto.ts
+│   │
+│   └───entities
+│           enrollment.entity.ts
+│
+├───exams
+│   │   exam.controller.ts
+│   │   exam.module.ts
+│   │   exam.service.ts
+│   │
+│   ├───dto
+│   │       create-exam.dto.ts
+│   │       update-exam.dto.ts
+│   │
+│   └───entities
+│           exam-attempt.entity.ts
+│           exam.entity.ts
+│           question.entity.ts
+│
+├───finance
+│   │   finance.controller.ts
+│   │   finance.module.ts
+│   │   finance.service.ts
+│   │   receipt.controller.ts
+│   │
+│   ├───dtos
+│   │       approve-budget.dto.ts
+│   │       generate-receipt.dto.ts
+│   │       process-payment.dto.ts
+│   │       update-finance.dto.ts
+│   │
+│   └───entities
+│           budget.entity.ts
+│           department.entity.ts
+│           fee-payment.entity.ts
+│
+├───migrations
+│       ConvertIdsToUuid.ts
+│
+├───parent
+│   │   parents.controller.ts
+│   │   parents.module.ts
+│   │   parents.service.ts
+│   │
+│   ├───dtos
+│   │       update-parent.dto.ts
+│   │
+│   └───entities
+│           parent.entity.ts
+│
+├───protected
+│       protected.controller.ts
+│
+├───student
+│   │   student.controller.spec.ts
+│   │   student.controller.ts
+│   │   student.module.ts
+│   │   student.service.spec.ts
+│   │   student.service.ts
+│   │
+│   ├───dto
+│   │       create-student.dto.ts
+│   │       update-student.dto.ts
+│   │
+│   └───entities
+│           student.entity.ts
+│
+├───teacher
+│   │   teacher.controller.spec.ts
+│   │   teacher.controller.ts
+│   │   teacher.module.ts
+│   │   teacher.service.spec.ts
+│   │   teacher.service.ts
+│   │
+│   ├───dto
+│   │       create-teacher.dto.ts
+│   │       update-teacher.dto.ts
+│   │
+│   └───entities
+│           teacher.entity.ts
+│
+├───typings
+│       index.d.ts
+│
+└───user
+    │   user.service.ts
+    │   users.controller.ts
+    │   users.module.ts
+    │
+    ├───decorators
+    │       roles.decorator.ts
+    │
+    ├───dtos
+    │       create-finance.dto.ts
+    │       create-parent.dto.ts
+    │       create-student.dto.ts
+    │       create-teacher.dto.ts
+    │       create-user.dto.ts
+    │       login.dto.ts
+    │
+    ├───entities
+    │       admin.entity.ts
+    │       finance.entity.ts
+    │       parent.entity.ts
+    │       student.entity.ts
+    │       teacher.entity.ts
+    │       user.entity.ts
+    │
+    └───enums
+            role.enum.ts
+
+
+E:\Projects\Web Apps\Javascript\schomas\schomas-backend\src>

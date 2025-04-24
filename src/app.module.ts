@@ -9,9 +9,10 @@ import { UsersModule } from './user/users.module';
 import { AuthModule } from './auth/auth.module';
 import { AdminsModule } from './admins/admins.module';
 import { DashboardModule } from './dashboard/dashboard.module';
-import { CourseService } from './course/course.service';
 import { EnrollmentModule } from './enrollment/enrollment.module';
 import { ExamModule } from './exams/exam.module';
+import { ScheduleModule } from './schedule/schedule.module';
+import { ClassroomModule } from './classroom/classroom.module';
 
 @Module({
   imports: [
@@ -26,9 +27,9 @@ import { ExamModule } from './exams/exam.module';
     AdminsModule,
     DashboardModule,
     EnrollmentModule,
-    ExamModule
-    // CourseService,
-    // CommonModule,
+    ExamModule,
+    ScheduleModule,
+    ClassroomModule
   ],
 })
 export class AppModule {}

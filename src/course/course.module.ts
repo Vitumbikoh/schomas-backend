@@ -11,6 +11,6 @@ import { UsersModule } from 'src/user/users.module';
     UsersModule
   ],
   providers: [CourseService],
-  exports: [CourseService], 
+  exports: [CourseService, TypeOrmModule],
 })
 export class CourseModule {}

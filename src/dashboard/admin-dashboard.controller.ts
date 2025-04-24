@@ -63,15 +63,15 @@ export class AdminDashboardController {
       teacherManagement: [Role.ADMIN],
       financeManagement: [Role.ADMIN, Role.FINANCE],
       examsGrades: [Role.ADMIN, Role.TEACHER],
-      attendanceTracking: [Role.ADMIN, Role.TEACHER],
-      timetableScheduling: [Role.ADMIN],
-      parentTeacherPortal: [Role.ADMIN, Role.TEACHER],
-      elearningIntegration: [Role.ADMIN],
-      communicationSystem: [Role.ADMIN],
-      libraryManagement: [Role.ADMIN],
+      // attendanceTracking: [Role.ADMIN, Role.TEACHER],
+      scheduleManagement: [Role.ADMIN],
+      // parentTeacherPortal: [Role.ADMIN, Role.TEACHER],
+      // elearningIntegration: [Role.ADMIN],
+      // communicationSystem: [Role.ADMIN],
+      // libraryManagement: [Role.ADMIN],
       userManagement: [Role.ADMIN],
-      systemSettings: [Role.ADMIN],
-      financialReports: [Role.ADMIN, Role.FINANCE],
+      // systemSettings: [Role.ADMIN],
+      // financialReports: [Role.ADMIN, Role.FINANCE],
     };
 
     return Object.entries(featureMatrix)
