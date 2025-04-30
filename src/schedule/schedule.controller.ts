@@ -31,20 +31,23 @@ export class ScheduleController {
     status: 201,
     description: 'Schedule created',
   })
-  async create(@Body() createScheduleDto: {
-    classId: string;
-    day: string;
-    startTime: Date;
-    endTime: Date;
-    courseId: string;
-    teacherId: string;
-    classroomId: string;
-    isActive?: boolean;
-  }) {
+  async create(
+    @Body()
+    createScheduleDto: {
+      classId: string;
+      day: string;
+      startTime: Date;
+      endTime: Date;
+      courseId: string;
+      teacherId: string;
+      classroomId: string;
+      isActive?: boolean;
+    },
+  ) {
     return this.scheduleService.create(createScheduleDto);
   }
 
-  @Get('dashboard')  
+  @Get('dashboard')
   @Roles(Role.ADMIN, Role.TEACHER)
   @ApiResponse({
     status: 200,
@@ -61,13 +64,15 @@ export class ScheduleController {
     description: 'List of schedules',
   })
   async findAll(
-    @Query('day') day?: string,
-    @Query('teacherId') teacherId?: string,
-    @Query('courseId') courseId?: string,
     @Query('skip') skip?: number,
     @Query('take') take?: number,
+    @Query('search') search?: string,
   ) {
-    return this.scheduleService.findAll({ day, teacherId, courseId, skip, take });
+    return this.scheduleService.findAll({
+      skip: skip ? Number(skip) : undefined,
+      take: take ? Number(take) : undefined,
+      search,
+    });
   }
 
   @Get(':id')
@@ -88,7 +93,8 @@ export class ScheduleController {
   })
   async update(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() updateScheduleDto: {
+    @Body()
+    updateScheduleDto: {
       day?: string;
       startTime?: Date;
       endTime?: Date;

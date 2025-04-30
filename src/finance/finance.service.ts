@@ -194,6 +194,77 @@ export class FinanceService {
     };
   }
 
+  async getDashboardCalculations(): Promise<{
+    totalProcessedPayments: number;
+    totalApprovedBudgets: number;
+    totalRevenue: number;
+    pendingApprovals: number;
+    recentTransactions: FeePayment[];
+    pendingPayments: FeePayment[];
+    pendingBudgets: Budget[];
+  }> {
+    const [pendingPayments, pendingBudgets, recentTransactions] = await Promise.all([
+      this.paymentRepository.find({
+        where: { status: 'pending' },
+        take: 5,
+        order: { createdAt: 'DESC' },
+        relations: ['student'],
+      }),
+      this.budgetRepository.find({
+        where: { status: 'pending' },
+        take: 5,
+        order: { createdAt: 'DESC' },
+      }),
+      this.paymentRepository.find({
+        where: { status: In(['completed', 'processed']) },
+        take: 5,
+        order: { processedAt: 'DESC' },
+        relations: ['student'],
+      }),
+    ]);
+
+    const stats = await this.getFinancialStats();
+
+    return {
+      ...stats,
+      recentTransactions,
+      pendingPayments,
+      pendingBudgets,
+    };
+  }
+
+  async getFinancialStats(): Promise<{
+    totalProcessedPayments: number;
+    totalApprovedBudgets: number;
+    totalRevenue: number;
+    pendingApprovals: number;
+  }> {
+    const [
+      totalProcessedPayments,
+      totalApprovedBudgets,
+      totalRevenueResult,
+      pendingPaymentsCount,
+      pendingBudgetsCount
+    ] = await Promise.all([
+      this.paymentRepository.count({ where: { status: 'completed' }}),
+      this.budgetRepository.count({ where: { status: 'approved' } }),
+      this.paymentRepository
+        .createQueryBuilder('payment')
+        .select('SUM(payment.amount)', 'sum')
+        .where('payment.status = :status', { status: 'completed' })
+        .getRawOne(),
+      this.paymentRepository.count({ where: { status: 'pending' } }),
+      this.budgetRepository.count({ where: { status: 'pending' } })
+    ]);
+
+    return {
+      totalProcessedPayments,
+      totalApprovedBudgets,
+      totalRevenue: parseFloat(totalRevenueResult?.sum || '0'),
+      pendingApprovals: pendingPaymentsCount + pendingBudgetsCount,
+    };
+  }
+
   async getTransactions(
     page: number,
     limit: number,
@@ -201,27 +272,29 @@ export class FinanceService {
     dateRange?: { startDate?: Date; endDate?: Date },
   ) {
     const where: any = {};
-
+  
     if (search) {
       where.referenceNumber = Like(`%${search}%`);
     }
-
+  
     if (dateRange?.startDate && dateRange?.endDate) {
       where.processedAt = Between(dateRange.startDate, dateRange.endDate);
     }
-
+  
     const [transactions, total] = await this.paymentRepository.findAndCount({
       where,
-      relations: ['student'],
+      relations: ['student', 'processedBy'],
       skip: (page - 1) * limit,
       take: limit,
       order: { processedAt: 'DESC' },
     });
-
+  
     return {
       transactions: transactions.map((t) => ({
         ...t,
         studentName: t.student?.lastName || 'Unknown',
+        processedAt: t.processedAt, // Ensure this is included
+        createdAt: t.createdAt, // Include creation date as well
       })),
       pagination: {
         totalItems: total,
@@ -329,42 +402,42 @@ export class FinanceService {
     });
   }
 
-  // finance.service.ts
-  // finance.service.ts
-  async getFinancialStats() {
-    // Get counts and sums with proper TypeORM syntax
-    const totalProcessedPayments = await this.paymentRepository.count({
-      where: { status: 'completed' },
-    });
+  // // finance.service.ts
+  // // finance.service.ts
+  // async getFinancialStats() {
+  //   // Get counts and sums with proper TypeORM syntax
+  //   const totalProcessedPayments = await this.paymentRepository.count({
+  //     where: { status: 'completed' },
+  //   });
 
-    const totalApprovedBudgets = await this.budgetRepository.count({
-      where: { status: 'approved' },
-    });
+  //   const totalApprovedBudgets = await this.budgetRepository.count({
+  //     where: { status: 'approved' },
+  //   });
 
-    // For sum, we need to use query builder
-    const totalRevenueResult = await this.paymentRepository
-      .createQueryBuilder('payment')
-      .select('SUM(payment.amount)', 'sum')
-      .where('payment.status = :status', { status: 'completed' })
-      .getRawOne();
+  //   // For sum, we need to use query builder
+  //   const totalRevenueResult = await this.paymentRepository
+  //     .createQueryBuilder('payment')
+  //     .select('SUM(payment.amount)', 'sum')
+  //     .where('payment.status = :status', { status: 'completed' })
+  //     .getRawOne();
 
-    const totalRevenue = parseFloat(totalRevenueResult?.sum || '0');
+  //   const totalRevenue = parseFloat(totalRevenueResult?.sum || '0');
 
-    const pendingPayments = await this.paymentRepository.count({
-      where: { status: 'pending' },
-    });
+  //   const pendingPayments = await this.paymentRepository.count({
+  //     where: { status: 'pending' },
+  //   });
 
-    const pendingBudgets = await this.budgetRepository.count({
-      where: { status: 'pending' },
-    });
+  //   const pendingBudgets = await this.budgetRepository.count({
+  //     where: { status: 'pending' },
+  //   });
 
-    return {
-      totalProcessedPayments,
-      totalApprovedBudgets,
-      totalRevenue,
-      pendingApprovals: pendingPayments + pendingBudgets,
-    };
-  }
+  //   return {
+  //     totalProcessedPayments,
+  //     totalApprovedBudgets,
+  //     totalRevenue,
+  //     pendingApprovals: pendingPayments + pendingBudgets,
+  //   };
+  // }
   async getPaymentById(id: string) {
     return this.paymentRepository.findOne({
       where: { id },

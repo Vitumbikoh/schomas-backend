@@ -96,15 +96,11 @@ export class ScheduleService {
 
   async findAll(
     options: {
-      day?: string;
-      teacherId?: string;
-      courseId?: string;
-      classId?: string;
       skip?: number;
       take?: number;
-      relations?: string[];
+      search?: string;
     } = {},
-  ): Promise<{ schedules: Schedule[]; pagination: any }> {
+  ): Promise<{ data: Schedule[]; pagination: any }> {
     const query = this.scheduleRepository
       .createQueryBuilder('schedule')
       .leftJoinAndSelect('schedule.course', 'course')
@@ -113,43 +109,28 @@ export class ScheduleService {
       .leftJoinAndSelect('schedule.class', 'class')
       .where('schedule.isActive = :isActive', { isActive: true });
 
-    if (options?.day) {
-      query.andWhere('schedule.day = :day', { day: options.day });
-    }
-
-    if (options?.teacherId) {
-      query.andWhere('schedule.teacher_id = :teacherId', {
-        teacherId: options.teacherId,
-      });
-    }
-
-    if (options?.courseId) {
-      query.andWhere('schedule.course_id = :courseId', {
-        courseId: options.courseId,
-      });
-    }
-
-    if (options?.classId) {
-      query.andWhere('schedule.class_id = :classId', {
-        classId: options.classId,
-      });
+    if (options?.search) {
+      query.andWhere(
+        '(course.name LIKE :search OR teacher.firstName LIKE :search OR teacher.lastName LIKE :search OR classroom.name LIKE :search OR class.name LIKE :search)',
+        { search: `%${options.search}%` },
+      );
     }
 
     // Get the total count before applying skip/take
     const total = await query.getCount();
 
-    if (options?.skip) {
+    if (options?.skip !== undefined) {
       query.skip(options.skip);
     }
 
-    if (options?.take) {
+    if (options?.take !== undefined) {
       query.take(options.take);
     }
 
     const schedules = await query.getMany();
 
     return {
-      schedules,
+      data: schedules,
       pagination: {
         totalItems: total,
         totalPages: options.take ? Math.ceil(total / options.take) : 1,

@@ -24,6 +24,29 @@ export class FinanceController {
     return this.financeService.getDashboardData(req.user.id);
   }
 
+  @Get('dashboard-data')
+  @ApiOperation({ summary: 'Get complete dashboard data with calculations' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Dashboard data with calculations retrieved successfully' 
+  })
+  async getDashboardData(@Request() req) {
+    const data = await this.financeService.getDashboardCalculations();
+    
+    return {
+      ...data,
+      uiConfig: {
+        title: "Finance Management",
+        description: "Manage financial transactions and budgets",
+        breadcrumbs: [
+          { name: "Dashboard", path: "/dashboard" },
+          { name: "Finance Management" }
+        ]
+      }
+    };
+  }
+
+  
   @Post('payments')
   @ApiOperation({ summary: 'Process a fee payment' })
   @ApiResponse({ status: 201, description: 'Payment processed successfully' })
