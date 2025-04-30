@@ -13,7 +13,7 @@ export const AppDataSource = new DataSource({
   password: process.env.DB_PASSWORD || 'g1Bird fly',
   database: process.env.DB_DATABASE || 'schomas',
   entities: [User, Teacher, Course, Student],
-  synchronize: process.env.NODE_ENV !== 'production',
-  // synchronize: false,
+  // synchronize: process.env.NODE_ENV !== 'production',
+  synchronize: false,
   logging: process.env.NODE_ENV === 'development',
 });

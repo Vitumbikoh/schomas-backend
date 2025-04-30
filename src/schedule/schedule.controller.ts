@@ -32,6 +32,7 @@ export class ScheduleController {
     description: 'Schedule created',
   })
   async create(@Body() createScheduleDto: {
+    classId: string;
     day: string;
     startTime: Date;
     endTime: Date;
@@ -43,7 +44,7 @@ export class ScheduleController {
     return this.scheduleService.create(createScheduleDto);
   }
 
-  @Get('dashboard')  // Changed from 'dashboard/overview'
+  @Get('dashboard')  
   @Roles(Role.ADMIN, Role.TEACHER)
   @ApiResponse({
     status: 200,

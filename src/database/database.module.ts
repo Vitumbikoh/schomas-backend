@@ -17,8 +17,8 @@ import { ConfigService } from 'src/config/config.service';
         password: configService.get('DB_PASSWORD'),
         database: configService.get('DB_DATABASE'),
         entities: [__dirname + '/../**/*.entity{.ts,.js}'],
-        synchronize: configService.get('NODE_ENV') !== 'production',
-        // synchronize: false,
+        // synchronize: configService.get('NODE_ENV') !== 'production',
+        synchronize: false,
         logging: configService.get('NODE_ENV') === 'development',
         ssl: false, // Disable SSL for local development
       }),

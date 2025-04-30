@@ -1,41 +1,41 @@
-import { Classroom } from 'src/classroom/entity/classroom.entity';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, ManyToOne } from 'typeorm';
 import { Course } from 'src/course/entities/course.entity';
 import { Teacher } from 'src/user/entities/teacher.entity';
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
+import { Classroom } from 'src/classroom/entity/classroom.entity';
+import { Class } from 'src/classes/entity/class.entity';
 
 @Entity('schedules')
 export class Schedule {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar', length: 50 })
+  @Column()
   day: string;
-  
 
-  @Column({ type: 'timestamp' })
+  @Column()
   startTime: Date;
 
-  @Column({ type: 'timestamp' })
+  @Column()
   endTime: Date;
 
-  @ManyToOne(() => Course, { eager: true })
-  @JoinColumn({ name: 'course_id' })
-  course: Course;
-
-  @ManyToOne(() => Teacher, { eager: true })
-  @JoinColumn({ name: 'teacher_id' })
-  teacher: Teacher;
-
-  @ManyToOne(() => Classroom, { eager: true })
-  @JoinColumn({ name: 'classroom_id' })
-  classroom: Classroom;
-
-  @Column({ type: 'boolean', default: true })
+  @Column({ default: true })
   isActive: boolean;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn()
   createdAt: Date;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+  @UpdateDateColumn()
   updatedAt: Date;
+
+  @ManyToOne(() => Course, (course) => course.schedule)
+  course: Course;
+
+  @ManyToOne(() => Teacher, (teacher) => teacher.schedules)
+  teacher: Teacher;
+
+  @ManyToOne(() => Classroom, (classroom) => classroom.schedules)
+classroom: Classroom;
+
+  @ManyToOne(() => Class, (classEntity) => classEntity.schedules)
+  class: Class;
 }

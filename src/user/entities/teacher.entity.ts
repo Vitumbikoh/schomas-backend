@@ -10,6 +10,7 @@ import {
 import { User } from './user.entity';
 import { Course } from '../../course/entities/course.entity';
 import { Exam } from 'src/exams/entities/exam.entity';
+import { Schedule } from 'src/schedule/entity/schedule.entity';
 
 @Entity()
 export class Teacher extends BaseEntity {
@@ -56,9 +57,12 @@ export class Teacher extends BaseEntity {
   @OneToMany(() => Course, (course) => course.teacher)
   courses: Course[];
 
-  @Column({ name: 'userId' }) 
+  @Column({ name: 'userId' })
   userId: string;
 
   @OneToMany(() => Exam, (exam) => exam.teacher)
-exams: Exam[];
+  exams: Exam[];
+
+  @OneToMany(() => Schedule, (schedule) => schedule.teacher)
+  schedules: Schedule[];
 }

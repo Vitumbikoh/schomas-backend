@@ -13,6 +13,7 @@ import { EnrollmentModule } from './enrollment/enrollment.module';
 import { ExamModule } from './exams/exam.module';
 import { ScheduleModule } from './schedule/schedule.module';
 import { ClassroomModule } from './classroom/classroom.module';
+import { ClassModule } from './classes/class.module';
 
 @Module({
   imports: [
@@ -29,7 +30,8 @@ import { ClassroomModule } from './classroom/classroom.module';
     EnrollmentModule,
     ExamModule,
     ScheduleModule,
-    ClassroomModule
+    ClassroomModule,
+    ClassModule,
   ],
 })
 export class AppModule {}
