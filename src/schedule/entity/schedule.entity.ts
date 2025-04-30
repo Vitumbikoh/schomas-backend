@@ -1,4 +1,11 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, ManyToOne } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+} from 'typeorm';
 import { Course } from 'src/course/entities/course.entity';
 import { Teacher } from 'src/user/entities/teacher.entity';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
@@ -34,7 +41,7 @@ export class Schedule {
   teacher: Teacher;
 
   @ManyToOne(() => Classroom, (classroom) => classroom.schedules)
-classroom: Classroom;
+  classroom: Classroom;
 
   @ManyToOne(() => Class, (classEntity) => classEntity.schedules)
   class: Class;
