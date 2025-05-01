@@ -1,32 +1,53 @@
-import { IsNotEmpty, IsString, IsDateString, IsOptional } from 'class-validator';
-import { CreateUserDto } from './create-user.dto';
+// src/finance/dtos/create-finance.dto.ts
+import { IsBoolean, IsDateString, IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { Role } from '../../user/enums/role.enum';
 
-export class CreateFinanceDto extends CreateUserDto {
-  @IsNotEmpty()
+export class CreateFinanceDto {
   @IsString()
+  @IsNotEmpty()
+  username: string;
+
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+
+  @IsString()
+  @IsNotEmpty()
+  password: string;
+
+  @IsString()
+  @IsNotEmpty()
   firstName: string;
 
-  @IsNotEmpty()
   @IsString()
+  @IsNotEmpty()
   lastName: string;
 
-  @IsOptional()
   @IsString()
+  @IsOptional()
   phoneNumber?: string;
 
-  @IsOptional()
   @IsString()
+  @IsOptional()
   address?: string;
 
-  @IsOptional()
   @IsDateString()
+  @IsOptional()
   dateOfBirth?: Date;
 
-  @IsOptional()
   @IsString()
+  @IsOptional()
   gender?: string;
 
-  @IsOptional()
   @IsString()
+  @IsOptional()
   department?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  canApproveBudgets?: boolean = false;
+
+  @IsBoolean()
+  @IsOptional()
+  canProcessPayments?: boolean = true;
 }

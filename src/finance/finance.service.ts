@@ -1,6 +1,7 @@
 // finance.service.ts
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -16,6 +17,8 @@ import { ApproveBudgetDto } from './dtos/approve-budget.dto';
 import { Role } from 'src/user/enums/role.enum';
 import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
+import { CreateFinanceDto } from 'src/user/dtos/create-finance.dto';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class FinanceService {
@@ -161,6 +164,24 @@ export class FinanceService {
     }
   }
 
+  async getAllFinanceUsers(): Promise<Finance[]> {
+    return this.financeRepository.find({
+      relations: ['user'],
+      select: [
+        'id',
+        'firstName',
+        'lastName',
+        'phoneNumber',
+        'address',
+        'dateOfBirth',
+        'gender',
+        'department',
+        'canApproveBudgets',
+        'canProcessPayments'
+      ]
+    });
+  }
+
   async approveBudget(
     userId: string,
     budgetId: string,
@@ -203,25 +224,26 @@ export class FinanceService {
     pendingPayments: FeePayment[];
     pendingBudgets: Budget[];
   }> {
-    const [pendingPayments, pendingBudgets, recentTransactions] = await Promise.all([
-      this.paymentRepository.find({
-        where: { status: 'pending' },
-        take: 5,
-        order: { createdAt: 'DESC' },
-        relations: ['student'],
-      }),
-      this.budgetRepository.find({
-        where: { status: 'pending' },
-        take: 5,
-        order: { createdAt: 'DESC' },
-      }),
-      this.paymentRepository.find({
-        where: { status: In(['completed', 'processed']) },
-        take: 5,
-        order: { processedAt: 'DESC' },
-        relations: ['student'],
-      }),
-    ]);
+    const [pendingPayments, pendingBudgets, recentTransactions] =
+      await Promise.all([
+        this.paymentRepository.find({
+          where: { status: 'pending' },
+          take: 5,
+          order: { createdAt: 'DESC' },
+          relations: ['student'],
+        }),
+        this.budgetRepository.find({
+          where: { status: 'pending' },
+          take: 5,
+          order: { createdAt: 'DESC' },
+        }),
+        this.paymentRepository.find({
+          where: { status: In(['completed', 'processed']) },
+          take: 5,
+          order: { processedAt: 'DESC' },
+          relations: ['student'],
+        }),
+      ]);
 
     const stats = await this.getFinancialStats();
 
@@ -244,9 +266,9 @@ export class FinanceService {
       totalApprovedBudgets,
       totalRevenueResult,
       pendingPaymentsCount,
-      pendingBudgetsCount
+      pendingBudgetsCount,
     ] = await Promise.all([
-      this.paymentRepository.count({ where: { status: 'completed' }}),
+      this.paymentRepository.count({ where: { status: 'completed' } }),
       this.budgetRepository.count({ where: { status: 'approved' } }),
       this.paymentRepository
         .createQueryBuilder('payment')
@@ -254,7 +276,7 @@ export class FinanceService {
         .where('payment.status = :status', { status: 'completed' })
         .getRawOne(),
       this.paymentRepository.count({ where: { status: 'pending' } }),
-      this.budgetRepository.count({ where: { status: 'pending' } })
+      this.budgetRepository.count({ where: { status: 'pending' } }),
     ]);
 
     return {
@@ -272,15 +294,15 @@ export class FinanceService {
     dateRange?: { startDate?: Date; endDate?: Date },
   ) {
     const where: any = {};
-  
+
     if (search) {
       where.referenceNumber = Like(`%${search}%`);
     }
-  
+
     if (dateRange?.startDate && dateRange?.endDate) {
       where.processedAt = Between(dateRange.startDate, dateRange.endDate);
     }
-  
+
     const [transactions, total] = await this.paymentRepository.findAndCount({
       where,
       relations: ['student', 'processedBy'],
@@ -288,7 +310,7 @@ export class FinanceService {
       take: limit,
       order: { processedAt: 'DESC' },
     });
-  
+
     return {
       transactions: transactions.map((t) => ({
         ...t,
@@ -301,6 +323,60 @@ export class FinanceService {
         totalPages: Math.ceil(total / limit),
         itemsPerPage: limit,
         currentPage: page,
+      },
+    };
+  }
+
+  async createFinanceUser(createFinanceDto: CreateFinanceDto) {
+    // Check if username or email already exists
+    const existingUser = await this.userRepository.findOne({
+      where: [
+        { username: createFinanceDto.username },
+        { email: createFinanceDto.email },
+      ],
+    });
+
+    if (existingUser) {
+      throw new ConflictException('Username or email already exists');
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(createFinanceDto.password, 10);
+
+    // Create the user first
+    const user = this.userRepository.create({
+      username: createFinanceDto.username,
+      email: createFinanceDto.email,
+      password: hashedPassword,
+      role: Role.FINANCE,
+      isActive: true,
+    });
+
+    await this.userRepository.save(user);
+
+    // Then create the finance profile
+    const finance = this.financeRepository.create({
+      firstName: createFinanceDto.firstName,
+      lastName: createFinanceDto.lastName,
+      phoneNumber: createFinanceDto.phoneNumber,
+      address: createFinanceDto.address,
+      dateOfBirth: createFinanceDto.dateOfBirth,
+      gender: createFinanceDto.gender,
+      department: createFinanceDto.department,
+      canApproveBudgets: createFinanceDto.canApproveBudgets ?? false,
+      canProcessPayments: createFinanceDto.canProcessPayments ?? true,
+      user: user,
+    });
+
+    await this.financeRepository.save(finance);
+
+    // Return the created user without the password
+    const { password, ...result } = user;
+    return {
+      ...result,
+      financeProfile: {
+        ...finance,
+        user: undefined, // Remove circular reference
       },
     };
   }

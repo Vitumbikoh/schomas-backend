@@ -8,6 +8,7 @@ import { ApiBearerAuth, ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@ne
 import { ProcessPaymentDto } from './dtos/process-payment.dto';
 import { ApproveBudgetDto } from './dtos/approve-budget.dto';
 import { Roles } from '../user/decorators/roles.decorator';
+import { CreateFinanceDto } from 'src/user/dtos/create-finance.dto';
 
 @ApiTags('Finance')
 @ApiBearerAuth()
@@ -53,6 +54,26 @@ export class FinanceController {
   async processPayment(@Request() req, @Body() processPaymentDto: ProcessPaymentDto) {
     return this.financeService.processPayment(req.user.id, processPaymentDto);
   }
+
+  @Post()
+  @Roles(Role.ADMIN) // Only admins can create finance users
+  @ApiOperation({ summary: 'Create a new finance user' })
+  @ApiResponse({ status: 201, description: 'Finance user created successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  async createFinanceUser(@Body() createFinanceDto: CreateFinanceDto) {
+    return this.financeService.createFinanceUser(createFinanceDto);
+  }
+
+  @Get()
+@Roles(Role.ADMIN) // Only admins can list all finance users
+@ApiOperation({ summary: 'Get all finance users' })
+@ApiResponse({ 
+  status: 200, 
+  description: 'List of finance users retrieved successfully' 
+})
+async getAllFinanceUsers() {
+  return this.financeService.getAllFinanceUsers();
+}
 
   @Post('budgets/:id/approve')
   @ApiOperation({ summary: 'Approve a budget proposal' })
