@@ -32,6 +32,10 @@ export class CreateStudentDto {
   address?: string;
 
   @IsOptional()
+  @IsString()
+  classId?: string;
+
+  @IsOptional()
   @IsDateString()
   @Transform(({ value }) => value ? new Date(value).toISOString() : null)
   dateOfBirth?: string;

@@ -12,6 +12,7 @@ import { Parent } from './parent.entity';
 import { Finance } from './finance.entity';
 import { Role } from '../enums/role.enum';
 import { Course } from 'src/course/entities/course.entity';
+import { UserSettings } from 'src/settings/entities/user-settings.entity';
 
 @Entity()
 export class User {
@@ -33,6 +34,15 @@ export class User {
     default: Role.STUDENT,
   })
   role: Role;
+
+  @Column({ nullable: true })
+  phone?: string;
+
+  @Column({ nullable: true })
+  image?: string;
+
+  @OneToOne(() => UserSettings, (settings) => settings.user)
+settings: UserSettings;
 
   @OneToOne(() => Teacher, (teacher) => teacher.user, { nullable: true })
   @JoinColumn()

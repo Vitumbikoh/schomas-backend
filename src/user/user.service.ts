@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
@@ -13,6 +13,7 @@ import { CreateParentDto } from './dtos/create-parent.dto';
 import { CreateFinanceDto } from './dtos/create-finance.dto';
 import { Role } from './enums/role.enum';
 import * as bcrypt from 'bcrypt';
+import { UpdateUserDto } from 'src/parent/dtos/update-parent.dto';
 
 @Injectable()
 export class UsersService {
@@ -107,6 +108,19 @@ export class UsersService {
     return this.parentRepository.save(parent);
   }
 
+  // users.service.ts
+async updateUser(id: string, updateUserDto: UpdateUserDto) {
+  const user = await this.userRepository.findOne({ where: { id } });
+  if (!user) {
+    throw new NotFoundException('User not found');
+  }
+
+  // Update all fields including role
+  Object.assign(user, updateUserDto);
+  user.updatedAt = new Date();
+  
+  return this.userRepository.save(user);
+}
   async createFinance(createFinanceDto: CreateFinanceDto): Promise<Finance> {
     const userDto: CreateUserDto = {
       username: createFinanceDto.username,

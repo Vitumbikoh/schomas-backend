@@ -13,6 +13,10 @@ export class CreateCourseDto {
   @IsNotEmpty()
   code: string;
 
+  @IsOptional()
+  @IsUUID()
+  classId?: string;
+
   @IsString()
   @IsNotEmpty()
   name: string;

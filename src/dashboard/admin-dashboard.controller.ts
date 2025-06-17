@@ -70,8 +70,9 @@ export class AdminDashboardController {
       // communicationSystem: [Role.ADMIN],
       // libraryManagement: [Role.ADMIN],
       userManagement: [Role.ADMIN],
-      // systemSettings: [Role.ADMIN],
-      // financialReports: [Role.ADMIN, Role.FINANCE],
+      systemSettings: [Role.ADMIN],
+      settings: [Role.ADMIN, Role.FINANCE, Role.TEACHER,],
+      financialReports: [Role.ADMIN, Role.FINANCE],
     };
 
     return Object.entries(featureMatrix)

@@ -19,14 +19,14 @@ export class CourseService {
     private readonly teacherRepository: Repository<Teacher>,
   ) {}
 
-
-
-  async findAll(options: {
-    skip?: number;
-    take?: number;
-    where?: FindOptionsWhere<Course> | FindOptionsWhere<Course>[];
-    relations?: string[];
-  } = {}): Promise<Course[]> {
+  async findAll(
+    options: {
+      skip?: number;
+      take?: number;
+      where?: FindOptionsWhere<Course> | FindOptionsWhere<Course>[];
+      relations?: string[];
+    } = {},
+  ): Promise<Course[]> {
     return await this.courseRepository.find({
       skip: options.skip || 0,
       take: options.take || 10,
@@ -36,46 +36,51 @@ export class CourseService {
     });
   }
 
-  async count(where?: FindOptionsWhere<Course> | FindOptionsWhere<Course>[]): Promise<number> {
+  async count(
+    where?: FindOptionsWhere<Course> | FindOptionsWhere<Course>[],
+  ): Promise<number> {
     return await this.courseRepository.count({ where });
   }
 
-  async findOne(id: string, relations: string[] = ['teacher']): Promise<Course> {
-    const course = await this.courseRepository.findOne({
-      where: { id },
-      relations,
-    });
 
-    if (!course) {
-      throw new NotFoundException(`Course with ID ${id} not found`);
-    }
-    return course;
+  async findOne(id: string, relations: string[] = ['teacher', 'class']): Promise<Course> {
+  const course = await this.courseRepository.findOne({
+    where: { id },
+    relations,
+  });
+
+  if (!course) {
+    throw new NotFoundException(`Course with ID ${id} not found`);
   }
+  return course;
+}
 
   async create(createCourseDto: CreateCourseDto): Promise<Course> {
     const course = new Course();
     Object.assign(course, createCourseDto);
-    
+
     if (createCourseDto.teacherId) {
-      const teacher = await this.teacherRepository.findOne({ 
-        where: { id: createCourseDto.teacherId }
+      const teacher = await this.teacherRepository.findOne({
+        where: { id: createCourseDto.teacherId },
       });
-    
+
       if (!teacher) {
         throw new NotFoundException('Teacher not found');
       }
       course.teacher = teacher;
     }
-    
+
     return this.courseRepository.save(course); // This will generate a UUID
   }
+
+  
 
   async update(id: string, updateCourseDto: UpdateCourseDto): Promise<Course> {
     const course = await this.findOne(id, ['teacher']);
 
     if (updateCourseDto.teacherId) {
       const teacher = await this.teacherRepository.findOne({
-        where: { id: updateCourseDto.teacherId }
+        where: { id: updateCourseDto.teacherId },
       });
 
       if (!teacher) {
@@ -89,7 +94,6 @@ export class CourseService {
     return this.courseRepository.save(course);
   }
 
-
   async remove(id: string): Promise<void> {
     const course = await this.findOne(id);
     await this.courseRepository.remove(course);
@@ -97,40 +101,40 @@ export class CourseService {
 
   async assignTeacher(courseId: string, teacherId: string): Promise<Course> {
     const course = await this.courseRepository.findOne({
-        where: { id: courseId },
-        relations: ['teacher'] // Include teacher in the query
+      where: { id: courseId },
+      relations: ['teacher'], // Include teacher in the query
     });
-    
+
     if (!course) {
-        throw new NotFoundException('Course not found');
+      throw new NotFoundException('Course not found');
     }
 
-    const teacher = await this.teacherRepository.findOne({ 
-        where: { id: teacherId },
-        relations: ['user']
+    const teacher = await this.teacherRepository.findOne({
+      where: { id: teacherId },
+      relations: ['user'],
     });
-  
+
     if (!teacher) {
-        throw new NotFoundException('Teacher not found');
+      throw new NotFoundException('Teacher not found');
     }
-  
+
     course.teacher = teacher;
     course.teacherId = teacher.id; // Explicitly set the teacherId
-    
+
     await this.courseRepository.save(course);
-    
+
     // Reload the course to ensure all relations are properly loaded
     const updatedCourse = await this.courseRepository.findOne({
-        where: { id: courseId },
-        relations: ['teacher', 'teacher.user']
+      where: { id: courseId },
+      relations: ['teacher', 'teacher.user'],
     });
 
     if (!updatedCourse) {
-        throw new NotFoundException('Course not found after assigning teacher');
+      throw new NotFoundException('Course not found after assigning teacher');
     }
 
     return updatedCourse;
-}
+  }
 
   async searchCourses(query: string): Promise<Course[]> {
     return await this.courseRepository.find({

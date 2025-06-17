@@ -54,12 +54,13 @@ async getStudentCourses(@Request() req) {
       timetable: [Role.STUDENT, Role.PARENT],
       grades: [Role.STUDENT, Role.PARENT],
       assignments: [Role.STUDENT],
-      submitAssignments: [Role.STUDENT],
+      // submitAssignments: [Role.STUDENT],
+      settings: [Role.STUDENT, Role.PARENT],
       // joinClasses: [Role.STUDENT],
       childProgress: [Role.PARENT],
       attendance: [Role.PARENT],
       announcements: [Role.PARENT],
-      libraryAccess: [Role.STUDENT],
+      // libraryAccess: [Role.STUDENT],
       paymentHistory: [Role.PARENT],
     };
 

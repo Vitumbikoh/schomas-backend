@@ -42,8 +42,8 @@ export class StudentsService {
       ? new Date(validatedDto.dateOfBirth)
       : null;
 
-    // Create student
-    const student = this.studentRepository.create({
+    // Create student with classId if provided
+    const studentData: Partial<Student> = {
       firstName: validatedDto.firstName,
       lastName: validatedDto.lastName,
       phoneNumber: validatedDto.phoneNumber,
@@ -52,7 +52,14 @@ export class StudentsService {
       gender: validatedDto.gender,
       gradeLevel: validatedDto.gradeLevel,
       user: user,
-    });
+    };
+
+    // Add classId if provided
+    if (validatedDto.classId) {
+      studentData.classId = validatedDto.classId;
+    }
+
+    const student = this.studentRepository.create(studentData);
 
     // Set parent if provided
     if (validatedDto.parentId) {
@@ -70,7 +77,16 @@ export class StudentsService {
   async findByUserId(userId: string): Promise<Student | null> {
     return this.studentRepository.findOne({
       where: { user: { id: userId } },
-      relations: ['user']
+      relations: ['user'],
+    });
+  }
+
+  async findByClass(classId: string): Promise<Student[]> {
+    return this.studentRepository.find({
+      where: {
+        classId, // Now we can use classId directly
+      },
+      relations: ['user'],
     });
   }
 
@@ -101,7 +117,7 @@ export class StudentsService {
   ): Promise<[Student[], number]> {
     return this.studentRepository.findAndCount({
       ...options,
-      relations: ['user', 'parent'],
+      relations: ['user', 'parent', 'class'], 
     });
   }
 
@@ -169,54 +185,59 @@ export class StudentsService {
   }
 
   // Add this to students.service.ts
- async getStudentCourses(studentId: string) {
-  // First verify the student exists
-  const student = await this.studentRepository.findOne({
-    where: { id: studentId }
-  });
+  async getStudentCourses(studentId: string) {
+    // First verify the student exists
+    const student = await this.studentRepository.findOne({
+      where: { id: studentId },
+    });
 
-  if (!student) {
-    throw new NotFoundException('Student not found');
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    // Now fetch courses with relations
+    return this.studentRepository
+      .findOne({
+        where: { id: studentId },
+        relations: [
+          'enrollments',
+          'enrollments.course',
+          'enrollments.course.teacher',
+        ],
+      })
+      .then((student) => {
+        if (!student) return { completed: [], active: [], upcoming: [] };
+
+        const now = new Date();
+        const courses = student.enrollments.map((enrollment) => ({
+          ...enrollment.course,
+          enrollmentStatus: enrollment.status,
+          enrollmentDate: enrollment.enrollmentDate,
+          teacherName: enrollment.course.teacher
+            ? `${enrollment.course.teacher.firstName} ${enrollment.course.teacher.lastName}`
+            : 'Not assigned',
+        }));
+
+        return {
+          completed: courses.filter(
+            (course) =>
+              course.status === 'inactive' ||
+              (course.endDate && new Date(course.endDate) < now) ||
+              course.enrollmentStatus === 'completed',
+          ),
+          active: courses.filter(
+            (course) =>
+              course.status === 'active' &&
+              (!course.endDate || new Date(course.endDate) >= now) &&
+              course.enrollmentStatus === 'active',
+          ),
+          upcoming: courses.filter(
+            (course) =>
+              course.status === 'upcoming' &&
+              (!course.startDate || new Date(course.startDate) > now) &&
+              course.enrollmentStatus === 'active',
+          ),
+        };
+      });
   }
-
-  // Now fetch courses with relations
-  return this.studentRepository.findOne({
-    where: { id: studentId },
-    relations: [
-      'enrollments',
-      'enrollments.course',
-      'enrollments.course.teacher'
-    ],
-  }).then(student => {
-    if (!student) return { completed: [], active: [], upcoming: [] };
-
-    const now = new Date();
-    const courses = student.enrollments.map(enrollment => ({
-      ...enrollment.course,
-      enrollmentStatus: enrollment.status,
-      enrollmentDate: enrollment.enrollmentDate,
-      teacherName: enrollment.course.teacher 
-        ? `${enrollment.course.teacher.firstName} ${enrollment.course.teacher.lastName}`
-        : 'Not assigned',
-    }));
-
-    return {
-      completed: courses.filter(course => 
-        course.status === 'inactive' || 
-        (course.endDate && new Date(course.endDate) < now) ||
-        course.enrollmentStatus === 'completed'
-      ),
-      active: courses.filter(course => 
-        course.status === 'active' && 
-        (!course.endDate || new Date(course.endDate) >= now) &&
-        course.enrollmentStatus === 'active'
-      ),
-      upcoming: courses.filter(course => 
-        course.status === 'upcoming' && 
-        (!course.startDate || new Date(course.startDate) > now) &&
-        course.enrollmentStatus === 'active'
-      ),
-    };
-  });
-}
 }

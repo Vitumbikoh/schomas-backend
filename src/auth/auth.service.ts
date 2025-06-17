@@ -14,13 +14,28 @@ export class AuthService {
   async validateUser(email: string, password: string): Promise<any> {
     console.log('Trying to login with:', email, password);
     const user = await this.usersService.findByEmail(email);
-    console.log('Found user:', user);
-    if (user && await bcrypt.compare(password, user.password)) {
-      const { password, ...result } = user;
-      return result;
+    
+    if (!user) {
+        console.log('User not found');
+        return null; // Return null instead of throwing error for Passport compatibility
     }
-    return null;
-  }
+    
+    console.log('Found user:', user);
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    
+    if (!isPasswordValid) {
+        console.log('Invalid password');
+        return null;
+    }
+    
+    if (!user.isActive) { // Assuming you have an isActive field
+        console.log('User inactive');
+        return null;
+    }
+    
+    const { password: _, ...result } = user;
+    return result;
+}
   
 
   async login(user: User) {
@@ -41,9 +56,11 @@ export class AuthService {
 
   async validateToken(userId: string): Promise<User> {
     const user = await this.usersService.findById(userId);
-    if (!user) {
-      throw new Error('User not found');
+    if (!user || !user.isActive) {
+      throw new Error('User not found or inactive');
     }
     return user;
   }
+
+  
 }

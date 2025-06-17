@@ -11,6 +11,7 @@ import { User } from 'src/user/entities/user.entity';
 import { Teacher } from 'src/user/entities/teacher.entity';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { Exam } from 'src/exams/entities/exam.entity';
+import { Class } from 'src/classes/entity/class.entity';
 
 @Entity()
 export class Course {
@@ -51,6 +52,13 @@ export class Course {
   @ManyToOne(() => User)
   @JoinColumn({ name: 'userId' })
   user: User;
+
+  @ManyToOne(() => Class)
+  @JoinColumn({ name: 'classId' })
+  class: Class;
+
+  @Column({ type: 'uuid', nullable: true })
+  classId: string;
 
   @Column({ type: 'uuid', nullable: true })
   teacherId?: string;

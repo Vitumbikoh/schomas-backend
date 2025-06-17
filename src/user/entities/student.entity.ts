@@ -16,6 +16,7 @@ import { Parent } from './parent.entity';
 import { FeePayment } from 'src/finance/entities/fee-payment.entity';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { ExamAttempt } from 'src/exams/entities/exam-attempt.entity';
+import { Class } from 'src/classes/entity/class.entity';
 @Entity()
 export class Student extends BaseEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -48,6 +49,13 @@ export class Student extends BaseEntity {
   @OneToOne(() => User, (user) => user.student)
   @JoinColumn()
   user: User;
+
+ @ManyToOne(() => Class, (cls) => cls.students)
+  @JoinColumn({ name: 'classId' })
+  class: Class;
+
+  @Column({ type: 'uuid', nullable: true })
+  classId: string;
 
   @Column({ type: 'uuid' })
   userId: string;

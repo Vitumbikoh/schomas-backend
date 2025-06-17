@@ -8,6 +8,7 @@ import { CourseController } from './course.controller';
 import { TeachersModule } from 'src/teacher/teacher.module';
 import { EnrollmentModule } from 'src/enrollment/enrollment.module';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
+import { StudentsModule } from 'src/student/student.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
     UsersModule,
     TeachersModule,
     EnrollmentModule,
+    StudentsModule,
   ],
   controllers: [CourseController], 
   providers: [CourseService],

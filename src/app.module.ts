@@ -14,6 +14,7 @@ import { ExamModule } from './exams/exam.module';
 import { ScheduleModule } from './schedule/schedule.module';
 import { ClassroomModule } from './classroom/classroom.module';
 import { ClassModule } from './classes/class.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { ClassModule } from './classes/class.module';
     ScheduleModule,
     ClassroomModule,
     ClassModule,
+    SettingsModule
   ],
 })
 export class AppModule {}
