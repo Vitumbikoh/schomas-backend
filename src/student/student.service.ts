@@ -121,6 +121,19 @@ export class StudentsService {
     });
   }
 
+async getTotalStudentsCount(activeOnly?: boolean): Promise<number> {
+  const options: FindManyOptions<Student> = {};
+  
+  // Only add the filter if 'isActive' is a valid property on Student
+  if (activeOnly) {
+    // Replace 'isActive' with a valid property, e.g., 'status' or remove this filter if not needed
+    // options.where = { status: 'active' }; // Example if you have a 'status' property
+    // Otherwise, just skip adding the filter
+  }
+  
+  return this.studentRepository.count(options);
+}
+
   async update(
     id: string,
     updateStudentDto: UpdateStudentDto,

@@ -5,8 +5,6 @@ import { FindOptionsWhere, Like, Repository } from 'typeorm';
 import { Course } from './entities/course.entity';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
-import { User } from '../user/entities/user.entity';
-import { Role } from 'src/user/enums/role.enum';
 import { Teacher } from 'src/user/entities/teacher.entity';
 
 @Injectable()
@@ -42,18 +40,20 @@ export class CourseService {
     return await this.courseRepository.count({ where });
   }
 
+  async findOne(
+    id: string,
+    relations: string[] = ['teacher', 'class'],
+  ): Promise<Course> {
+    const course = await this.courseRepository.findOne({
+      where: { id },
+      relations,
+    });
 
-  async findOne(id: string, relations: string[] = ['teacher', 'class']): Promise<Course> {
-  const course = await this.courseRepository.findOne({
-    where: { id },
-    relations,
-  });
-
-  if (!course) {
-    throw new NotFoundException(`Course with ID ${id} not found`);
+    if (!course) {
+      throw new NotFoundException(`Course with ID ${id} not found`);
+    }
+    return course;
   }
-  return course;
-}
 
   async create(createCourseDto: CreateCourseDto): Promise<Course> {
     const course = new Course();
@@ -72,8 +72,6 @@ export class CourseService {
 
     return this.courseRepository.save(course); // This will generate a UUID
   }
-
-  
 
   async update(id: string, updateCourseDto: UpdateCourseDto): Promise<Course> {
     const course = await this.findOne(id, ['teacher']);

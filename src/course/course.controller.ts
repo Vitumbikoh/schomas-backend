@@ -19,7 +19,7 @@ import { CreateCourseDto } from 'src/course/dto/create-course.dto';
 import { UpdateCourseDto } from 'src/course/dto/update-course.dto';
 import { TeachersService } from 'src/teacher/teacher.service';
 import { Role } from 'src/user/enums/role.enum';
-import { Like, Repository } from 'typeorm';
+import { Between, Like, Repository } from 'typeorm';
 import { isUUID } from 'class-validator';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Teacher } from 'src/user/entities/teacher.entity';
@@ -37,7 +37,7 @@ export class CourseController {
     private readonly teacherRepository: Repository<Teacher>,
     @InjectRepository(Enrollment)
     private readonly enrollmentRepository: Repository<Enrollment>,
-    private readonly studentService: StudentsService
+    private readonly studentService: StudentsService,
   ) {}
 
   @Get('course-management')
@@ -164,6 +164,62 @@ export class CourseController {
     };
   }
 
+ @Get('stats/total-courses')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(Role.ADMIN, Role.TEACHER)
+  async getTotalCoursesStats(@Request() req): Promise<{
+    title: string;
+    value: string;
+    trend: { value: number; isPositive: boolean };
+  }> {
+    try {
+      // Get total courses count
+      const totalCourses = await this.courseService.count();
+
+      // For trend calculation
+      const currentDate = new Date();
+      const currentMonthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+      const currentMonthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      
+      const previousMonthStart = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
+      const previousMonthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth(), 0);
+
+      const [currentMonthCount, previousMonthCount] = await Promise.all([
+        this.courseService.count({
+          createdAt: Between(currentMonthStart, currentMonthEnd)
+        }),
+        this.courseService.count({
+          createdAt: Between(previousMonthStart, previousMonthEnd)
+        })
+      ]);
+
+      let trendValue = 0;
+      let isPositive = true;
+
+      if (previousMonthCount > 0) {
+        trendValue = Math.round(
+          ((currentMonthCount - previousMonthCount) / previousMonthCount) * 100
+        );
+        isPositive = trendValue >= 0;
+      } else if (currentMonthCount > 0) {
+        trendValue = 100;
+      }
+
+      return {
+        title: 'Total Courses',
+        value: totalCourses.toString(),
+        trend: {
+          value: Math.abs(trendValue),
+          isPositive,
+        },
+      };
+    } catch (error) {
+      console.error('Error in getTotalCoursesStats:', error);
+      throw error;
+    }
+  }
+
+  
   @Post('courses')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(Role.ADMIN)
@@ -417,9 +473,7 @@ export class CourseController {
   @Get('courses/:courseId/enrollable-students')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(Role.ADMIN)
-  async getEnrollableStudents(
-    @Param('courseId') courseId: string
-  ) {
+  async getEnrollableStudents(@Param('courseId') courseId: string) {
     if (!isUUID(courseId)) {
       throw new NotFoundException('Invalid course ID format');
     }
@@ -434,16 +488,17 @@ export class CourseController {
     const classStudents = await this.studentService.findByClass(course.classId);
 
     // Get currently enrolled students
-    const enrollments = await this.enrollmentService.getCourseEnrollments(courseId);
-    const enrolledStudentIds = enrollments.map(e => e.student.id);
+    const enrollments =
+      await this.enrollmentService.getCourseEnrollments(courseId);
+    const enrolledStudentIds = enrollments.map((e) => e.student.id);
 
     // Filter out already enrolled students
     const enrollableStudents = classStudents.filter(
-      student => !enrolledStudentIds.includes(student.id)
+      (student) => !enrolledStudentIds.includes(student.id),
     );
 
     return {
-      students: enrollableStudents
+      students: enrollableStudents,
     };
   }
 }

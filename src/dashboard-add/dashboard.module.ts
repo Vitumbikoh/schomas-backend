@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DashboardController } from './dashboard.controller';
+import { AdminDashboardController } from './admin-dashboard.controller';
+import { StudentDashboardController } from './student-dashboard.controller';
 import { StudentsModule } from 'src/student/student.module';
 import { CourseModule } from 'src/course/course.module';
 import { TeachersModule } from 'src/teacher/teacher.module';
@@ -19,6 +21,8 @@ import { Student } from 'src/user/entities/student.entity';
   ],
   controllers: [
     DashboardController,
+    AdminDashboardController,
+    StudentDashboardController,
   ],
   
 })

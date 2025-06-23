@@ -177,8 +177,8 @@ export class FinanceService {
         'gender',
         'department',
         'canApproveBudgets',
-        'canProcessPayments'
-      ]
+        'canProcessPayments',
+      ],
     });
   }
 
@@ -255,12 +255,30 @@ export class FinanceService {
     };
   }
 
-  async getFinancialStats(): Promise<{
+  async getFinancialStats(dateRange?: {
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<{
     totalProcessedPayments: number;
     totalApprovedBudgets: number;
     totalRevenue: number;
     pendingApprovals: number;
   }> {
+    const paymentWhere: any = { status: 'completed' };
+    const budgetWhere: any = { status: 'approved' };
+    const pendingWhere: any = {};
+
+    if (dateRange?.startDate && dateRange?.endDate) {
+      paymentWhere.processedAt = Between(
+        dateRange.startDate,
+        dateRange.endDate,
+      );
+      budgetWhere.approvalDate = Between(
+        dateRange.startDate,
+        dateRange.endDate,
+      );
+    }
+
     const [
       totalProcessedPayments,
       totalApprovedBudgets,
@@ -268,12 +286,21 @@ export class FinanceService {
       pendingPaymentsCount,
       pendingBudgetsCount,
     ] = await Promise.all([
-      this.paymentRepository.count({ where: { status: 'completed' } }),
-      this.budgetRepository.count({ where: { status: 'approved' } }),
+      this.paymentRepository.count({ where: paymentWhere }),
+      this.budgetRepository.count({ where: budgetWhere }),
       this.paymentRepository
         .createQueryBuilder('payment')
         .select('SUM(payment.amount)', 'sum')
         .where('payment.status = :status', { status: 'completed' })
+        .andWhere(
+          dateRange?.startDate && dateRange?.endDate
+            ? 'payment.processedAt BETWEEN :startDate AND :endDate'
+            : '1=1',
+          {
+            startDate: dateRange?.startDate,
+            endDate: dateRange?.endDate,
+          },
+        )
         .getRawOne(),
       this.paymentRepository.count({ where: { status: 'pending' } }),
       this.budgetRepository.count({ where: { status: 'pending' } }),

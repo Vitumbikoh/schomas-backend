@@ -1,4 +1,16 @@
-import { Controller, Get, Post, Put, Delete, Request, UseGuards, Body, Param, NotFoundException, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Request,
+  UseGuards,
+  Body,
+  Param,
+  NotFoundException,
+  Query,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
@@ -34,7 +46,9 @@ export class StudentController {
         },
       };
     } catch (error) {
-      throw new Error('Failed to fetch student management data: ' + error.message);
+      throw new Error(
+        'Failed to fetch student management data: ' + error.message,
+      );
     }
   }
 
@@ -53,11 +67,11 @@ export class StudentController {
 
     return {
       totalStudents: students.length,
-      activeStudents: students.filter(s => s.isActive !== false).length,
-      newRegistrations: students.filter(s => 
-        s.createdAt && new Date(s.createdAt) > thirtyDaysAgo
+      activeStudents: students.filter((s) => s.isActive !== false).length,
+      newRegistrations: students.filter(
+        (s) => s.createdAt && new Date(s.createdAt) > thirtyDaysAgo,
       ).length,
-      averageAttendance: '95%' // Placeholder - update with real calculation
+      averageAttendance: '95%', // Placeholder - update with real calculation
     };
   }
 
@@ -77,6 +91,21 @@ export class StudentController {
       };
     } catch (error) {
       throw new Error('Failed to create student: ' + error.message);
+    }
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('total-students')
+  async getTotalStudentsCount(@Query('activeOnly') activeOnly: boolean) {
+    try {
+      const total = await this.studentService.getTotalStudentsCount(activeOnly);
+      return {
+        success: true,
+        totalStudents: total,
+        activeOnly: activeOnly || false,
+      };
+    } catch (error) {
+      throw new Error('Failed to fetch total student count: ' + error.message);
     }
   }
 
@@ -138,7 +167,10 @@ export class StudentController {
     @Body() updateStudentDto: UpdateStudentDto,
   ) {
     try {
-      const updatedStudent = await this.studentService.update(id, updateStudentDto);
+      const updatedStudent = await this.studentService.update(
+        id,
+        updateStudentDto,
+      );
       return {
         success: true,
         student: updatedStudent,

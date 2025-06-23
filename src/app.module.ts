@@ -8,7 +8,7 @@ import { TeachersModule } from './teacher/teacher.module';
 import { UsersModule } from './user/users.module';
 import { AuthModule } from './auth/auth.module';
 import { AdminsModule } from './admins/admins.module';
-import { DashboardModule } from './dashboard/dashboard.module';
+import { DashboardModule } from './dashboard-add/dashboard.module';
 import { EnrollmentModule } from './enrollment/enrollment.module';
 import { ExamModule } from './exams/exam.module';
 import { ScheduleModule } from './schedule/schedule.module';
