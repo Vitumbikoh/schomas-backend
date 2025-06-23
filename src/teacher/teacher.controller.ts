@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Request, UseGuards, Body, Param, NotFoundException, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Request, UseGuards, Body, Param, NotFoundException, Query, ForbiddenException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Like } from 'typeorm';
 import { Teacher } from 'src/user/entities/teacher.entity';
@@ -8,12 +8,15 @@ import { Roles } from 'src/user/decorators/roles.decorator';
 import { Role } from 'src/user/enums/role.enum';
 import { CreateTeacherDto } from 'src/user/dtos/create-teacher.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
+import { UsersService } from 'src/user/user.service'; // Add this import
 
 @Controller('teacher')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles(Role.ADMIN)
 export class TeacherController {
-  constructor(private readonly teacherService: TeachersService) {}
+  constructor(
+    private readonly teacherService: TeachersService,
+    private readonly userService: UsersService 
+  ) {}
 
   @Get('teacher-management')
   async getTeacherManagementDashboard() {
@@ -65,20 +68,19 @@ export class TeacherController {
     };
   }
 
-  // admin-teacher.controller.ts
-@Post('teachers')
-async createTeacher(@Body() createTeacherDto: CreateTeacherDto) {
-  try {
-    const newTeacher = await this.teacherService.create(createTeacherDto);
-    return {
-      success: true,
-      teacher: newTeacher,
-      message: 'Teacher created successfully',
-    };
-  } catch (error) {
-    throw new Error('Failed to create teacher: ' + error.message);
+  @Post('teachers')
+  async createTeacher(@Body() createTeacherDto: CreateTeacherDto) {
+    try {
+      const newTeacher = await this.teacherService.create(createTeacherDto);
+      return {
+        success: true,
+        teacher: newTeacher,
+        message: 'Teacher created successfully',
+      };
+    } catch (error) {
+      throw new Error('Failed to create teacher: ' + error.message);
+    }
   }
-}
 
   @Get('teachers')
   async getAllTeachers(
@@ -116,6 +118,32 @@ async createTeacher(@Body() createTeacherDto: CreateTeacherDto) {
         itemsPerPage: limitNum,
       },
     };
+  }
+
+  @Get('my-students')
+  @Roles(Role.TEACHER)
+  async getMyStudents(@Request() req) {
+    try {
+      const userId = req.user.sub;
+      const user = await this.userService.findOne(userId, { relations: ['teacher'] });
+
+      if (!user || !user.teacher) {
+        throw new ForbiddenException('Your teacher record was not found. Please contact administration.');
+      }
+
+      const students = await this.teacherService.getStudentsForTeacher(user.teacher.id);
+      
+      return {
+        success: true,
+        students,
+        count: students.length,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new ForbiddenException('Failed to fetch students: ' + error.message);
+    }
   }
 
   @Get('teachers/:id')

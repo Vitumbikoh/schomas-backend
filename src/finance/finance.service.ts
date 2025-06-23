@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, Like, In } from 'typeorm';
+import { Repository, Between, Like, In, Brackets, ILike } from 'typeorm';
 import { Finance } from '../user/entities/finance.entity';
 import { FeePayment } from './entities/fee-payment.entity';
 import { Budget } from './entities/budget.entity';
@@ -164,22 +164,38 @@ export class FinanceService {
     }
   }
 
-  async getAllFinanceUsers(): Promise<Finance[]> {
-    return this.financeRepository.find({
+  // finance.service.ts
+  async getAllFinanceUsers(page: number, limit: number, search: string) {
+    // First get all finance users with their user relations
+    const financeUsers = await this.financeRepository.find({
       relations: ['user'],
-      select: [
-        'id',
-        'firstName',
-        'lastName',
-        'phoneNumber',
-        'address',
-        'dateOfBirth',
-        'gender',
-        'department',
-        'canApproveBudgets',
-        'canProcessPayments',
-      ],
+      skip: (page - 1) * limit,
+      take: limit,
+      where: search
+        ? [
+            { firstName: ILike(`%${search}%`) },
+            { lastName: ILike(`%${search}%`) },
+            { department: ILike(`%${search}%`) },
+            { user: { username: ILike(`%${search}%`) } },
+            { user: { email: ILike(`%${search}%`) } },
+          ]
+        : undefined,
     });
+
+    // Get total count for pagination
+    const total = await this.financeRepository.count({
+      where: search
+        ? [
+            { firstName: ILike(`%${search}%`) },
+            { lastName: ILike(`%${search}%`) },
+            { department: ILike(`%${search}%`) },
+            { user: { username: ILike(`%${search}%`) } },
+            { user: { email: ILike(`%${search}%`) } },
+          ]
+        : undefined,
+    });
+
+    return { financeUsers, total };
   }
 
   async approveBudget(

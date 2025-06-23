@@ -65,4 +65,5 @@ export class Teacher extends BaseEntity {
 
   @OneToMany(() => Schedule, (schedule) => schedule.teacher)
   schedules: Schedule[];
+
 }

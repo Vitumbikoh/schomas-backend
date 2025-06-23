@@ -23,46 +23,45 @@ export class TeachersService {
     if (!isUUID(id)) {
       throw new NotFoundException('Invalid teacher ID format');
     }
-  
-    const teacher = await this.teacherRepository.findOne({ 
+
+    const teacher = await this.teacherRepository.findOne({
       where: { id },
-      relations: ['user'] 
+      relations: ['user'],
     });
-  
+
     if (!teacher) {
       throw new NotFoundException('Teacher not found');
     }
-  
+
     return teacher;
   }
- // src/teacher/teacher.service.ts
-async findOneByUserId(userId: string): Promise<Teacher> {
-  const teacher = await this.teacherRepository.findOne({
-    where: { user: { id: userId } }, // Changed to look up by user.id
-    relations: ['user'],
-  });
+  // src/teacher/teacher.service.ts
+  async findOneByUserId(userId: string): Promise<Teacher> {
+    const teacher = await this.teacherRepository.findOne({
+      where: { user: { id: userId } }, // Changed to look up by user.id
+      relations: ['user'],
+    });
 
-  if (!teacher) {
-    throw new NotFoundException(`Teacher with user ID ${userId} not found`);
+    if (!teacher) {
+      throw new NotFoundException(`Teacher with user ID ${userId} not found`);
+    }
+
+    return teacher;
   }
 
-  return teacher;
-}
+  // src/teacher/teacher.service.ts
+  async findOneById(teacherId: string): Promise<Teacher> {
+    const teacher = await this.teacherRepository.findOne({
+      where: { id: teacherId }, // Look up by teacher.id (primary key)
+      relations: ['user'], // Include user relation if needed
+    });
 
+    if (!teacher) {
+      throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
+    }
 
-// src/teacher/teacher.service.ts
-async findOneById(teacherId: string): Promise<Teacher> {
-  const teacher = await this.teacherRepository.findOne({
-    where: { id: teacherId }, // Look up by teacher.id (primary key)
-    relations: ['user'], // Include user relation if needed
-  });
-
-  if (!teacher) {
-    throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
+    return teacher;
   }
-
-  return teacher;
-}
 
   async findAll(options?: {
     skip?: number;
@@ -76,15 +75,54 @@ async findOneById(teacherId: string): Promise<Teacher> {
   }
 
   async count(whereConditions: any): Promise<number> {
-    return this.teacherRepository.count({ 
+    return this.teacherRepository.count({
       where: whereConditions,
-      relations: ['user'] 
+      relations: ['user'],
     });
+  }
+
+  async getStudentsForTeacher(teacherId: string) {
+    const teacher = await this.teacherRepository.findOne({
+      where: { id: teacherId },
+      relations: [
+        'courses',
+        'courses.students',
+        'courses.students.user',
+        'courses.students.class',
+      ],
+    });
+
+    if (!teacher) {
+      throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
+    }
+
+    if (!teacher.courses || teacher.courses.length === 0) {
+      return []; // Return empty array if teacher has no courses
+    }
+
+    // Collect all unique students
+    const studentsMap = new Map<string, any>();
+
+    teacher.courses.forEach((course) => {
+      course.students?.forEach((student) => {
+        if (!studentsMap.has(student.id)) {
+          studentsMap.set(student.id, {
+            id: student.id,
+            firstName: student.firstName,
+            lastName: student.lastName,
+            email: student.user?.email,
+            class: student.class ? { name: student.class.name } : undefined,
+          });
+        }
+      });
+    });
+
+    return Array.from(studentsMap.values());
   }
 
   async create(createTeacherDto: CreateTeacherDto): Promise<Teacher> {
     const validatedDto = plainToClass(CreateTeacherDto, createTeacherDto);
-    
+
     // Hash password
     const hashedPassword = await bcrypt.hash(validatedDto.password, 10);
 
@@ -134,17 +172,17 @@ async findOneById(teacherId: string): Promise<Teacher> {
       const userEntity = await this.userRepository.findOne({
         where: { id: teacher.user.id },
       });
-      
+
       if (userEntity) {
         // Handle password if provided
         if (userData.password) {
           userEntity.password = await bcrypt.hash(userData.password, 10);
         }
-        
+
         // Update other user fields
         const { password, ...otherUserData } = userData;
         Object.assign(userEntity, otherUserData);
-        
+
         await this.userRepository.save(userEntity);
       }
     }
@@ -158,7 +196,7 @@ async findOneById(teacherId: string): Promise<Teacher> {
     }
 
     const teacher = await this.findOne(id);
-    
+
     // Remove teacher first to maintain referential integrity
     await this.teacherRepository.remove(teacher);
 
@@ -173,12 +211,12 @@ async findOneById(teacherId: string): Promise<Teacher> {
   }
 
   async findTeachersByIds(userIds: string[]): Promise<Teacher[]> {
-    if (!userIds.every(id => isUUID(id))) {
+    if (!userIds.every((id) => isUUID(id))) {
       throw new NotFoundException('One or more invalid teacher IDs');
     }
 
     return this.teacherRepository.find({
-      where: userIds.map(id => ({ user: { id } })),
+      where: userIds.map((id) => ({ user: { id } })),
       relations: ['user'],
     });
   }

@@ -87,16 +87,52 @@ export class FinanceController {
     return this.financeService.createFinanceUser(createFinanceDto);
   }
 
-  @Get()
-  @Roles(Role.ADMIN) // Only admins can list all finance users
-  @ApiOperation({ summary: 'Get all finance users' })
-  @ApiResponse({
-    status: 200,
-    description: 'List of finance users retrieved successfully',
-  })
-  async getAllFinanceUsers() {
-    return this.financeService.getAllFinanceUsers();
-  }
+// finance.controller.ts
+@Get()
+@Roles(Role.ADMIN)
+@ApiOperation({ summary: 'Get all finance users' })
+@ApiQuery({ name: 'page', required: false, type: Number })
+@ApiQuery({ name: 'limit', required: false, type: Number })
+@ApiQuery({ name: 'search', required: false, type: String })
+@ApiResponse({
+  status: 200,
+  description: 'List of finance users retrieved successfully',
+})
+async getAllFinanceUsers(
+  @Query('page') page = 1,
+  @Query('limit') limit = 10,
+  @Query('search') search = '',
+) {
+  const { financeUsers, total } = await this.financeService.getAllFinanceUsers(
+    Number(page),
+    Number(limit),
+    search
+  );
+
+  // Transform the data to match what the frontend expects
+  const transformedFinanceOfficers = financeUsers.map(finance => ({
+    id: finance.id,
+    firstName: finance.firstName,
+    lastName: finance.lastName,
+    email: finance.user?.email,
+    phoneNumber: finance.phoneNumber,
+    department: finance.department,
+    canApproveBudgets: finance.canApproveBudgets,
+    canProcessPayments: finance.canProcessPayments,
+    status: finance.user?.isActive ? 'active' : 'inactive',
+    hireDate: finance.user?.createdAt.toISOString()
+  }));
+
+  return {
+    financeOfficers: transformedFinanceOfficers,
+    pagination: {
+      totalItems: total,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      itemsPerPage: limit
+    }
+  };
+}
 
   @Post('budgets/:id/approve')
   @ApiOperation({ summary: 'Approve a budget proposal' })

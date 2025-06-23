@@ -6,12 +6,15 @@ import {
   ManyToOne,
   JoinColumn,
   OneToMany,
+  JoinTable,
+  ManyToMany,
 } from 'typeorm';
 import { User } from 'src/user/entities/user.entity';
 import { Teacher } from 'src/user/entities/teacher.entity';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { Exam } from 'src/exams/entities/exam.entity';
 import { Class } from 'src/classes/entity/class.entity';
+import { Student } from 'src/user/entities/student.entity';
 
 @Entity()
 export class Course {
@@ -81,4 +84,7 @@ export class Course {
   @OneToMany(() => Exam, (exam) => exam.course)
   exams: Exam[];
 
+  @ManyToMany(() => Student, (student) => student.courses)
+  @JoinTable()
+  students: Student[];
 }

@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { FindOneOptions, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { Teacher } from './entities/teacher.entity';
 import { Student } from './entities/student.entity';
@@ -30,21 +30,29 @@ export class UsersService {
     private readonly financeRepository: Repository<Finance>,
   ) {}
 
+  // In user.service.ts
+  async findOne(id: string, options?: FindOneOptions<User>) {
+    return this.userRepository.findOne({
+      where: { id },
+      ...options,
+    });
+  }
+
   async findByUsername(username: string): Promise<User | null> {
     return this.userRepository.findOne({ where: { username } });
   }
 
   async findById(id: string): Promise<User | null> {
-    return this.userRepository.findOne({ 
+    return this.userRepository.findOne({
       where: { id },
-      relations: ['teacher', 'student', 'parent', 'finance']
+      relations: ['teacher', 'student', 'parent', 'finance'],
     });
   }
 
   async findByEmail(email: string): Promise<User | null> {
-    return this.userRepository.findOne({ 
+    return this.userRepository.findOne({
       where: { email },
-      relations: ['teacher', 'student', 'parent', 'finance']
+      relations: ['teacher', 'student', 'parent', 'finance'],
     });
   }
 
@@ -55,7 +63,7 @@ export class UsersService {
       email: createUserDto.email,
       password: hashedPassword,
       role: createUserDto.role as Role,
-      isActive: true
+      isActive: true,
     });
     return this.userRepository.save(user);
   }
@@ -109,18 +117,18 @@ export class UsersService {
   }
 
   // users.service.ts
-async updateUser(id: string, updateUserDto: UpdateUserDto) {
-  const user = await this.userRepository.findOne({ where: { id } });
-  if (!user) {
-    throw new NotFoundException('User not found');
-  }
+  async updateUser(id: string, updateUserDto: UpdateUserDto) {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
 
-  // Update all fields including role
-  Object.assign(user, updateUserDto);
-  user.updatedAt = new Date();
-  
-  return this.userRepository.save(user);
-}
+    // Update all fields including role
+    Object.assign(user, updateUserDto);
+    user.updatedAt = new Date();
+
+    return this.userRepository.save(user);
+  }
   async createFinance(createFinanceDto: CreateFinanceDto): Promise<Finance> {
     const userDto: CreateUserDto = {
       username: createFinanceDto.username,

@@ -42,7 +42,7 @@ export class User {
   image?: string;
 
   @OneToOne(() => UserSettings, (settings) => settings.user)
-settings: UserSettings;
+  settings: UserSettings;
 
   @OneToOne(() => Teacher, (teacher) => teacher.user, { nullable: true })
   @JoinColumn()
