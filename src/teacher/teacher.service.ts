@@ -9,6 +9,7 @@ import * as bcrypt from 'bcrypt';
 import { Role } from 'src/user/enums/role.enum';
 import { plainToClass } from 'class-transformer';
 import { isUUID } from 'class-validator';
+import { Course } from 'src/course/entities/course.entity';
 
 @Injectable()
 export class TeachersService {
@@ -17,6 +18,8 @@ export class TeachersService {
     private readonly teacherRepository: Repository<Teacher>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(Course)
+    private readonly courseRepository: Repository<Course>,
   ) {}
 
   async findOne(id: string): Promise<Teacher> {
@@ -35,25 +38,33 @@ export class TeachersService {
 
     return teacher;
   }
-  // src/teacher/teacher.service.ts
+
   async findOneByUserId(userId: string): Promise<Teacher> {
+    if (!userId || !isUUID(userId)) {
+      console.error('Invalid user ID:', userId);
+      throw new NotFoundException('Invalid user ID');
+    }
+
     const teacher = await this.teacherRepository.findOne({
-      where: { user: { id: userId } }, // Changed to look up by user.id
+      where: { user: { id: userId } },
       relations: ['user'],
     });
 
     if (!teacher) {
+      console.error(`Teacher not found for user ID: ${userId}`);
       throw new NotFoundException(`Teacher with user ID ${userId} not found`);
     }
 
+    console.log(
+      `Found teacher: ${teacher.firstName} ${teacher.lastName} (${teacher.id}) for user ${userId}`,
+    );
     return teacher;
   }
 
-  // src/teacher/teacher.service.ts
   async findOneById(teacherId: string): Promise<Teacher> {
     const teacher = await this.teacherRepository.findOne({
-      where: { id: teacherId }, // Look up by teacher.id (primary key)
-      relations: ['user'], // Include user relation if needed
+      where: { id: teacherId },
+      relations: ['user'],
     });
 
     if (!teacher) {
@@ -82,51 +93,88 @@ export class TeachersService {
   }
 
   async getStudentsForTeacher(teacherId: string) {
+    console.log(`Fetching students for teacher ID: ${teacherId}`);
+
+    if (!isUUID(teacherId)) {
+      console.error('Invalid teacher ID:', teacherId);
+      throw new NotFoundException('Invalid teacher ID');
+    }
+
     const teacher = await this.teacherRepository.findOne({
       where: { id: teacherId },
-      relations: [
-        'courses',
-        'courses.students',
-        'courses.students.user',
-        'courses.students.class',
-      ],
+      relations: ['user'],
     });
 
     if (!teacher) {
+      console.error(`Teacher with ID ${teacherId} not found`);
       throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
     }
 
-    if (!teacher.courses || teacher.courses.length === 0) {
-      return []; // Return empty array if teacher has no courses
-    }
+    console.log(`Teacher found: ${teacher.firstName} ${teacher.lastName}`);
 
-    // Collect all unique students
-    const studentsMap = new Map<string, any>();
-
-    teacher.courses.forEach((course) => {
-      course.students?.forEach((student) => {
-        if (!studentsMap.has(student.id)) {
-          studentsMap.set(student.id, {
-            id: student.id,
-            firstName: student.firstName,
-            lastName: student.lastName,
-            email: student.user?.email,
-            class: student.class ? { name: student.class.name } : undefined,
-          });
-        }
-      });
+    const courses = await this.courseRepository.find({
+      where: { teacher: { id: teacherId } },
+      relations: [
+        'enrollments',
+        'enrollments.student',
+        'enrollments.student.user',
+        'enrollments.student.class',
+      ],
     });
 
-    return Array.from(studentsMap.values());
+    console.log(`Found ${courses.length} courses for teacher ${teacherId}`);
+
+    const studentsMap = new Map<string, any>();
+
+    courses.forEach((course) => {
+      console.log(
+        `Processing course: ${course.name} (${course.id}) with ${course.enrollments?.length || 0} enrollments`,
+      );
+
+      if (course.enrollments && course.enrollments.length > 0) {
+        course.enrollments.forEach((enrollment) => {
+          const student = enrollment.student;
+          if (student && !studentsMap.has(student.id)) {
+            studentsMap.set(student.id, {
+              id: student.id,
+              firstName: student.firstName,
+              lastName: student.lastName,
+              email: student.user?.email || null,
+              class: student.class
+                ? {
+                    id: student.class.id,
+                    name: student.class.name,
+                  }
+                : null,
+              courses: [],
+            });
+          }
+
+          if (student) {
+            const studentData = studentsMap.get(student.id);
+            studentData.courses.push({
+              courseId: course.id,
+              courseName: course.name,
+              courseCode: course.code,
+              enrollmentDate: enrollment.enrollmentDate || enrollment.createdAt,
+            });
+          }
+        });
+      }
+    });
+
+    const students = Array.from(studentsMap.values());
+    console.log(
+      `Returning ${students.length} students for teacher ${teacherId}`,
+    );
+    return students;
   }
 
   async create(createTeacherDto: CreateTeacherDto): Promise<Teacher> {
     const validatedDto = plainToClass(CreateTeacherDto, createTeacherDto);
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(validatedDto.password, 10);
 
-    // Create User First
     const user = this.userRepository.create({
       username: validatedDto.username,
       email: validatedDto.email,
@@ -135,7 +183,6 @@ export class TeachersService {
     });
     await this.userRepository.save(user);
 
-    // Create Teacher with User Reference
     const teacher = this.teacherRepository.create({
       firstName: validatedDto.firstName,
       lastName: validatedDto.lastName,
@@ -165,7 +212,6 @@ export class TeachersService {
     const teacher = await this.findOne(id);
     const { user: userData, ...teacherData } = updateTeacherDto;
 
-    // Update teacher fields
     Object.assign(teacher, teacherData);
 
     if (userData) {
@@ -174,12 +220,10 @@ export class TeachersService {
       });
 
       if (userEntity) {
-        // Handle password if provided
         if (userData.password) {
           userEntity.password = await bcrypt.hash(userData.password, 10);
         }
 
-        // Update other user fields
         const { password, ...otherUserData } = userData;
         Object.assign(userEntity, otherUserData);
 
@@ -197,10 +241,8 @@ export class TeachersService {
 
     const teacher = await this.findOne(id);
 
-    // Remove teacher first to maintain referential integrity
     await this.teacherRepository.remove(teacher);
 
-    // Then remove the associated user
     if (teacher.user) {
       await this.userRepository.remove(teacher.user);
     }

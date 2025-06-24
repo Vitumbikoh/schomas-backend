@@ -8,17 +8,20 @@ import { Teacher } from 'src/user/entities/teacher.entity';
 import { ConfigModule } from 'src/config/config.module';
 import { TeacherController } from './teacher.controller';
 import { UsersService } from 'src/user/user.service';
+import { CourseService } from 'src/course/course.service';
+import { Course } from 'src/course/entities/course.entity';
 
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([Teacher, User]),
+    TypeOrmModule.forFeature([Teacher, User, Course]),
     UsersModule,
     AuthModule,
   ],
   providers: [
     TeachersService,
-    UsersService, // Add UserService to providers
+    UsersService,
+    CourseService // Add UserService to providers
   ],
   controllers: [TeacherController],
   exports: [TeachersService],

@@ -18,25 +18,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  // async validate(payload: any): Promise<User> {
-  //   const user = await this.authService.validateToken(payload.sub);
-  //   if (!user) {
-  //     throw new Error('User not found');
-  //   }
-  //   return user;
-  // }
-
-  // async validate(payload: any) {
-  //   console.log('JWT Payload:', payload); // Debug payload
-  //   const user = await this.authService.validateToken(payload.sub);
-  //   if (!user) {
-  //     console.log('User not found for ID:', payload.sub); // Debug
-  //     throw new UnauthorizedException();
-  //   }
-  //   console.log('Validated user:', user); // Debug
-  //   return user; // Return full user object
-  // }
-
   async validate(payload: any) {
     console.log('Validating JWT payload:', payload);
     try {
@@ -46,9 +27,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         throw new UnauthorizedException('User not found');
       }
       return {
-        id: user.id,
+        sub: user.id, // Changed from 'id' to 'sub' to match JWT payload and controller expectations
         email: user.email,
-        role: user.role
+        role: user.role,
       };
     } catch (error) {
       console.error('JWT validation error:', error);

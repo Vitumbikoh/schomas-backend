@@ -52,7 +52,7 @@ export class Student extends BaseEntity {
   @JoinColumn()
   user: User;
 
- @ManyToOne(() => Class, (cls) => cls.students)
+  @ManyToOne(() => Class, (cls) => cls.students)
   @JoinColumn({ name: 'classId' })
   class: Class;
 
@@ -77,7 +77,8 @@ export class Student extends BaseEntity {
   @OneToMany(() => ExamAttempt, (attempt) => attempt.student)
   examAttempts: ExamAttempt[];
 
-  @ManyToMany(() => Course, course => course.students)
-courses: Course[];
+  @ManyToMany(() => Course, (course) => course.students)
+  courses: Course[];
 
+  
 }

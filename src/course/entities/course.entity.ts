@@ -49,9 +49,6 @@ export class Course {
     location: string;
   };
 
-  @OneToMany(() => Enrollment, (enrollment) => enrollment.course)
-  enrollments: Enrollment[];
-
   @ManyToOne(() => User)
   @JoinColumn({ name: 'userId' })
   user: User;
@@ -87,4 +84,8 @@ export class Course {
   @ManyToMany(() => Student, (student) => student.courses)
   @JoinTable()
   students: Student[];
+
+  @OneToMany(() => Enrollment, enrollment => enrollment.course)
+enrollments: Enrollment[];
+
 }

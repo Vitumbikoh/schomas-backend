@@ -1,4 +1,17 @@
-import { Controller, Get, Post, Put, Delete, Request, UseGuards, Body, Param, NotFoundException, Query, ForbiddenException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Request,
+  UseGuards,
+  Body,
+  Param,
+  NotFoundException,
+  Query,
+  ForbiddenException,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Like } from 'typeorm';
 import { Teacher } from 'src/user/entities/teacher.entity';
@@ -8,14 +21,14 @@ import { Roles } from 'src/user/decorators/roles.decorator';
 import { Role } from 'src/user/enums/role.enum';
 import { CreateTeacherDto } from 'src/user/dtos/create-teacher.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
-import { UsersService } from 'src/user/user.service'; // Add this import
+import { UsersService } from 'src/user/user.service';
 
 @Controller('teacher')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 export class TeacherController {
   constructor(
     private readonly teacherService: TeachersService,
-    private readonly userService: UsersService 
+    private readonly userService: UsersService,
   ) {}
 
   @Get('teacher-management')
@@ -57,7 +70,8 @@ export class TeacherController {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const newHires = teachers.filter(
-      (teacher) => teacher.hireDate && new Date(teacher.hireDate) > thirtyDaysAgo,
+      (teacher) =>
+        teacher.hireDate && new Date(teacher.hireDate) > thirtyDaysAgo,
     ).length;
 
     return {
@@ -88,61 +102,117 @@ export class TeacherController {
     @Query('limit') limit: string = '10',
     @Query('search') search?: string,
   ) {
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 10;
-    const skip = (pageNum - 1) * limitNum;
+    try {
+      const pageNum = parseInt(page, 10) || 1;
+      const limitNum = parseInt(limit, 10) || 10;
+      const skip = (pageNum - 1) * limitNum;
 
-    const whereConditions = search
-      ? [
-          { firstName: Like(`%${search}%`) },
-          { lastName: Like(`%${search}%`) },
-          { user: { email: Like(`%${search}%`) } },
-        ]
-      : {};
+      const where = search
+        ? [
+            { firstName: Like(`%${search}%`) },
+            { lastName: Like(`%${search}%`) },
+            { user: { email: Like(`%${search}%`) } },
+          ]
+        : {};
 
-    const [teachers, total] = await Promise.all([
-      this.teacherService.findAll({
+      const teachers = await this.teacherService.findAll({
         skip,
         take: limitNum,
-        where: whereConditions,
-      }),
-      this.teacherService.count(whereConditions),
-    ]);
+        where,
+      });
 
-    return {
-      teachers,
-      pagination: {
-        currentPage: pageNum,
-        totalPages: Math.ceil(total / limitNum),
-        totalItems: total,
-        itemsPerPage: limitNum,
-      },
-    };
+      const total = await this.teacherService.count(where);
+
+      return {
+        success: true,
+        teachers,
+        pagination: {
+          currentPage: pageNum,
+          totalPages: Math.ceil(total / limitNum),
+          totalItems: total,
+          itemsPerPage: limitNum,
+        },
+      };
+    } catch (error) {
+      console.error('Error fetching teachers:', error);
+      throw new Error('Failed to fetch teachers: ' + error.message);
+    }
   }
 
   @Get('my-students')
   @Roles(Role.TEACHER)
-  async getMyStudents(@Request() req) {
+  async getMyStudents(
+    @Request() req,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+    @Query('search') search?: string,
+  ) {
     try {
-      const userId = req.user.sub;
-      const user = await this.userService.findOne(userId, { relations: ['teacher'] });
+      const userId = req.user?.sub;
+      console.log('Request user:', req.user);
+      if (!userId) {
+        console.error('No user ID found in request');
+        throw new ForbiddenException('Invalid user authentication');
+      }
+      console.log(`Authenticated user ID: ${userId}`);
 
-      if (!user || !user.teacher) {
-        throw new ForbiddenException('Your teacher record was not found. Please contact administration.');
+      const teacher = await this.teacherService.findOneByUserId(userId);
+      console.log(
+        `Associated teacher: ${teacher.firstName} ${teacher.lastName} (${teacher.id})`,
+      );
+
+      if (!teacher) {
+        console.error(`Teacher not found for user ID: ${userId}`);
+        throw new NotFoundException('Your teacher record was not found');
       }
 
-      const students = await this.teacherService.getStudentsForTeacher(user.teacher.id);
-      
+      const allStudents = await this.teacherService.getStudentsForTeacher(
+        teacher.id,
+      );
+      console.log(`Total students found: ${allStudents.length}`);
+
+      let filteredStudents = allStudents;
+      if (search) {
+        const searchLower = search.toLowerCase();
+        filteredStudents = allStudents.filter(
+          (student) =>
+            student.firstName.toLowerCase().includes(searchLower) ||
+            student.lastName.toLowerCase().includes(searchLower) ||
+            student.email?.toLowerCase().includes(searchLower) ||
+            student.class?.name.toLowerCase().includes(searchLower),
+        );
+        console.log(`Students after search filter: ${filteredStudents.length}`);
+      }
+
+      const pageNum = parseInt(page, 10) || 1;
+      const limitNum = parseInt(limit, 10) || 10;
+      const total = filteredStudents.length;
+      const paginatedStudents = filteredStudents.slice(
+        (pageNum - 1) * limitNum,
+        pageNum * limitNum,
+      );
+
       return {
         success: true,
-        students,
-        count: students.length,
+        students: paginatedStudents,
+        pagination: {
+          currentPage: pageNum,
+          totalPages: Math.ceil(total / limitNum),
+          totalItems: total,
+          itemsPerPage: limitNum,
+        },
       };
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      console.error('Error in getMyStudents:', error);
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
-      throw new ForbiddenException('Failed to fetch students: ' + error.message);
+      throw new ForbiddenException(
+        'Failed to fetch students: ' + error.message,
+      );
     }
   }
 
@@ -161,7 +231,10 @@ export class TeacherController {
     @Body() updateTeacherDto: UpdateTeacherDto,
   ) {
     try {
-      const updatedTeacher = await this.teacherService.update(id, updateTeacherDto);
+      const updatedTeacher = await this.teacherService.update(
+        id,
+        updateTeacherDto,
+      );
       return {
         success: true,
         teacher: updatedTeacher,
