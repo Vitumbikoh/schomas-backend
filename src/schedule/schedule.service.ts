@@ -24,6 +24,7 @@ export class ScheduleService {
 
   async create(createScheduleDto: {
     classId: string;
+    date: Date;
     day: string;
     startTime: Date;
     endTime: Date;
@@ -65,7 +66,8 @@ export class ScheduleService {
       .createQueryBuilder('schedule')
       .where('schedule.classroomId = :classroomId', {
         classroomId: createScheduleDto.classroomId,
-      }) // Use classroomId instead of classroom_id
+      })
+      .andWhere('schedule.date = :date', { date: createScheduleDto.date })
       .andWhere('schedule.day = :day', { day: createScheduleDto.day })
       .andWhere(
         '(:startTime BETWEEN schedule.startTime AND schedule.endTime OR :endTime BETWEEN schedule.startTime AND schedule.endTime)',
@@ -82,6 +84,7 @@ export class ScheduleService {
 
     const schedule = this.scheduleRepository.create({
       class: classEntity,
+      date: createScheduleDto.date,
       day: createScheduleDto.day,
       startTime: createScheduleDto.startTime,
       endTime: createScheduleDto.endTime,
@@ -156,20 +159,20 @@ export class ScheduleService {
         this.scheduleRepository.count({
           where: {
             isActive: true,
-            startTime: MoreThan(new Date()),
+            date: MoreThan(new Date()),
           },
         }),
       ]);
 
       const teacherCount = await this.scheduleRepository
         .createQueryBuilder('schedule')
-        .select('COUNT(DISTINCT schedule.teacherId)', 'count') // Check if teacherId is correct
+        .select('COUNT(DISTINCT schedule.teacherId)', 'count')
         .where('schedule.isActive = :isActive', { isActive: true })
         .getRawOne();
 
       const classroomCount = await this.scheduleRepository
         .createQueryBuilder('schedule')
-        .select('COUNT(DISTINCT schedule.classroomId)', 'count') // Check if classroomId is correct
+        .select('COUNT(DISTINCT schedule.classroomId)', 'count')
         .where('schedule.isActive = :isActive', { isActive: true })
         .getRawOne();
 
@@ -216,6 +219,7 @@ export class ScheduleService {
   async update(
     id: string,
     updateScheduleDto: {
+      date?: Date;
       day?: string;
       startTime?: Date;
       endTime?: Date;

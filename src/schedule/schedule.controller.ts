@@ -1,4 +1,3 @@
-// schedule.controller.ts
 import {
   Controller,
   Get,
@@ -35,6 +34,7 @@ export class ScheduleController {
     @Body()
     createScheduleDto: {
       classId: string;
+      date: Date;
       day: string;
       startTime: Date;
       endTime: Date;
@@ -95,12 +95,14 @@ export class ScheduleController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body()
     updateScheduleDto: {
+      date?: Date;
       day?: string;
       startTime?: Date;
       endTime?: Date;
       courseId?: string;
       teacherId?: string;
       classroomId?: string;
+      classId?: string;
       isActive?: boolean;
     },
   ) {

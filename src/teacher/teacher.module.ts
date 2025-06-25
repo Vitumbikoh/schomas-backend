@@ -10,18 +10,27 @@ import { TeacherController } from './teacher.controller';
 import { UsersService } from 'src/user/user.service';
 import { CourseService } from 'src/course/course.service';
 import { Course } from 'src/course/entities/course.entity';
+import { ClassService } from 'src/classes/class.service';
+import { Class } from 'src/classes/entity/class.entity';
+import { Schedule } from 'src/schedule/entity/schedule.entity';
+import { ScheduleService } from 'src/schedule/schedule.service';
+import { ClassroomService } from 'src/classroom/classroom.service';
+import { Classroom } from 'src/classroom/entity/classroom.entity';
 
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([Teacher, User, Course]),
+    TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom]),
     UsersModule,
     AuthModule,
   ],
   providers: [
     TeachersService,
     UsersService,
-    CourseService // Add UserService to providers
+    CourseService,
+    ClassService,
+    ScheduleService,
+    ClassroomService,
   ],
   controllers: [TeacherController],
   exports: [TeachersService],

@@ -17,6 +17,9 @@ export class Schedule {
   id: string;
 
   @Column()
+  date: Date;
+
+  @Column()
   day: string;
 
   @Column()

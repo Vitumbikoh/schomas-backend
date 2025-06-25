@@ -11,10 +11,11 @@ import { CourseModule } from 'src/course/course.module';
 import { AuthModule } from 'src/auth/auth.module';
 import { ConfigModule } from 'src/config/config.module';
 import { ClassModule } from 'src/classes/class.module'; // Add this import
+import { Class } from 'src/classes/entity/class.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Schedule, Course, Teacher, Classroom]),
+    TypeOrmModule.forFeature([Schedule, Course, Teacher, Classroom, Class]),
     CourseModule,
     AuthModule,
     ConfigModule,
