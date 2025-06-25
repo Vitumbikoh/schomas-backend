@@ -379,7 +379,7 @@ export class TeacherController {
       }
 
       const pageNum = parseInt(page, 10) || 1;
-      const limitNum = 10;
+      const limitNum = parseInt(limit, 10) || 10;
       const { courses, total } = await this.teacherService.getCoursesForTeacher(
         teacher.id,
         pageNum,
@@ -390,6 +390,7 @@ export class TeacherController {
 
       return {
         success: true,
+        totalCourses: total,
         courses,
         pagination: {
           currentPage: pageNum,
@@ -568,6 +569,73 @@ async getMyStudentsByCourse(
     throw new ForbiddenException('Failed to fetch students for course: ' + error.message);
   }
 }
+
+  @Get('my-upcoming-classes')
+  @Roles(Role.TEACHER)
+  async getMyUpcomingClasses(@Request() req) {
+    try {
+      const userId = req.user?.sub;
+      if (!userId) {
+        console.error('No user ID found in request');
+        throw new ForbiddenException('Invalid user authentication');
+      }
+      console.log(`Authenticated user ID: ${userId}`);
+
+      const teacher = await this.teacherService.findOneByUserId(userId);
+      if (!teacher) {
+        console.error(`Teacher not found for user ID: ${userId}`);
+        throw new NotFoundException('Your teacher record was not found');
+      }
+
+      const currentDate = new Date();
+      const classes = await this.teacherService.getUpcomingClassesForTeacher(teacher.id, currentDate);
+      console.log(`Total upcoming classes found for teacher ${teacher.id}: ${classes.length}`);
+
+      return {
+        success: true,
+        classes,
+      };
+    } catch (error) {
+      console.error('Error in getMyUpcomingClasses:', error);
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new ForbiddenException('Failed to fetch upcoming classes: ' + error.message);
+    }
+  }
+
+  @Get('my-attendance-today')
+  @Roles(Role.TEACHER)
+  async getMyAttendanceToday(@Request() req) {
+    try {
+      const userId = req.user?.sub;
+      if (!userId) {
+        console.error('No user ID found in request');
+        throw new ForbiddenException('Invalid user authentication');
+      }
+      console.log(`Authenticated user ID: ${userId}`);
+
+      const teacher = await this.teacherService.findOneByUserId(userId);
+      if (!teacher) {
+        console.error(`Teacher not found for user ID: ${userId}`);
+        throw new NotFoundException('Your teacher record was not found');
+      }
+
+      const attendance = await this.teacherService.getAttendanceForTeacherToday(teacher.id);
+      console.log(`Total attendance records found for teacher ${teacher.id}: ${attendance.length}`);
+
+      return {
+        success: true,
+        attendance,
+      };
+    } catch (error) {
+      console.error('Error in getMyAttendanceToday:', error);
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new ForbiddenException('Failed to fetch attendance: ' + error.message);
+    }
+  }
 
   @Get('teachers/:id')
   async getTeacher(@Param('id') id: string) {

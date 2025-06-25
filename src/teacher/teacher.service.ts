@@ -12,6 +12,8 @@ import { plainToClass } from 'class-transformer';
 import { isUUID } from 'class-validator';
 import { Course } from 'src/course/entities/course.entity';
 import { Class } from 'src/classes/entity/class.entity';
+import { Attendance } from 'src/attendance/entity/attendance.entity';
+import { format } from 'date-fns';
 
 @Injectable()
 export class TeachersService {
@@ -26,6 +28,8 @@ export class TeachersService {
     private readonly classRepository: Repository<Class>,
     @InjectRepository(Schedule)
     private readonly scheduleRepository: Repository<Schedule>,
+    @InjectRepository(Attendance)
+    private readonly attendanceRepository: Repository<Attendance>,
   ) {}
 
   async findOne(id: string): Promise<Teacher> {
@@ -47,7 +51,7 @@ export class TeachersService {
 
   async findOneByUserId(userId: string): Promise<Teacher> {
     if (!userId || !isUUID(userId)) {
-      console.error('Invalid user ID:', userId);
+      console.error(`Invalid user ID: ${userId}`);
       throw new NotFoundException('Invalid user ID');
     }
 
@@ -132,7 +136,7 @@ export class TeachersService {
     console.log(`Fetching schedules for teacher ID: ${teacherId}`);
 
     if (!isUUID(teacherId)) {
-      console.error('Invalid teacher ID:', teacherId);
+      console.error(`Invalid teacher ID: ${teacherId}`);
       throw new NotFoundException('Invalid teacher ID');
     }
 
@@ -207,11 +211,145 @@ export class TeachersService {
     };
   }
 
+  async getUpcomingClassesForTeacher(teacherId: string, currentDate: Date): Promise<any[]> {
+  console.log(`Fetching upcoming classes for teacher ID: ${teacherId}`);
+
+  if (!isUUID(teacherId)) {
+    console.error(`Invalid teacher ID: ${teacherId}`);
+    throw new NotFoundException('Invalid teacher ID');
+  }
+
+  const teacher = await this.teacherRepository.findOne({
+    where: { id: teacherId },
+    relations: ['user'],
+  });
+
+  if (!teacher) {
+    console.error(`Teacher with ID ${teacherId} not found`);
+    throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
+  }
+
+  console.log(`Teacher found: ${teacher.firstName} ${teacher.lastName}`);
+
+  const startOfDay = new Date(currentDate);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(currentDate);
+  endOfDay.setHours(23, 59, 59, 999);
+
+  // Format current time for TIME comparison
+  const currentTime = format(currentDate, 'HH:mm:ss');
+  const currentDateStr = format(currentDate, 'yyyy-MM-dd');
+
+  const schedules = await this.scheduleRepository
+    .createQueryBuilder('schedule')
+    .leftJoinAndSelect('schedule.course', 'course')
+    .leftJoinAndSelect('schedule.classroom', 'classroom')
+    .leftJoinAndSelect('schedule.class', 'class')
+    .where('schedule.teacherId = :teacherId', { teacherId })
+    .andWhere('schedule.isActive = :isActive', { isActive: true })
+    .andWhere('schedule.date = :currentDateStr', { currentDateStr })
+    .andWhere("TO_CHAR(schedule.startTime, 'HH24:MI:SS') > :currentTime", { currentTime })
+    .orderBy({
+      'schedule.date': 'ASC',
+      'schedule.startTime': 'ASC',
+    })
+    .take(3)
+    .getMany();
+
+  console.log(`Found ${schedules.length} upcoming classes for teacher ${teacherId}`);
+
+  return schedules.map(schedule => ({
+    id: schedule.id,
+    courseName: schedule.course?.name || 'Unknown Course',
+    className: schedule.class?.name || 'Unknown Class',
+    room: schedule.classroom?.name || 'Unknown Room',
+    startTime: format(schedule.startTime, 'HH:mm:ss'), // Format for display
+  }));
+}
+
+  async getAttendanceForTeacherToday(teacherId: string): Promise<any[]> {
+    console.log(`Fetching today's attendance for teacher ID: ${teacherId}`);
+
+    if (!isUUID(teacherId)) {
+      console.error(`Invalid teacher ID: ${teacherId}`);
+      throw new NotFoundException('Invalid teacher ID');
+    }
+
+    const teacher = await this.teacherRepository.findOne({
+      where: { id: teacherId },
+      relations: ['user'],
+    });
+
+    if (!teacher) {
+      console.error(`Teacher with ID ${teacherId} not found`);
+      throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
+    }
+
+    console.log(`Teacher found: ${teacher.firstName} ${teacher.lastName}`);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+
+    const courses = await this.courseRepository.find({
+      where: { teacher: { id: teacherId } },
+      relations: ['enrollments', 'enrollments.student', 'class'],
+    });
+
+    const courseIds = courses.map((course) => course.id);
+    const attendanceRecords = await this.attendanceRepository
+      .createQueryBuilder('attendance')
+      .leftJoinAndSelect('attendance.course', 'course')
+      .leftJoinAndSelect('attendance.class', 'class')
+      .where('attendance.courseId IN (:...courseIds)', { courseIds })
+      .andWhere('attendance.date >= :today AND attendance.date < :tomorrow', { today, tomorrow })
+      .getMany();
+
+    const attendanceMap = new Map<string, { className: string; courseName: string; enrolled: number; present: number }>();
+
+    courses.forEach((course) => {
+      const className = course.class?.name || 'Unknown';
+      const courseName = course.name;
+      const key = `${className}-${courseName}`;
+      if (!attendanceMap.has(key)) {
+        attendanceMap.set(key, {
+          className,
+          courseName,
+          enrolled: course.enrollments?.length || 0,
+          present: 0,
+        });
+      }
+    });
+
+    attendanceRecords.forEach((record) => {
+      const className = record.class?.name || 'Unknown';
+      const courseName = record.course?.name || 'None';
+      const key = `${className}-${courseName}`;
+      if (attendanceMap.has(key) && record.present) {
+        const attendanceRecord = attendanceMap.get(key);
+        if (attendanceRecord) {
+          attendanceRecord.present++;
+        }
+      }
+    });
+
+    const attendance = Array.from(attendanceMap.values()).slice(0, 3);
+    console.log(`Returning ${attendance.length} attendance records for teacher ${teacherId}`);
+
+    return attendance.map((record) => ({
+      className: record.className,
+      courseName: record.courseName,
+      enrolledStudents: record.enrolled,
+      presentStudents: record.present,
+    }));
+  }
+
   async getStudentsForTeacher(teacherId: string) {
     console.log(`Fetching students for teacher ID: ${teacherId}`);
 
     if (!isUUID(teacherId)) {
-      console.error('Invalid teacher ID:', teacherId);
+      console.error(`Invalid teacher ID: ${teacherId}`);
       throw new NotFoundException('Invalid teacher ID');
     }
 
@@ -285,81 +423,81 @@ export class TeachersService {
     return students;
   }
 
-async getStudentsForTeacherByCourse(
-  teacherId: string,
-  courseId: string,
-  page: number,
-  limit: number,
-  search?: string,
-): Promise<{ students: any[]; total: number }> {
-  console.log(`Fetching students for teacher ID: ${teacherId}, course ID: ${courseId}`);
+  async getStudentsForTeacherByCourse(
+    teacherId: string,
+    courseId: string,
+    page: number,
+    limit: number,
+    search?: string,
+  ): Promise<{ students: any[]; total: number }> {
+    console.log(`Fetching students for teacher ID: ${teacherId}, course ID: ${courseId}`);
 
-  if (!isUUID(teacherId) || !isUUID(courseId)) {
-    console.error('Invalid teacher ID or course ID:', teacherId, courseId);
-    throw new NotFoundException('Invalid teacher ID or course ID');
+    if (!isUUID(teacherId) || !isUUID(courseId)) {
+      console.error(`Invalid teacher ID or course ID: ${teacherId}, ${courseId}`);
+      throw new NotFoundException('Invalid teacher ID or course ID');
+    }
+
+    const teacher = await this.teacherRepository.findOne({
+      where: { id: teacherId },
+      relations: ['user'],
+    });
+
+    if (!teacher) {
+      console.error(`Teacher with ID ${teacherId} not found`);
+      throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
+    }
+
+    const course = await this.courseRepository.findOne({
+      where: { id: courseId, teacher: { id: teacherId } },
+      relations: ['enrollments', 'enrollments.student', 'enrollments.student.user', 'enrollments.student.class'],
+    });
+
+    if (!course) {
+      console.error(`Course with ID ${courseId} not found or not assigned to teacher ${teacherId}`);
+      throw new NotFoundException(`Course with ID ${courseId} not found`);
+    }
+
+    let students = course.enrollments?.map((enrollment) => ({
+      id: enrollment.student.id,
+      firstName: enrollment.student.firstName,
+      lastName: enrollment.student.lastName,
+      email: enrollment.student.user?.email || null,
+      class: enrollment.student.class
+        ? {
+            id: enrollment.student.class.id,
+            name: enrollment.student.class.name,
+          }
+        : null,
+      enrollmentDate: enrollment.enrollmentDate || enrollment.createdAt,
+    })) || [];
+
+    if (search) {
+      const searchLower = search.toLowerCase();
+      students = students.filter(
+        (student) =>
+          student.firstName.toLowerCase().includes(searchLower) ||
+          student.lastName.toLowerCase().includes(searchLower) ||
+          student.email?.toLowerCase().includes(searchLower) ||
+          student.class?.name.toLowerCase().includes(searchLower),
+      );
+    }
+
+    const total = students.length;
+    const skip = (page - 1) * limit;
+    const paginatedStudents = students.slice(skip, skip + limit);
+
+    console.log(`Returning ${paginatedStudents.length} students for course ${courseId}, total: ${total}`);
+    return {
+      students: paginatedStudents,
+      total,
+    };
   }
-
-  const teacher = await this.teacherRepository.findOne({
-    where: { id: teacherId },
-    relations: ['user'],
-  });
-
-  if (!teacher) {
-    console.error(`Teacher with ID ${teacherId} not found`);
-    throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
-  }
-
-  const course = await this.courseRepository.findOne({
-    where: { id: courseId, teacher: { id: teacherId } },
-    relations: ['enrollments', 'enrollments.student', 'enrollments.student.user', 'enrollments.student.class'],
-  });
-
-  if (!course) {
-    console.error(`Course with ID ${courseId} not found or not assigned to teacher ${teacherId}`);
-    throw new NotFoundException(`Course with ID ${courseId} not found`);
-  }
-
-  let students = course.enrollments?.map((enrollment) => ({
-    id: enrollment.student.id,
-    firstName: enrollment.student.firstName,
-    lastName: enrollment.student.lastName,
-    email: enrollment.student.user?.email || null,
-    class: enrollment.student.class
-      ? {
-          id: enrollment.student.class.id,
-          name: enrollment.student.class.name,
-        }
-      : null,
-    enrollmentDate: enrollment.enrollmentDate || enrollment.createdAt,
-  })) || [];
-
-  if (search) {
-    const searchLower = search.toLowerCase();
-    students = students.filter(
-      (student) =>
-        student.firstName.toLowerCase().includes(searchLower) ||
-        student.lastName.toLowerCase().includes(searchLower) ||
-        student.email?.toLowerCase().includes(searchLower) ||
-        student.class?.name.toLowerCase().includes(searchLower),
-    );
-  }
-
-  const total = students.length;
-  const skip = (page - 1) * limit;
-  const paginatedStudents = students.slice(skip, skip + limit);
-
-  console.log(`Returning ${paginatedStudents.length} students for course ${courseId}, total: ${total}`);
-  return {
-    students: paginatedStudents,
-    total,
-  };
-}
 
   async getTotalStudentsCount(teacherId: string): Promise<number> {
     console.log(`Fetching total students count for teacher ID: ${teacherId}`);
 
     if (!isUUID(teacherId)) {
-      console.error('Invalid teacher ID:', teacherId);
+      console.error(`Invalid teacher ID: ${teacherId}`);
       throw new NotFoundException('Invalid teacher ID');
     }
 
@@ -407,7 +545,7 @@ async getStudentsForTeacherByCourse(
     console.log(`Fetching total courses count for teacher ID: ${teacherId}`);
 
     if (!isUUID(teacherId)) {
-      console.error('Invalid teacher ID:', teacherId);
+      console.error(`Invalid teacher ID: ${teacherId}`);
       throw new NotFoundException('Invalid teacher ID');
     }
 
@@ -440,7 +578,7 @@ async getStudentsForTeacherByCourse(
     console.log(`Fetching courses for teacher ID: ${teacherId}`);
 
     if (!isUUID(teacherId)) {
-      console.error('Invalid teacher ID:', teacherId);
+      console.error(`Invalid teacher ID: ${teacherId}`);
       throw new NotFoundException('Invalid teacher ID');
     }
 
@@ -498,7 +636,7 @@ async getStudentsForTeacherByCourse(
     console.log(`Fetching classes for teacher ID: ${teacherId}`);
 
     if (!isUUID(teacherId)) {
-      console.error('Invalid teacher ID:', teacherId);
+      console.error(`Invalid teacher ID: ${teacherId}`);
       throw new NotFoundException('Invalid teacher ID');
     }
 
@@ -548,7 +686,7 @@ async getStudentsForTeacherByCourse(
     console.log(`Fetching courses for teacher ID: ${teacherId}, class ID: ${classId}`);
 
     if (!isUUID(teacherId) || !isUUID(classId)) {
-      console.error('Invalid teacher ID or class ID:', teacherId, classId);
+      console.error(`Invalid teacher ID or class ID: ${teacherId}, ${classId}`);
       throw new NotFoundException('Invalid teacher ID or class ID');
     }
 

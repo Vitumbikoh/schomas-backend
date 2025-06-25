@@ -16,11 +16,12 @@ import { Schedule } from 'src/schedule/entity/schedule.entity';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { ClassroomService } from 'src/classroom/classroom.service';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
+import { Attendance } from 'src/attendance/entity/attendance.entity';
 
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom]),
+    TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom,Attendance]),
     UsersModule,
     AuthModule,
   ],
