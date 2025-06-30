@@ -1,14 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindManyOptions, Repository } from 'typeorm';
+import { FindManyOptions, Repository, Like } from 'typeorm';
 import { Student } from '../user/entities/student.entity';
 import { User } from '../user/entities/user.entity';
 import { Parent } from '../user/entities/parent.entity';
+import { Schedule } from '../schedule/entity/schedule.entity';
 import { UpdateStudentDto } from './dto/update-student.dto';
+import { CreateStudentDto } from 'src/user/dtos/create-student.dto';
 import * as bcrypt from 'bcrypt';
 import { Role } from 'src/user/enums/role.enum';
 import { plainToClass } from 'class-transformer';
-import { CreateStudentDto } from 'src/user/dtos/create-student.dto';
 
 @Injectable()
 export class StudentsService {
@@ -19,16 +20,14 @@ export class StudentsService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Parent)
     private readonly parentRepository: Repository<Parent>,
+    @InjectRepository(Schedule)
+    private readonly scheduleRepository: Repository<Schedule>,
   ) {}
 
   async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
-    // Validate and transform DTO
     const validatedDto = plainToClass(CreateStudentDto, createStudentDto);
-
-    // Hash password
     const hashedPassword = await bcrypt.hash(validatedDto.password, 10);
 
-    // Create user first
     const user = this.userRepository.create({
       username: validatedDto.username,
       email: validatedDto.email,
@@ -37,12 +36,10 @@ export class StudentsService {
     });
     await this.userRepository.save(user);
 
-    // Parse date if it exists
     const dateOfBirth = validatedDto.dateOfBirth
       ? new Date(validatedDto.dateOfBirth)
       : null;
 
-    // Create student with classId if provided
     const studentData: Partial<Student> = {
       firstName: validatedDto.firstName,
       lastName: validatedDto.lastName,
@@ -54,14 +51,12 @@ export class StudentsService {
       user: user,
     };
 
-    // Add classId if provided
     if (validatedDto.classId) {
       studentData.classId = validatedDto.classId;
     }
 
     const student = this.studentRepository.create(studentData);
 
-    // Set parent if provided
     if (validatedDto.parentId) {
       const parent = await this.parentRepository.findOne({
         where: { id: String(validatedDto.parentId) },
@@ -74,6 +69,68 @@ export class StudentsService {
     return this.studentRepository.save(student);
   }
 
+  async getStudentSchedule(
+    userId: string,
+    page: number,
+    limit: number,
+    search?: string,
+  ): Promise<{ schedules: any[]; total: number }> {
+    const student = await this.studentRepository.findOne({
+      where: { user: { id: userId } },
+      relations: ['enrollments', 'enrollments.course'],
+    });
+
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    const courseIds = student.enrollments.map(enrollment => enrollment.course.id);
+
+    const skip = (page - 1) * limit;
+    const query = this.scheduleRepository
+      .createQueryBuilder('schedule')
+      .leftJoinAndSelect('schedule.course', 'course')
+      .leftJoinAndSelect('schedule.teacher', 'teacher')
+      .leftJoinAndSelect('schedule.classroom', 'classroom')
+      .leftJoinAndSelect('schedule.class', 'class')
+      .where('schedule.courseId IN (:...courseIds)', { courseIds })
+      .andWhere('schedule.isActive = :isActive', { isActive: true });
+
+    if (search) {
+      query.andWhere(
+        '(course.name LIKE :search OR classroom.name LIKE :search OR class.name LIKE :search OR teacher.firstName LIKE :search OR teacher.lastName LIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+
+    const [schedules, total] = await query
+      .skip(skip)
+      .take(limit)
+      .getManyAndCount();
+
+    const formattedSchedules = schedules.map(schedule => ({
+      id: schedule.id,
+      date: schedule.date,
+      day: schedule.day,
+      startTime: schedule.startTime,
+      endTime: schedule.endTime,
+      course: schedule.course
+        ? { id: schedule.course.id, name: schedule.course.name, code: schedule.course.code }
+        : null,
+      teacher: schedule.teacher
+        ? { name: `${schedule.teacher.firstName} ${schedule.teacher.lastName}` }
+        : null,
+      classroom: schedule.classroom
+        ? { id: schedule.classroom.id, name: schedule.classroom.name, code: schedule.classroom.code }
+        : null,
+      class: schedule.class
+        ? { id: schedule.class.id, name: schedule.class.name }
+        : null,
+    }));
+
+    return { schedules: formattedSchedules, total };
+  }
+
   async findByUserId(userId: string): Promise<Student | null> {
     return this.studentRepository.findOne({
       where: { user: { id: userId } },
@@ -83,9 +140,7 @@ export class StudentsService {
 
   async findByClass(classId: string): Promise<Student[]> {
     return this.studentRepository.find({
-      where: {
-        classId, // Now we can use classId directly
-      },
+      where: { classId },
       relations: ['user'],
     });
   }
@@ -117,22 +172,17 @@ export class StudentsService {
   ): Promise<[Student[], number]> {
     return this.studentRepository.findAndCount({
       ...options,
-      relations: ['user', 'parent', 'class'], 
+      relations: ['user', 'parent', 'class'],
     });
   }
 
-async getTotalStudentsCount(activeOnly?: boolean): Promise<number> {
-  const options: FindManyOptions<Student> = {};
-  
-  // Only add the filter if 'isActive' is a valid property on Student
-  if (activeOnly) {
-    // Replace 'isActive' with a valid property, e.g., 'status' or remove this filter if not needed
-    // options.where = { status: 'active' }; // Example if you have a 'status' property
-    // Otherwise, just skip adding the filter
+  async getTotalStudentsCount(activeOnly?: boolean): Promise<number> {
+    const options: FindManyOptions<Student> = {};
+    if (activeOnly) {
+      // Assuming there's no 'isActive' field; adjust if needed
+    }
+    return this.studentRepository.count(options);
   }
-  
-  return this.studentRepository.count(options);
-}
 
   async update(
     id: string,
@@ -141,17 +191,14 @@ async getTotalStudentsCount(activeOnly?: boolean): Promise<number> {
     const student = await this.findOne(id);
     const { user, parentId, ...studentData } = updateStudentDto;
 
-    // Handle dateOfBirth update
     if (updateStudentDto.dateOfBirth) {
       studentData.dateOfBirth = new Date(
         updateStudentDto.dateOfBirth,
       ).toISOString();
     }
 
-    // Update student data
     Object.assign(student, studentData);
 
-    // Update associated user data if provided
     if (user) {
       const userEntity = await this.userRepository.findOne({
         where: { id: student.user.id },
@@ -162,7 +209,6 @@ async getTotalStudentsCount(activeOnly?: boolean): Promise<number> {
       }
     }
 
-    // Update parent if provided
     if (parentId) {
       const parent = await this.parentRepository.findOne({
         where: { id: String(parentId) },
@@ -187,7 +233,6 @@ async getTotalStudentsCount(activeOnly?: boolean): Promise<number> {
     const student = await this.findOne(id);
     await this.studentRepository.remove(student);
 
-    // Also remove the associated user
     if (student.user) {
       await this.userRepository.remove(student.user);
     }
@@ -197,9 +242,7 @@ async getTotalStudentsCount(activeOnly?: boolean): Promise<number> {
     return this.findOne(id);
   }
 
-  // Add this to students.service.ts
   async getStudentCourses(studentId: string) {
-    // First verify the student exists
     const student = await this.studentRepository.findOne({
       where: { id: studentId },
     });
@@ -208,7 +251,6 @@ async getTotalStudentsCount(activeOnly?: boolean): Promise<number> {
       throw new NotFoundException('Student not found');
     }
 
-    // Now fetch courses with relations
     return this.studentRepository
       .findOne({
         where: { id: studentId },

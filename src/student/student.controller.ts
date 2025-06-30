@@ -10,6 +10,7 @@ import {
   Param,
   NotFoundException,
   Query,
+  ForbiddenException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
@@ -22,11 +23,11 @@ import { Like } from 'typeorm';
 
 @Controller('student')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles(Role.ADMIN)
 export class StudentController {
   constructor(private readonly studentService: StudentsService) {}
 
   @Get('student-management')
+  @Roles(Role.ADMIN)
   async getStudentManagementDashboard(@Request() req) {
     try {
       const students = await this.studentService.findAll();
@@ -76,9 +77,9 @@ export class StudentController {
   }
 
   @Post('students')
+  @Roles(Role.ADMIN)
   async createStudent(@Body() createStudentDto: CreateStudentDto) {
     try {
-      // Ensure required fields are present
       if (!createStudentDto.firstName || !createStudentDto.lastName) {
         throw new Error('First name and last name are required');
       }
@@ -94,8 +95,8 @@ export class StudentController {
     }
   }
 
-  @Roles(Role.ADMIN)
   @Get('total-students')
+  @Roles(Role.ADMIN)
   async getTotalStudentsCount(@Query('activeOnly') activeOnly: boolean) {
     try {
       const total = await this.studentService.getTotalStudentsCount(activeOnly);
@@ -110,6 +111,7 @@ export class StudentController {
   }
 
   @Get('students')
+  @Roles(Role.ADMIN)
   async getAllStudents(
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
@@ -148,7 +150,72 @@ export class StudentController {
     }
   }
 
+  @Get('profile')
+  @Roles(Role.STUDENT)
+  async getMyProfile(@Request() req) {
+    try {
+      const userId = req.user?.sub;
+      if (!userId) {
+        throw new ForbiddenException('Invalid user ID');
+      }
+      const student = await this.studentService.getStudentProfile(userId);
+      return {
+        success: true,
+        student,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new Error('Failed to fetch student profile: ' + error.message);
+    }
+  }
+
+  @Get('my-schedules')
+  @Roles(Role.STUDENT)
+  async getMySchedules(
+    @Request() req,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+    @Query('search') search?: string,
+  ) {
+    try {
+      const userId = req.user?.sub;
+      if (!userId) {
+        throw new ForbiddenException('Invalid user ID');
+      }
+
+      const pageNum = parseInt(page, 10) || 1;
+      const limitNum = parseInt(limit, 10) || 10;
+
+      const { schedules, total } = await this.studentService.getStudentSchedule(
+        userId,
+        pageNum,
+        limitNum,
+        search,
+      );
+
+      return {
+        success: true,
+        schedules,
+        pagination: {
+          currentPage: pageNum,
+          totalPages: Math.ceil(total / limitNum),
+          totalItems: total,
+          itemsPerPage: limitNum,
+        },
+      };
+    } catch (error) {
+      console.error('Error in getMySchedules:', error);
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new Error('Failed to fetch student schedule: ' + error.message);
+    }
+  }
+
   @Get('students/:id')
+  @Roles(Role.ADMIN)
   async getStudent(@Param('id') id: string) {
     try {
       const student = await this.studentService.findOne(id);
@@ -162,6 +229,7 @@ export class StudentController {
   }
 
   @Put('students/:id')
+  @Roles(Role.ADMIN)
   async updateStudent(
     @Param('id') id: string,
     @Body() updateStudentDto: UpdateStudentDto,
@@ -185,6 +253,7 @@ export class StudentController {
   }
 
   @Delete('students/:id')
+  @Roles(Role.ADMIN)
   async deleteStudent(@Param('id') id: string) {
     try {
       await this.studentService.remove(id);
