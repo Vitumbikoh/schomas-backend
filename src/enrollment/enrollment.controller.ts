@@ -1,215 +1,153 @@
-// import {
-//   Controller,
-//   Get,
-//   Post,
-//   Delete,
-//   UseGuards,
-//   Body,
-//   Param,
-//   NotFoundException,
-//   BadRequestException,
-//   Request,
-//   Query,
-// } from '@nestjs/common';
-// import { StudentEnrollmentService } from 'src/course/modules/student-enrollment/student-enrollment.service';
-// import { AuthGuard } from '@nestjs/passport';
-// import { RolesGuard } from 'src/auth/guards/roles.guard';
-// import { Roles } from 'src/common/decorators/roles.decorator';
-// import { Role } from 'src/user/enums/role.enum';
-// import { isUUID } from 'class-validator';
-// import { InjectRepository } from '@nestjs/typeorm';
-// import { Repository } from 'typeorm';
-// import { Enrollment } from 'src/course/modules/student-enrollment/entities/enrollment.entity';
-// import { BulkEnrollmentDto, CreateEnrollmentDto } from 'src/course/modules/student-enrollment/dto/create-enrollment.dto';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Param,
+  Query,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { Role } from '../user/enums/role.enum';
+import { EnrollmentService } from './enrollment.service';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { NotFoundException } from '@nestjs/common';
+import { isUUID } from 'class-validator';
 
-// @Controller('dashboard/admin')
-// export class AdminEnrollmentController {
-//   constructor(
-//     private readonly studentEnrollmentService: StudentEnrollmentService,
-//     @InjectRepository(Enrollment)
-//     private readonly enrollmentRepository: Repository<Enrollment>,
-//   ) {}
+@ApiTags('Enrollments')
+@ApiBearerAuth()
+@Controller('enrollments')
+@UseGuards(AuthGuard('jwt'), RolesGuard)
+export class EnrollmentController {
+  constructor(private readonly enrollmentService: EnrollmentService) {}
 
-//   @Get('enrollment-management')
-//   @UseGuards(AuthGuard('jwt'), RolesGuard)
-//   @Roles(Role.ADMIN, Role.TEACHER)
-//   async getEnrollmentManagementDashboard(@Request() req) {
-//     const enrollments = await this.enrollmentRepository.find({
-//       relations: ['course', 'student'],
-//     });
+  @Get()
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get all enrollments' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiResponse({
+    status: 200,
+    description: 'List of enrollments retrieved successfully',
+  })
+  async getAllEnrollments(
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
+    @Query('search') search = '',
+  ) {
+    const { enrollments, total } = await this.enrollmentService.getAllEnrollments(
+      Number(page),
+      Number(limit),
+      search,
+    );
 
-//     return {
-//       enrollments: enrollments.map(enrollment => ({
-//         ...enrollment,
-//         courseName: enrollment.course?.name,
-//         studentName: `${enrollment.student?.firstName} ${enrollment.student?.lastName}`,
-//       })),
-//       stats: await this.getEnrollmentStats(enrollments),
-//       uiConfig: {
-//         title: 'Enrollment Management',
-//         description: 'Manage student enrollments in courses',
-//         primaryColor: 'green-800',
-//         breadcrumbs: [
-//           { name: 'Dashboard', path: '/dashboard/admin/dashboard' },
-//           { name: 'Enrollment Management', path: '' },
-//         ],
-//       },
-//     };
-//   }
+    const transformedEnrollments = enrollments.map((enrollment) => ({
+      id: enrollment.id,
+      studentName: enrollment.student
+        ? `${enrollment.student.firstName} ${enrollment.student.lastName}`
+        : 'Unknown',
+      courseName: enrollment.course ? enrollment.course.name : 'Unknown',
+      enrollmentDate: enrollment.createdAt.toISOString(),
+      status: enrollment.status,
+    }));
 
-//   private async getEnrollmentStats(enrollments: Enrollment[]) {
-//     if (!enrollments || enrollments.length === 0) {
-//       return {
-//         totalEnrollments: 0,
-//         // Since we don't have status, we'll just count all enrollments as active
-//         activeEnrollments: 0,
-//         completedEnrollments: 0,
-//         averageEnrollmentsPerCourse: 0,
-//       };
-//     }
+    return {
+      enrollments: transformedEnrollments,
+      pagination: {
+        totalItems: total,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+        itemsPerPage: limit,
+      },
+    };
+  }
 
-//     const uniqueCourses = new Set(enrollments.map(e => e.courseId));
-//     const averageEnrollments = enrollments.length / uniqueCourses.size;
+  @Get('recent')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get recent enrollments' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiResponse({
+    status: 200,
+    description: 'List of recent enrollments retrieved successfully',
+  })
+  async getRecentEnrollments(@Query('limit') limit = 5) {
+    const enrollments = await this.enrollmentService.findRecent(Number(limit));
+    return enrollments.map((enrollment) => ({
+      id: enrollment.id,
+      studentName: enrollment.student
+        ? `${enrollment.student.firstName} ${enrollment.student.lastName}`
+        : 'Unknown',
+      courseName: enrollment.course ? enrollment.course.name : 'Unknown',
+      enrollmentDate: enrollment.createdAt.toISOString(),
+      status: enrollment.status,
+    }));
+  }
 
-//     return {
-//       totalEnrollments: enrollments.length,
-//       // Since there's no status field, all enrollments are considered active
-//       activeEnrollments: enrollments.length,
-//       completedEnrollments: 0,
-//       averageEnrollmentsPerCourse: averageEnrollments.toFixed(1),
-//     };
-//   }
+  @Post(':courseId/enroll/:studentId')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Enroll a student in a course' })
+  @ApiResponse({ status: 201, description: 'Student enrolled successfully' })
+  async enrollStudent(
+    @Param('courseId') courseId: string,
+    @Param('studentId') studentId: string,
+  ) {
+    if (!isUUID(courseId)) {
+      throw new NotFoundException('Invalid course ID format');
+    }
+    if (!isUUID(studentId)) {
+      throw new NotFoundException('Invalid student ID format');
+    }
 
-//   @Get('enrollments')
-//   @UseGuards(AuthGuard('jwt'), RolesGuard)
-//   @Roles(Role.ADMIN, Role.TEACHER)
-//   async getAllEnrollments(
-//     @Request() req,
-//     @Query('page') page: string = '1',
-//     @Query('limit') limit: string = '10',
-//     @Query('courseId') courseId?: string,
-//     // Removed status filter since it's not in the entity
-//   ) {
-//     const pageNum = parseInt(page, 10) || 1;
-//     const limitNum = parseInt(limit, 10) || 10;
-//     const skip = (pageNum - 1) * limitNum;
+    try {
+      const enrollment = await this.enrollmentService.enrollStudent(
+        courseId,
+        studentId,
+      );
+      return {
+        success: true,
+        enrollment: {
+          id: enrollment.id,
+          studentName: enrollment.student
+            ? `${enrollment.student.firstName} ${enrollment.student.lastName}`
+            : 'Unknown',
+          courseName: enrollment.course ? enrollment.course.name : 'Unknown',
+          enrollmentDate: enrollment.createdAt.toISOString(),
+          status: enrollment.status,
+        },
+        message: 'Student enrolled successfully',
+      };
+    } catch (error) {
+      throw new NotFoundException('Failed to enroll student: ' + error.message);
+    }
+  }
 
-//     const whereOptions: any = {};
-//     if (courseId && isUUID(courseId)) {
-//       whereOptions.courseId = courseId;
-//     }
+  @Delete(':courseId/enroll/:studentId')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Unenroll a student from a course' })
+  @ApiResponse({ status: 200, description: 'Student unenrolled successfully' })
+  async unenrollStudent(
+    @Param('courseId') courseId: string,
+    @Param('studentId') studentId: string,
+  ) {
+    if (!isUUID(courseId)) {
+      throw new NotFoundException('Invalid course ID format');
+    }
+    if (!isUUID(studentId)) {
+      throw new NotFoundException('Invalid student ID format');
+    }
 
-//     const [enrollments, total] = await Promise.all([
-//       this.enrollmentRepository.find({
-//         where: whereOptions,
-//         relations: ['course', 'student'],
-//         skip,
-//         take: limitNum,
-//       }),
-//       this.enrollmentRepository.count({ where: whereOptions }),
-//     ]);
-
-//     return {
-//       enrollments: enrollments.map(enrollment => ({
-//         ...enrollment,
-//         courseName: enrollment.course?.name,
-//         studentName: `${enrollment.student?.firstName} ${enrollment.student?.lastName}`,
-//       })),
-//       pagination: {
-//         currentPage: pageNum,
-//         totalPages: Math.ceil(total / limitNum),
-//         totalItems: total,
-//         itemsPerPage: limitNum,
-//       },
-//     };
-//   }
-
-//   @Get('courses/enrollments')
-//   @Roles(Role.ADMIN, Role.TEACHER)
-//   async getStudentsForEnrollment(@Query('courseId') courseId: string) {
-//     if (!courseId || !isUUID(courseId)) {
-//       throw new BadRequestException('Invalid course ID format');
-//     }
-    
-//     const enrollments = await this.enrollmentRepository.find({
-//       where: { courseId },
-//       relations: ['student']
-//     });
-  
-//     return {
-//       enrollments: enrollments.map(e => ({
-//         enrollmentId: e.id,
-//         studentId: e.student.id,
-//         firstName: e.student.firstName,
-//         lastName: e.student.lastName,
-//         email: e.student.user.email
-//       })),
-//       courseId
-//     };
-//   }
-
-//   @Post('enrollments')
-//   @Roles(Role.ADMIN)
-//   async enrollStudent(@Body() createEnrollmentDto: CreateEnrollmentDto) {
-//     if (!isUUID(createEnrollmentDto.courseId) || !isUUID(createEnrollmentDto.studentId)) {
-//       throw new BadRequestException('Invalid ID format');
-//     }
-
-//     try {
-//       const enrollment = await this.studentEnrollmentService.enrollStudent(createEnrollmentDto);
-//       return {
-//         success: true,
-//         enrollment,
-//         message: 'Student enrolled successfully',
-//       };
-//     } catch (error) {
-//       throw new BadRequestException(error.message);
-//     }
-//   }
-
-//   @Post('enrollments/bulk')
-//   @Roles(Role.ADMIN)
-//   async bulkEnroll(@Body() bulkEnrollmentDto: BulkEnrollmentDto) {
-//     if (!isUUID(bulkEnrollmentDto.courseId)) {
-//       throw new BadRequestException('Invalid course ID format');
-//     }
-//     if (!Array.isArray(bulkEnrollmentDto.studentIds) || bulkEnrollmentDto.studentIds.some(id => !isUUID(id))) {
-//       throw new BadRequestException('Invalid student IDs format');
-//     }
-
-//     try {
-//       const result = await this.studentEnrollmentService.bulkEnroll(bulkEnrollmentDto);
-//       return {
-//         success: true,
-//         ...result,
-//         message: 'Bulk enrollment completed successfully',
-//       };
-//     } catch (error) {
-//       throw new BadRequestException(error.message);
-//     }
-//   }
-
-//   @Delete('enrollments/course/:courseId/student/:studentId')
-//   @Roles(Role.ADMIN)
-//   async unenrollStudent(
-//     @Param('courseId') courseId: string,
-//     @Param('studentId') studentId: string,
-//   ) {
-//     if (!isUUID(courseId) || !isUUID(studentId)) {
-//       throw new BadRequestException('Invalid ID format');
-//     }
-
-//     try {
-//       await this.studentEnrollmentService.unenrollStudent(courseId, studentId);
-//       return {
-//         success: true,
-//         message: 'Student unenrolled successfully',
-//       };
-//     } catch (error) {
-//       if (error instanceof NotFoundException) {
-//         throw error;
-//       }
-//       throw new BadRequestException(error.message);
-//     }
-//   }
-// }
+    try {
+      await this.enrollmentService.unenrollStudent(courseId, studentId);
+      return {
+        success: true,
+        message: 'Student unenrolled successfully',
+      };
+    } catch (error) {
+      throw new NotFoundException('Failed to unenroll student: ' + error.message);
+    }
+  }
+}

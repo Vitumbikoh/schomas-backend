@@ -30,6 +30,7 @@ export class TeachersService {
     private readonly scheduleRepository: Repository<Schedule>,
     @InjectRepository(Attendance)
     private readonly attendanceRepository: Repository<Attendance>,
+    
   ) {}
 
   async findOne(id: string): Promise<Teacher> {
@@ -630,6 +631,15 @@ export class TeachersService {
       courses: formattedCourses,
       total,
     };
+  }
+
+  async findByClass(classId: string): Promise<Teacher[]> {
+    return this.teacherRepository
+      .createQueryBuilder('teacher')
+      .leftJoinAndSelect('teacher.user', 'user')
+      .leftJoin('teacher.class', 'class')
+      .where('class.id = :classId', { classId })
+      .getMany();
   }
 
   async getClassesForTeacher(teacherId: string): Promise<any[]> {

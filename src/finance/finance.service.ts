@@ -97,6 +97,8 @@ export class FinanceService {
     };
   }
 
+  
+
   async processPayment(userId: string, processPaymentDto: ProcessPaymentDto) {
     // 1. Verify the processing user exists and has proper role
     const processingUser = await this.userRepository.findOne({
@@ -563,4 +565,14 @@ export class FinanceService {
       relations: ['student'],
     });
   }
+  async getAllPayments(): Promise<any[]> {
+  return this.paymentRepository.find();
+}
+
+async getRecentPayments(limit: number): Promise<any[]> {
+  return this.paymentRepository.find({
+    take: limit,
+    order: { processedAt: 'DESC' },
+  });
+}
 }

@@ -1,7 +1,7 @@
 // src/enrollment/enrollment.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Like, Repository } from 'typeorm';
 import { Enrollment } from './entities/enrollment.entity';
 import { Course } from 'src/course/entities/course.entity';
 import { Student } from 'src/user/entities/student.entity';
@@ -84,4 +84,40 @@ export class EnrollmentService {
       relations: ['student'],
     });
   }
+  async findAll(): Promise<any[]> {
+  return this.enrollmentRepository.find({ relations: ['student', 'course'] });
+}
+
+async getAllEnrollments(page: number, limit: number, search: string) {
+    const skip = (page - 1) * limit;
+    const where = search
+      ? [
+          { student: { firstName: Like(`%${search}%`) } },
+          { student: { lastName: Like(`%${search}%`) } },
+          { course: { name: Like(`%${search}%`) } },
+        ]
+      : {};
+
+    const [enrollments, total] = await this.enrollmentRepository.findAndCount({
+      where,
+      relations: ['student', 'course'],
+      skip,
+      take: limit,
+      order: { createdAt: 'DESC' },
+    });
+
+    return { enrollments, total };
+  }
+
+  
+
+async findRecent(limit: number): Promise<any[]> {
+  return this.enrollmentRepository.find({
+    take: limit,
+    order: { createdAt: 'DESC' },
+    relations: ['student', 'course'],
+  });
+}
+
+
 }

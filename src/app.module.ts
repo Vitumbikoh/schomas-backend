@@ -15,6 +15,7 @@ import { ScheduleModule } from './schedule/schedule.module';
 import { ClassroomModule } from './classroom/classroom.module';
 import { ClassModule } from './classes/class.module';
 import { SettingsModule } from './settings/settings.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -33,7 +34,9 @@ import { SettingsModule } from './settings/settings.module';
     ScheduleModule,
     ClassroomModule,
     ClassModule,
-    SettingsModule
+    SettingsModule,
+    ReportsModule,
+    EnrollmentModule, 
   ],
 })
 export class AppModule {}

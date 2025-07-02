@@ -1,4 +1,3 @@
-// finance.controller.ts
 import {
   Controller,
   Get,
@@ -22,18 +21,18 @@ import {
 } from '@nestjs/swagger';
 import { ProcessPaymentDto } from './dtos/process-payment.dto';
 import { ApproveBudgetDto } from './dtos/approve-budget.dto';
-import { Roles } from '../user/decorators/roles.decorator';
+import { Roles } from '../common/decorators/roles.decorator'; // Adjusted path
 import { CreateFinanceDto } from 'src/user/dtos/create-finance.dto';
 
 @ApiTags('Finance')
 @ApiBearerAuth()
 @Controller('finance')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles(Role.FINANCE, Role.ADMIN)
 export class FinanceController {
   constructor(private readonly financeService: FinanceService) {}
 
   @Get('dashboard')
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get finance dashboard overview' })
   @ApiResponse({
     status: 200,
@@ -44,6 +43,7 @@ export class FinanceController {
   }
 
   @Get('dashboard-data')
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get complete dashboard data with calculations' })
   @ApiResponse({
     status: 200,
@@ -51,7 +51,6 @@ export class FinanceController {
   })
   async getDashboardData(@Request() req) {
     const data = await this.financeService.getDashboardCalculations();
-
     return {
       ...data,
       uiConfig: {
@@ -66,6 +65,7 @@ export class FinanceController {
   }
 
   @Post('payments')
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Process a fee payment' })
   @ApiResponse({ status: 201, description: 'Payment processed successfully' })
   async processPayment(
@@ -76,7 +76,7 @@ export class FinanceController {
   }
 
   @Post()
-  @Roles(Role.ADMIN) // Only admins can create finance users
+  @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Create a new finance user' })
   @ApiResponse({
     status: 201,
@@ -87,54 +87,53 @@ export class FinanceController {
     return this.financeService.createFinanceUser(createFinanceDto);
   }
 
-// finance.controller.ts
-@Get()
-@Roles(Role.ADMIN)
-@ApiOperation({ summary: 'Get all finance users' })
-@ApiQuery({ name: 'page', required: false, type: Number })
-@ApiQuery({ name: 'limit', required: false, type: Number })
-@ApiQuery({ name: 'search', required: false, type: String })
-@ApiResponse({
-  status: 200,
-  description: 'List of finance users retrieved successfully',
-})
-async getAllFinanceUsers(
-  @Query('page') page = 1,
-  @Query('limit') limit = 10,
-  @Query('search') search = '',
-) {
-  const { financeUsers, total } = await this.financeService.getAllFinanceUsers(
-    Number(page),
-    Number(limit),
-    search
-  );
+  @Get()
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get all finance users' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiResponse({
+    status: 200,
+    description: 'List of finance users retrieved successfully',
+  })
+  async getAllFinanceUsers(
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
+    @Query('search') search = '',
+  ) {
+    const { financeUsers, total } = await this.financeService.getAllFinanceUsers(
+      Number(page),
+      Number(limit),
+      search,
+    );
 
-  // Transform the data to match what the frontend expects
-  const transformedFinanceOfficers = financeUsers.map(finance => ({
-    id: finance.id,
-    firstName: finance.firstName,
-    lastName: finance.lastName,
-    email: finance.user?.email,
-    phoneNumber: finance.phoneNumber,
-    department: finance.department,
-    canApproveBudgets: finance.canApproveBudgets,
-    canProcessPayments: finance.canProcessPayments,
-    status: finance.user?.isActive ? 'active' : 'inactive',
-    hireDate: finance.user?.createdAt.toISOString()
-  }));
+    const transformedFinanceOfficers = financeUsers.map((finance) => ({
+      id: finance.id,
+      firstName: finance.firstName,
+      lastName: finance.lastName,
+      email: finance.user?.email,
+      phoneNumber: finance.phoneNumber,
+      department: finance.department,
+      canApproveBudgets: finance.canApproveBudgets,
+      canProcessPayments: finance.canProcessPayments,
+      status: finance.user?.isActive ? 'active' : 'inactive',
+      hireDate: finance.user?.createdAt.toISOString(),
+    }));
 
-  return {
-    financeOfficers: transformedFinanceOfficers,
-    pagination: {
-      totalItems: total,
-      totalPages: Math.ceil(total / limit),
-      currentPage: page,
-      itemsPerPage: limit
-    }
-  };
-}
+    return {
+      financeOfficers: transformedFinanceOfficers,
+      pagination: {
+        totalItems: total,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+        itemsPerPage: limit,
+      },
+    };
+  }
 
   @Post('budgets/:id/approve')
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Approve a budget proposal' })
   @ApiResponse({ status: 200, description: 'Budget approved successfully' })
   async approveBudget(
@@ -150,6 +149,7 @@ async getAllFinanceUsers(
   }
 
   @Get('stats')
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get financial statistics' })
   @ApiResponse({
     status: 200,
@@ -159,8 +159,8 @@ async getAllFinanceUsers(
     return this.financeService.getFinancialStats();
   }
 
-  @Roles(Role.FINANCE, Role.ADMIN)
   @Get('total-finances')
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({
     summary: 'Get total financial metrics with optional date filtering',
   })
@@ -195,6 +195,7 @@ async getAllFinanceUsers(
   }
 
   @Get('transactions')
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get financial transactions' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -224,7 +225,48 @@ async getAllFinanceUsers(
     );
   }
 
+  @Get('fee-payments')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get all fee payments' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiResponse({
+    status: 200,
+    description: 'List of fee payments retrieved successfully',
+  })
+  async getFeePayments(
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
+    @Query('search') search = '',
+  ) {
+    const payments = await this.financeService.getAllPayments();
+    const total = payments.length;
+
+    const transformedPayments = payments.map((payment) => ({
+      id: payment.id,
+      studentName: payment.student
+        ? `${payment.student.firstName} ${payment.student.lastName}`
+        : 'Unknown',
+      amount: payment.amount,
+      paymentDate: payment.paymentDate.toISOString(),
+      paymentMethod: payment.paymentMethod,
+      status: payment.status,
+    }));
+
+    return {
+      payments: transformedPayments,
+      pagination: {
+        totalItems: total,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+        itemsPerPage: limit,
+      },
+    };
+  }
+
   @Get('reports/summary')
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Generate financial summary report' })
   @ApiResponse({ status: 200, description: 'Report generated successfully' })
   async generateFinancialReport(

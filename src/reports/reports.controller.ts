@@ -1,0 +1,172 @@
+import {
+  Controller,
+  Get,
+  UseGuards,
+  Request,
+  NotFoundException,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { Role } from '../user/enums/role.enum';
+import { StudentsService } from '../student/student.service';
+import { TeachersService } from '../teacher/teacher.service';
+import { CourseService } from '../course/course.service';
+import { EnrollmentService } from '../enrollment/enrollment.service';
+import { FinanceService } from '../finance/finance.service';
+import { Between } from 'typeorm';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+
+@ApiTags('Reports')
+@ApiBearerAuth()
+@Controller('admin/reports')
+@UseGuards(AuthGuard('jwt'), RolesGuard)
+@Roles(Role.ADMIN)
+export class ReportsController {
+  constructor(
+    private readonly studentsService: StudentsService,
+    private readonly teachersService: TeachersService,
+    private readonly courseService: CourseService,
+    private readonly enrollmentService: EnrollmentService,
+    private readonly financeService: FinanceService,
+  ) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Get comprehensive report data for admin dashboard' })
+  @ApiResponse({ status: 200, description: 'Report data retrieved successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async getReportData(@Request() req) {
+    try {
+      const [students, teachers, courses, enrollments, feePayments] = await Promise.all([
+        this.studentsService.findAll(),
+        this.teachersService.findAll(),
+        this.courseService.findAll(),
+        this.enrollmentService.findAll(),
+        this.financeService.getAllPayments(),
+      ]);
+
+      const totalStudents = students.length;
+      const totalTeachers = teachers.length;
+      const totalCourses = courses.length;
+      const totalEnrollments = enrollments.length;
+      const totalFeePayments = feePayments.length;
+      const totalRevenue = feePayments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
+
+      const studentsByGrade = await this.getStudentsByGrade(students);
+      const enrollmentsByMonth = await this.getEnrollmentsByMonth(enrollments);
+      const paymentsByMonth = await this.getPaymentsByMonth(feePayments);
+      const coursePopularity = await this.getCoursePopularity(courses, enrollments);
+      const recentActivities = await this.getRecentActivities();
+
+      return {
+        totalStudents,
+        totalTeachers,
+        totalCourses,
+        totalEnrollments,
+        totalFeePayments,
+        totalRevenue,
+        studentsByGrade,
+        enrollmentsByMonth,
+        paymentsByMonth,
+        coursePopularity,
+        recentActivities,
+      };
+    } catch (error) {
+      throw new InternalServerErrorException('Failed to fetch report data: ' + error.message);
+    }
+  }
+
+  private async getStudentsByGrade(students: any[]): Promise<Array<{ grade: string; count: number }>> {
+    const gradeMap = new Map<string, number>();
+    students.forEach((student) => {
+      const grade = student.grade || 'Unknown';
+      gradeMap.set(grade, (gradeMap.get(grade) || 0) + 1);
+    });
+
+    return Array.from(gradeMap.entries()).map(([grade, count]) => ({
+      grade,
+      count,
+    }));
+  }
+
+  private async getEnrollmentsByMonth(enrollments: any[]): Promise<Array<{ month: string; count: number }>> {
+    const monthMap = new Map<string, number>();
+    enrollments.forEach((enrollment) => {
+      const date = new Date(enrollment.createdAt || enrollment.enrollmentDate);
+      const month = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+      monthMap.set(month, (monthMap.get(month) || 0) + 1);
+    });
+
+    return Array.from(monthMap.entries()).map(([month, count]) => ({
+      month,
+      count,
+    }));
+  }
+
+  private async getPaymentsByMonth(feePayments: any[]): Promise<Array<{ month: string; amount: number }>> {
+    const monthMap = new Map<string, number>();
+    feePayments.forEach((payment) => {
+      const date = new Date(payment.paymentDate);
+      const month = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+      monthMap.set(month, (monthMap.get(month) || 0) + (payment.amount || 0));
+    });
+
+    return Array.from(monthMap.entries()).map(([month, amount]) => ({
+      month,
+      amount,
+    }));
+  }
+
+  private async getCoursePopularity(
+    courses: any[],
+    enrollments: any[],
+  ): Promise<Array<{ courseName: string; enrollments: number }>> {
+    const courseMap = new Map<string, number>();
+    courses.forEach((course) => {
+      courseMap.set(course.id, 0);
+    });
+
+    enrollments.forEach((enrollment) => {
+      const courseId = enrollment.courseId || enrollment.course?.id;
+      if (courseMap.has(courseId)) {
+        courseMap.set(courseId, (courseMap.get(courseId) || 0) + 1);
+      }
+    });
+
+    return courses
+      .map((course) => ({
+        courseName: course.name,
+        enrollments: courseMap.get(course.id) || 0,
+      }))
+      .sort((a, b) => b.enrollments - a.enrollments);
+  }
+
+  private async getRecentActivities(): Promise<Array<{ id: string; type: string; description: string; date: string }>> {
+    // This is a simplified example; you may need to adjust based on your actual activity tracking
+    const [recentEnrollments, recentPayments] = await Promise.all([
+      this.enrollmentService.findRecent(5),
+      this.financeService.getRecentPayments(5),
+    ]);
+
+    const activities = [
+      ...recentEnrollments.map((enrollment) => ({
+        id: enrollment.id,
+        type: 'Enrollment',
+        description: `Student ${enrollment.studentName} enrolled in ${enrollment.courseName}`,
+        date: enrollment.createdAt || enrollment.enrollmentDate,
+      })),
+      ...recentPayments.map((payment) => ({
+        id: payment.id,
+        type: 'Payment',
+        description: `Payment of $${payment.amount} received from ${payment.studentName}`,
+        date: payment.paymentDate,
+      })),
+    ];
+
+    return activities
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 10);
+  }
+}

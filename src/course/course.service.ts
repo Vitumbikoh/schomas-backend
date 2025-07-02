@@ -1,7 +1,7 @@
 // src/course/course.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, Like, Repository } from 'typeorm';
+import { FindOptionsWhere, Like, Repository, In } from 'typeorm';
 import { Course } from './entities/course.entity';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
@@ -152,5 +152,35 @@ export class CourseService {
       relations: ['teacher'],
       order: { name: 'ASC' },
     });
+  }
+
+  async findByClass(classId: string): Promise<Teacher[]> {
+    const courses = await this.courseRepository.find({
+      where: { class: { id: classId } },
+      relations: ['teacher'],
+    });
+    const teachers = courses
+      .map(course => course.teacher)
+      .filter((teacher, index, self) => teacher && self.findIndex(t => t.id === teacher.id) === index);
+    if (teachers.length === 0) {
+      return [];
+    }
+    // Optionally, load 'user' relation for each teacher
+    return this.teacherRepository.find({
+      where: { id: In(teachers.map(t => t.id)) },
+      relations: ['user'],
+    });
+  }
+
+  async getCourseEnrollments(courseId: string): Promise<any[]> {
+    // Adjust the relation names and entity as per your actual model
+    const course = await this.courseRepository.findOne({
+      where: { id: courseId },
+      relations: ['enrollments', 'enrollments.student'],
+    });
+    if (!course) {
+      return [];
+    }
+    return course.enrollments || [];
   }
 }

@@ -12,37 +12,35 @@ import {
   Query,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { RolesGuard } from 'src/auth/guards/roles.guard';
-import { Roles } from 'src/common/decorators/roles.decorator';
-import { CourseService } from 'src/course/course.service';
-import { CreateCourseDto } from 'src/course/dto/create-course.dto';
-import { UpdateCourseDto } from 'src/course/dto/update-course.dto';
-import { TeachersService } from 'src/teacher/teacher.service';
-import { Role } from 'src/user/enums/role.enum';
-import { Between, Like, Repository } from 'typeorm';
-import { isUUID } from 'class-validator';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { CourseService } from './course.service';
+import { CreateCourseDto } from './dto/create-course.dto';
+import { UpdateCourseDto } from './dto/update-course.dto';
+import { TeachersService } from '../teacher/teacher.service';
+import { Role } from '../user/enums/role.enum';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Teacher } from 'src/user/entities/teacher.entity';
-import { EnrollmentService } from 'src/enrollment/enrollment.service';
-import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
-import { StudentsService } from 'src/student/student.service';
+import { Between, Like, Repository } from 'typeorm';
+import { Teacher } from '../user/entities/teacher.entity';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { isUUID } from 'class-validator';
 
+@ApiTags('Courses')
+@ApiBearerAuth()
 @Controller('course')
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 export class CourseController {
   constructor(
     private readonly courseService: CourseService,
     private readonly teacherService: TeachersService,
-    private readonly enrollmentService: EnrollmentService,
     @InjectRepository(Teacher)
     private readonly teacherRepository: Repository<Teacher>,
-    @InjectRepository(Enrollment)
-    private readonly enrollmentRepository: Repository<Enrollment>,
-    private readonly studentService: StudentsService,
   ) {}
 
   @Get('course-management')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(Role.ADMIN, Role.TEACHER)
+  @ApiOperation({ summary: 'Get course management dashboard' })
+  @ApiResponse({ status: 200, description: 'Dashboard data retrieved successfully' })
   async getCourseManagementDashboard(@Request() req) {
     const courses = await this.courseService.findAll();
     return {
@@ -65,15 +63,15 @@ export class CourseController {
       courses.map(async (course) => {
         if (course.teacherId) {
           try {
-            const teacher = await this.teacherService.findOneByUserId(
-              course.teacherId,
-            );
+            const teacher = await this.teacherService.findOneById(course.teacherId);
             return {
               ...course,
               teacher: teacher
                 ? {
-                    ...teacher,
-                    id: teacher.user.id, // Use UUID instead of numeric ID
+                    id: teacher.id,
+                    firstName: teacher.firstName,
+                    lastName: teacher.lastName,
+                    email: teacher.user?.email || '',
                   }
                 : null,
             };
@@ -86,7 +84,6 @@ export class CourseController {
     );
   }
 
-  // In getCourseManagementStats method
   private async getCourseManagementStats(courses: any[]): Promise<any> {
     if (!courses || courses.length === 0) {
       return {
@@ -98,7 +95,6 @@ export class CourseController {
       };
     }
 
-    // Get total enrollments across all courses
     const totalEnrollments = courses.reduce(
       (sum, course) => sum + (course.enrollmentCount || 0),
       0,
@@ -110,14 +106,19 @@ export class CourseController {
       upcomingCourses: courses.filter(
         (course) => course.startDate && new Date(course.startDate) > new Date(),
       ).length,
-      averageEnrollment: (totalEnrollments / courses.length).toFixed(1),
+      averageEnrollment: totalEnrollments / courses.length || 0,
       totalEnrollments,
     };
   }
 
-  @Get('courses')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Get()
   @Roles(Role.ADMIN, Role.TEACHER)
+  @ApiOperation({ summary: 'Get all courses' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiQuery({ name: 'classId', required: false, type: String })
+  @ApiResponse({ status: 200, description: 'List of courses retrieved successfully' })
   async getAllCourses(
     @Request() req,
     @Query('page') page: string = '1',
@@ -137,7 +138,6 @@ export class CourseController {
         ]
       : [];
 
-    // Add class filter if provided
     if (classId && classId !== 'all') {
       whereConditions.push({ classId });
     }
@@ -148,9 +148,7 @@ export class CourseController {
         take: limitNum,
         where: whereConditions.length > 0 ? whereConditions : {},
       }),
-      this.courseService.count(
-        whereConditions.length > 0 ? whereConditions : {},
-      ),
+      this.courseService.count(whereConditions.length > 0 ? whereConditions : {}),
     ]);
 
     return {
@@ -164,33 +162,30 @@ export class CourseController {
     };
   }
 
- @Get('stats/total-courses')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Get('stats/total-courses')
   @Roles(Role.ADMIN, Role.TEACHER)
+  @ApiOperation({ summary: 'Get total courses statistics' })
+  @ApiResponse({ status: 200, description: 'Statistics retrieved successfully' })
   async getTotalCoursesStats(@Request() req): Promise<{
     title: string;
     value: string;
     trend: { value: number; isPositive: boolean };
   }> {
     try {
-      // Get total courses count
       const totalCourses = await this.courseService.count();
-
-      // For trend calculation
       const currentDate = new Date();
       const currentMonthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
       const currentMonthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
-      
       const previousMonthStart = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
       const previousMonthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth(), 0);
 
       const [currentMonthCount, previousMonthCount] = await Promise.all([
         this.courseService.count({
-          createdAt: Between(currentMonthStart, currentMonthEnd)
+          createdAt: Between(currentMonthStart, currentMonthEnd),
         }),
         this.courseService.count({
-          createdAt: Between(previousMonthStart, previousMonthEnd)
-        })
+          createdAt: Between(previousMonthStart, previousMonthEnd),
+        }),
       ]);
 
       let trendValue = 0;
@@ -198,7 +193,7 @@ export class CourseController {
 
       if (previousMonthCount > 0) {
         trendValue = Math.round(
-          ((currentMonthCount - previousMonthCount) / previousMonthCount) * 100
+          ((currentMonthCount - previousMonthCount) / previousMonthCount) * 100,
         );
         isPositive = trendValue >= 0;
       } else if (currentMonthCount > 0) {
@@ -219,10 +214,10 @@ export class CourseController {
     }
   }
 
-  
-  @Post('courses')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Post()
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Create a new course' })
+  @ApiResponse({ status: 201, description: 'Course created successfully' })
   async createCourse(@Body() createCourseDto: CreateCourseDto) {
     if (createCourseDto.teacherId) {
       if (!isUUID(createCourseDto.teacherId)) {
@@ -240,9 +235,10 @@ export class CourseController {
     return this.courseService.create(createCourseDto);
   }
 
-  @Post('courses/:courseId/assign-teacher')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Post(':courseId/assign-teacher')
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Assign a teacher to a course' })
+  @ApiResponse({ status: 200, description: 'Teacher assigned successfully' })
   async assignTeacherToCourse(
     @Param('courseId') courseId: string,
     @Body() body: { teacherId: string },
@@ -255,10 +251,7 @@ export class CourseController {
     }
 
     try {
-      // Verify teacher exists - now using teacher ID directly
       const teacher = await this.teacherService.findOneById(body.teacherId);
-
-      // Update the course with the new teacher
       const updatedCourse = await this.courseService.assignTeacher(
         courseId,
         teacher.id,
@@ -269,10 +262,10 @@ export class CourseController {
         course: {
           ...updatedCourse,
           teacher: {
-            id: teacher.id, // Using teacher.id directly
+            id: teacher.id,
             firstName: teacher.firstName,
             lastName: teacher.lastName,
-            email: teacher.user?.email || '', // Optional chaining in case user relation isn't loaded
+            email: teacher.user?.email || '',
           },
         },
         message: 'Teacher assigned successfully',
@@ -285,9 +278,10 @@ export class CourseController {
     }
   }
 
-  @Get('courses/:id')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Get(':id')
   @Roles(Role.ADMIN, Role.TEACHER)
+  @ApiOperation({ summary: 'Get a specific course' })
+  @ApiResponse({ status: 200, description: 'Course retrieved successfully' })
   async getCourse(@Request() req, @Param('id') id: string) {
     if (!isUUID(id)) {
       throw new NotFoundException('Invalid course ID format');
@@ -297,7 +291,6 @@ export class CourseController {
       const course = await this.courseService.findOne(id);
       const response: any = {
         ...course,
-        // Ensure schedule is always an object
         schedule: course.schedule || { days: [], time: '', location: '' },
       };
 
@@ -308,6 +301,7 @@ export class CourseController {
               id: teacher.id,
               firstName: teacher.firstName,
               lastName: teacher.lastName,
+              email: teacher.user?.email || '',
             }
           : null;
       }
@@ -318,9 +312,10 @@ export class CourseController {
     }
   }
 
-  @Put('courses/:id')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Put(':id')
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Update a course' })
+  @ApiResponse({ status: 200, description: 'Course updated successfully' })
   async updateCourse(
     @Request() req,
     @Param('id') id: string,
@@ -336,19 +331,14 @@ export class CourseController {
       }
 
       if (updateCourseDto.teacherId) {
-        const teacher = await this.teacherService.findOneByUserId(
-          updateCourseDto.teacherId,
-        );
+        const teacher = await this.teacherService.findOneById(updateCourseDto.teacherId);
         if (!teacher) {
           throw new NotFoundException('Teacher not found');
         }
-        updateCourseDto.teacherId = teacher.user.id;
+        updateCourseDto.teacherId = teacher.id;
       }
 
-      const updatedCourse = await this.courseService.update(
-        id,
-        updateCourseDto,
-      );
+      const updatedCourse = await this.courseService.update(id, updateCourseDto);
       return {
         success: true,
         course: updatedCourse,
@@ -362,9 +352,10 @@ export class CourseController {
     }
   }
 
-  @Delete('courses/:id')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Delete(':id')
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Delete a course' })
+  @ApiResponse({ status: 200, description: 'Course deleted successfully' })
   async deleteCourse(@Request() req, @Param('id') id: string) {
     if (!isUUID(id)) {
       throw new NotFoundException('Invalid course ID format');
@@ -384,121 +375,35 @@ export class CourseController {
     }
   }
 
-  @Post('courses/:courseId/enroll/:studentId')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Get(':courseId/enrollable-students')
   @Roles(Role.ADMIN)
-  async enrollStudent(
-    @Param('courseId') courseId: string,
-    @Param('studentId') studentId: string,
-  ) {
-    if (!isUUID(courseId)) {
-      throw new NotFoundException('Invalid course ID format');
-    }
-    if (!isUUID(studentId)) {
-      throw new NotFoundException('Invalid student ID format');
-    }
-
-    try {
-      const enrollment = await this.enrollmentService.enrollStudent(
-        courseId,
-        studentId,
-      );
-      return {
-        success: true,
-        enrollment,
-        message: 'Student enrolled successfully',
-      };
-    } catch (error) {
-      throw new Error('Failed to enroll student: ' + error.message);
-    }
-  }
-
-  @Delete('courses/:courseId/enroll/:studentId')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles(Role.ADMIN)
-  async unenrollStudent(
-    @Param('courseId') courseId: string,
-    @Param('studentId') studentId: string,
-  ) {
-    if (!isUUID(courseId)) {
-      throw new NotFoundException('Invalid course ID format');
-    }
-    if (!isUUID(studentId)) {
-      throw new NotFoundException('Invalid student ID format');
-    }
-
-    try {
-      await this.enrollmentService.unenrollStudent(courseId, studentId);
-      return {
-        success: true,
-        message: 'Student unenrolled successfully',
-      };
-    } catch (error) {
-      throw new Error('Failed to unenroll student: ' + error.message);
-    }
-  }
-
-  @Get('courses/:courseId/enrollments')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles(Role.ADMIN, Role.TEACHER)
-  async getCourseEnrollments(
-    @Param('courseId') courseId: string,
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10',
-  ) {
-    if (!isUUID(courseId)) {
-      throw new NotFoundException('Invalid course ID format');
-    }
-
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 10;
-    const skip = (pageNum - 1) * limitNum;
-
-    const [enrollments, total] = await Promise.all([
-      this.enrollmentService.getCourseEnrollments(courseId),
-      this.enrollmentRepository.count({ where: { courseId } }),
-    ]);
-
-    return {
-      enrollments: enrollments.slice(skip, skip + limitNum),
-      pagination: {
-        currentPage: pageNum,
-        totalPages: Math.ceil(total / limitNum),
-        totalItems: total,
-        itemsPerPage: limitNum,
-      },
-    };
-  }
-
-  @Get('courses/:courseId/enrollable-students')
-  @UseGuards(AuthGuard('jwt'), RolesGuard)
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get students eligible for enrollment in a course' })
+  @ApiResponse({ status: 200, description: 'List of enrollable students retrieved successfully' })
   async getEnrollableStudents(@Param('courseId') courseId: string) {
     if (!isUUID(courseId)) {
       throw new NotFoundException('Invalid course ID format');
     }
 
-    // Get the course with class relation
     const course = await this.courseService.findOne(courseId, ['class']);
     if (!course.classId) {
       throw new NotFoundException('Course has no assigned class');
     }
 
-    // Get all students in the same class
-    const classStudents = await this.studentService.findByClass(course.classId);
-
-    // Get currently enrolled students
-    const enrollments =
-      await this.enrollmentService.getCourseEnrollments(courseId);
+    const classStudents = await this.teacherService.findByClass(course.classId);
+    const enrollments = await this.courseService.getCourseEnrollments(courseId);
     const enrolledStudentIds = enrollments.map((e) => e.student.id);
 
-    // Filter out already enrolled students
     const enrollableStudents = classStudents.filter(
       (student) => !enrolledStudentIds.includes(student.id),
     );
 
     return {
-      students: enrollableStudents,
+      students: enrollableStudents.map((student) => ({
+        id: student.id,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        email: student.user?.email || '',
+      })),
     };
   }
 }
