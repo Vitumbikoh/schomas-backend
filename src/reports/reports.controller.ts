@@ -3,6 +3,7 @@ import {
   Get,
   UseGuards,
   Request,
+  Query,
   NotFoundException,
   InternalServerErrorException,
 } from '@nestjs/common';
@@ -15,7 +16,7 @@ import { TeachersService } from '../teacher/teacher.service';
 import { CourseService } from '../course/course.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { FinanceService } from '../finance/finance.service';
-import { Between } from 'typeorm';
+import { Between, Like } from 'typeorm';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Reports')
@@ -37,11 +38,55 @@ export class ReportsController {
   @ApiResponse({ status: 200, description: 'Report data retrieved successfully' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 500, description: 'Internal server error' })
-  async getReportData(@Request() req) {
+  async getReportData(
+    @Request() req,
+    @Query('studentAgeFrom') studentAgeFrom?: string,
+    @Query('studentAgeTo') studentAgeTo?: string,
+    @Query('studentClass') studentClass?: string,
+    @Query('studentGender') studentGender?: string,
+    @Query('teacherSubjectSpecialization') teacherSubjectSpecialization?: string,
+    @Query('teacherAgeFrom') teacherAgeFrom?: string,
+    @Query('teacherAgeTo') teacherAgeTo?: string,
+    @Query('teacherStatus') teacherStatus?: string,
+    @Query('teacherGender') teacherGender?: string,
+  ) {
     try {
+      // Build where conditions for students
+      const studentWhere: any = {};
+      if (studentAgeFrom || studentAgeTo) {
+        studentWhere.age = Between(
+          parseInt(studentAgeFrom || '0'),
+          parseInt(studentAgeTo || '999'),
+        );
+      }
+      if (studentClass) {
+        studentWhere.gradeLevel = studentClass;
+      }
+      if (studentGender) {
+        studentWhere.gender = studentGender;
+      }
+
+      // Build where conditions for teachers
+      const teacherWhere: any = {};
+      if (teacherSubjectSpecialization) {
+        teacherWhere.subjectSpecialization = teacherSubjectSpecialization;
+      }
+      if (teacherAgeFrom || teacherAgeTo) {
+        teacherWhere.age = Between(
+          parseInt(teacherAgeFrom || '0'),
+          parseInt(teacherAgeTo || '999'),
+        );
+      }
+      if (teacherStatus) {
+        teacherWhere.status = teacherStatus;
+      }
+      if (teacherGender) {
+        teacherWhere.gender = teacherGender;
+      }
+
       const [students, teachers, courses, enrollments, feePayments] = await Promise.all([
-        this.studentsService.findAll(),
-        this.teachersService.findAll(),
+        this.studentsService.findAll(studentWhere),
+        this.teachersService.findAll(teacherWhere),
         this.courseService.findAll(),
         this.enrollmentService.findAll(),
         this.financeService.getAllPayments(),
@@ -81,7 +126,7 @@ export class ReportsController {
   private async getStudentsByGrade(students: any[]): Promise<Array<{ grade: string; count: number }>> {
     const gradeMap = new Map<string, number>();
     students.forEach((student) => {
-      const grade = student.grade || 'Unknown';
+      const grade = student.gradeLevel || 'Unknown';
       gradeMap.set(grade, (gradeMap.get(grade) || 0) + 1);
     });
 
@@ -144,7 +189,6 @@ export class ReportsController {
   }
 
   private async getRecentActivities(): Promise<Array<{ id: string; type: string; description: string; date: string }>> {
-    // This is a simplified example; you may need to adjust based on your actual activity tracking
     const [recentEnrollments, recentPayments] = await Promise.all([
       this.enrollmentService.findRecent(5),
       this.financeService.getRecentPayments(5),

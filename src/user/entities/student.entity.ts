@@ -16,7 +16,6 @@ import { User } from './user.entity';
 import { Parent } from './parent.entity';
 import { FeePayment } from 'src/finance/entities/fee-payment.entity';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
-import { ExamAttempt } from 'src/exams/entities/exam-attempt.entity';
 import { Class } from 'src/classes/entity/class.entity';
 import { Course } from 'src/course/entities/course.entity';
 @Entity()
@@ -74,8 +73,7 @@ export class Student extends BaseEntity {
   @OneToMany(() => Enrollment, (enrollment) => enrollment.student)
   enrollments: Enrollment[];
 
-  @OneToMany(() => ExamAttempt, (attempt) => attempt.student)
-  examAttempts: ExamAttempt[];
+
 
   @ManyToMany(() => Course, (course) => course.students)
   courses: Course[];
