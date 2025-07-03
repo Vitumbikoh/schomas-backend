@@ -328,7 +328,7 @@ export class TeachersService {
       const className = record.class?.name || 'Unknown';
       const courseName = record.course?.name || 'None';
       const key = `${className}-${courseName}`;
-      if (attendanceMap.has(key) && record.present) {
+      if (attendanceMap.has(key) && record.isPresent) {
         const attendanceRecord = attendanceMap.get(key);
         if (attendanceRecord) {
           attendanceRecord.present++;
