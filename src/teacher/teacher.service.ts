@@ -14,6 +14,7 @@ import { Course } from 'src/course/entities/course.entity';
 import { Class } from 'src/classes/entity/class.entity';
 import { Attendance } from 'src/attendance/entity/attendance.entity';
 import { format } from 'date-fns';
+import { SubmitGradesDto } from 'src/exams/dto/submit-grades.dto';
 
 @Injectable()
 export class TeachersService {
@@ -856,4 +857,101 @@ export class TeachersService {
       relations: ['user'],
     });
   }
+
+  async getClassesWithCoursesForTeacher(teacherId: string): Promise<any[]> {
+  const courses = await this.courseRepository.find({
+    where: { teacher: { id: teacherId } },
+    relations: ['class'],
+  });
+
+  const classMap = new Map<string, { id: string; name: string; courses: string[] }>();
+  
+  courses.forEach(course => {
+    if (course.class) {
+      if (!classMap.has(course.class.id)) {
+        classMap.set(course.class.id, {
+          id: course.class.id,
+          name: course.class.name,
+          courses: []
+        });
+      }
+      classMap.get(course.class.id)?.courses.push(course.name);
+    }
+  });
+
+  return Array.from(classMap.values());
+}
+
+async getStudentsForTeacherByClass(
+  teacherId: string,
+  classId: string,
+  page: number,
+  limit: number,
+  search?: string
+): Promise<{ students: any[]; total: number }> {
+  const courses = await this.courseRepository.find({
+    where: { 
+      teacher: { id: teacherId },
+      class: { id: classId }
+    },
+    relations: ['enrollments', 'enrollments.student', 'enrollments.student.user', 'enrollments.student.class'],
+  });
+
+  const studentsMap = new Map<string, any>();
+  
+  courses.forEach(course => {
+    course.enrollments?.forEach(enrollment => {
+      const student = enrollment.student;
+      if (student && !studentsMap.has(student.id)) {
+        studentsMap.set(student.id, {
+          id: student.id,
+          name: `${student.firstName} ${student.lastName}`,
+          class: student.class?.name || 'N/A'
+        });
+      }
+    });
+  });
+
+  let students = Array.from(studentsMap.values());
+  
+  if (search) {
+    const searchLower = search.toLowerCase();
+    students = students.filter(s => 
+      s.name.toLowerCase().includes(searchLower) ||
+      s.class.toLowerCase().includes(searchLower)
+    );
+  }
+
+  const total = students.length;
+  const skip = (page - 1) * limit;
+  const paginatedStudents = students.slice(skip, skip + limit);
+
+  return { students: paginatedStudents, total };
+}
+
+async verifyTeacherClassCourseAccess(
+  teacherId: string,
+  classId: string,
+  courseName: string
+): Promise<boolean> {
+  const count = await this.courseRepository.count({
+    where: {
+      teacher: { id: teacherId },
+      class: { id: classId },
+      name: courseName
+    }
+  });
+  return count > 0;
+}
+
+async submitGrades(submitGradesDto: SubmitGradesDto): Promise<any> {
+  // Implement your grade submission logic here
+  // This is just a placeholder implementation
+  return {
+    ...submitGradesDto,
+    submittedAt: new Date(),
+    success: true
+  };
+}
+
 }

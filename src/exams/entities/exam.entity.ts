@@ -1,4 +1,6 @@
-import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, OneToMany } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Class } from '../../classes/entity/class.entity';
+import { Teacher } from '../../user/entities/teacher.entity';
 import { Course } from '../../course/entities/course.entity';
 
 @Entity()
@@ -6,48 +8,55 @@ export class Exam {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ nullable: false })
   title: string;
 
-  @Column()
+  @Column({ nullable: false })
   subject: string;
 
-  @Column()
-  class: string;
+  @ManyToOne(() => Class)
+  @JoinColumn({ name: 'classId' })
+  class: Class;
 
-  @Column()
-  teacher: string;
+  @ManyToOne(() => Teacher)
+  @JoinColumn({ name: 'teacherId' })
+  teacher: Teacher;
 
-  @Column()
+  @Column({ type: 'date', nullable: false })
   date: string;
 
-  @Column()
+  @Column({ nullable: false })
   duration: string;
 
-  @Column()
+  @Column({ type: 'integer', nullable: false })
   totalMarks: number;
 
-  @Column()
+  @Column({
+    type: 'enum',
+    enum: ['upcoming', 'administered', 'graded'],
+    default: 'upcoming'
+  })
   status: 'upcoming' | 'administered' | 'graded';
 
-  @Column()
+  @Column({ type: 'integer', default: 0 })
   studentsEnrolled: number;
 
-  @Column()
+  @Column({ type: 'integer', default: 0 })
   studentsCompleted: number;
 
-  @Column()
+  @Column({ nullable: false })
   academicYear: string;
 
-  @Column({ nullable: true })
-  description: string;
+  @Column({ type: 'text', nullable: true })
+  description?: string;
+
+  @Column({ type: 'text', nullable: true })
+  instructions?: string;
 
   @Column({ nullable: true })
-  instructions: string;
+  examType: string;
 
-  @Column()
-  courseId: string;
-
-  @ManyToOne(() => Course, (course) => course.exams)
+  @ManyToOne(() => Course)
+  @JoinColumn({ name: 'courseId' })
   course: Course;
 }

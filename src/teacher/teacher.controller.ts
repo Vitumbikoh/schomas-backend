@@ -22,6 +22,7 @@ import { Role } from 'src/user/enums/role.enum';
 import { CreateTeacherDto } from 'src/user/dtos/create-teacher.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
 import { UsersService } from 'src/user/user.service';
+import { SubmitGradesDto } from 'src/exams/dto/submit-grades.dto';
 
 @Controller('teacher')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -96,37 +97,41 @@ export class TeacherController {
     }
   }
 
-  @Get('teachers')
-  async getAllTeachers(
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10',
-    @Query('search') search?: string,
-  ) {
-    try {
-      const pageNum = parseInt(page, 10) || 1;
-      const limitNum = parseInt(limit, 10) || 10;
+@Get('teachers')
+@UseGuards(AuthGuard('jwt'))
+@Roles(Role.ADMIN)
+async getAllTeachers(
+  @Request() req,
+  @Query('page') page: string = '1',
+  @Query('limit') limit: string = '10',
+  @Query('search') search?: string,
+) {
+  try {
+    console.log('Authenticated user:', req.user); // Log user details
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 10;
 
-      const [teachers, total] = await this.teacherService.findAllPaginated(
-        pageNum,
-        limitNum,
-        search,
-      );
+    const [teachers, total] = await this.teacherService.findAllPaginated(
+      pageNum,
+      limitNum,
+      search,
+    );
 
-      return {
-        success: true,
-        teachers,
-        pagination: {
-          currentPage: pageNum,
-          totalPages: Math.ceil(total / limitNum),
-          totalItems: total,
-          itemsPerPage: limitNum,
-        },
-      };
-    } catch (error) {
-      console.error('Error fetching teachers:', error);
-      throw new Error('Failed to fetch teachers: ' + error.message);
-    }
+    return {
+      success: true,
+      teachers,
+      pagination: {
+        currentPage: pageNum,
+        totalPages: Math.ceil(total / limitNum),
+        totalItems: total,
+        itemsPerPage: limitNum,
+      },
+    };
+  } catch (error) {
+    console.error('Error fetching teachers:', error);
+    throw new Error('Failed to fetch teachers: ' + error.message);
   }
+}
 
   @Get('my-schedules')
   @Roles(Role.TEACHER)
@@ -682,6 +687,126 @@ async getMyStudentsByCourse(
         throw error;
       }
       throw new Error('Failed to delete teacher: ' + error.message);
+    }
+  }
+
+  @Get('my-classes-with-courses')
+  @Roles(Role.TEACHER)
+  async getMyClassesWithCourses(@Request() req) {
+    try {
+      const userId = req.user?.sub;
+      if (!userId) {
+        throw new ForbiddenException('Invalid user authentication');
+      }
+
+      const teacher = await this.teacherService.findOneByUserId(userId);
+      if (!teacher) {
+        throw new NotFoundException('Your teacher record was not found');
+      }
+
+      const classesWithCourses = await this.teacherService.getClassesWithCoursesForTeacher(teacher.id);
+      
+      return {
+        success: true,
+        classes: classesWithCourses,
+      };
+    } catch (error) {
+      console.error('Error in getMyClassesWithCourses:', error);
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new ForbiddenException('Failed to fetch classes with courses: ' + error.message);
+    }
+  }
+
+  @Get('my-students-by-class/:classId')
+  @Roles(Role.TEACHER)
+  async getMyStudentsByClass(
+    @Request() req,
+    @Param('classId') classId: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+    @Query('search') search?: string,
+  ) {
+    try {
+      const userId = req.user?.sub;
+      if (!userId) {
+        throw new ForbiddenException('Invalid user authentication');
+      }
+
+      const teacher = await this.teacherService.findOneByUserId(userId);
+      if (!teacher) {
+        throw new NotFoundException('Your teacher record was not found');
+      }
+
+      const pageNum = parseInt(page, 10) || 1;
+      const limitNum = parseInt(limit, 10) || 10;
+
+      const { students, total } = await this.teacherService.getStudentsForTeacherByClass(
+        teacher.id,
+        classId,
+        pageNum,
+        limitNum,
+        search
+      );
+
+      return {
+        success: true,
+        students,
+        pagination: {
+          currentPage: pageNum,
+          totalPages: Math.ceil(total / limitNum),
+          totalItems: total,
+          itemsPerPage: limitNum,
+        },
+      };
+    } catch (error) {
+      console.error('Error in getMyStudentsByClass:', error);
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new ForbiddenException('Failed to fetch students for class: ' + error.message);
+    }
+  }
+
+  @Post('submit-grades')
+  @Roles(Role.TEACHER)
+  async submitGrades(@Request() req, @Body() submitGradesDto: SubmitGradesDto) {
+    try {
+      const userId = req.user?.sub;
+      if (!userId) {
+        throw new ForbiddenException('Invalid user authentication');
+      }
+
+      const teacher = await this.teacherService.findOneByUserId(userId);
+      if (!teacher) {
+        throw new NotFoundException('Your teacher record was not found');
+      }
+
+      // Validate the teacher has access to this class and course
+      const hasAccess = await this.teacherService.verifyTeacherClassCourseAccess(
+        teacher.id,
+        submitGradesDto.classId,
+        submitGradesDto.course
+      );
+      
+      if (!hasAccess) {
+        throw new ForbiddenException('You do not have access to submit grades for this class/course combination');
+      }
+
+      const result = await this.teacherService.submitGrades(submitGradesDto);
+
+      return {
+        success: true,
+        data: result,
+        message: 'Grades submitted successfully',
+      };
+    } catch (error) {
+      console.error('Error in submitGrades:', error);
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new ForbiddenException('Failed to submit grades: ' + error.message);
     }
   }
 }
