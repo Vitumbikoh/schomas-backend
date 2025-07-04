@@ -1,16 +1,17 @@
-import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
+import { LearningMaterial } from './entities/learning-material.entity';
 import { Role } from 'src/user/enums/role.enum';
 import { diskStorage } from 'multer';
+import type * as multer from 'multer';
+import type { File as MulterFile } from 'multer';
 import { extname } from 'path';
 import { Class } from 'src/classes/entity/class.entity';
 import { Course } from 'src/course/entities/course.entity';
 import { Teacher } from 'src/user/entities/teacher.entity';
 import { User } from 'src/user/entities/user.entity';
 import { CreateLearningMaterialDto } from './dtos/create-learning-material.dto';
-import { LearningMaterial } from './entities/learning-material.entity';
-import { File as MulterFile } from 'multer';
 
 @Injectable()
 export class LearningMaterialsService {
@@ -27,66 +28,16 @@ export class LearningMaterialsService {
     private teacherRepository: Repository<Teacher>,
   ) {}
 
-  // Multer storage configuration
   static storageOptions = diskStorage({
     destination: './uploads',
     filename: (req, file, callback) => {
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
       const ext = extname(file.originalname);
-      callback(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
+      const baseName = file.originalname.replace(ext, '').replace(/[^a-zA-Z0-9]/g, '-').substring(0, 200);
+      const finalName = `${baseName}-${uniqueSuffix}${ext}`.substring(0, 255);
+      callback(null, finalName);
     },
   });
-
-  async getClassesForTeacher(userId: string): Promise<Class[]> {
-    const user = await this.userRepository.findOne({
-      where: { id: userId, role: Role.TEACHER },
-    });
-    if (!user) {
-      console.log(`No User found with id: ${userId} and role: ${Role.TEACHER}`);
-      throw new UnauthorizedException('User is not a teacher or does not exist');
-    }
-
-    const teacher = await this.teacherRepository.findOne({
-      where: { userId: userId },
-    });
-    if (!teacher) {
-      console.log(`No Teacher found for userId: ${userId}`);
-      throw new UnauthorizedException('No Teacher profile associated with this user');
-    }
-
-    const courses = await this.courseRepository.find({
-      where: { teacher: { id: teacher.id } },
-      relations: ['class'],
-    });
-
-    const classIds = [...new Set(courses.map((course) => course.classId))];
-    return this.classRepository.find({
-      where: { id: In(classIds) },
-    });
-  }
-
-  async getCoursesForClass(userId: string, classId: string): Promise<Course[]> {
-    const user = await this.userRepository.findOne({
-      where: { id: userId, role: Role.TEACHER },
-    });
-    if (!user) {
-      console.log(`No User found with id: ${userId} and role: ${Role.TEACHER}`);
-      throw new UnauthorizedException('User is not a teacher or does not exist');
-    }
-
-    const teacher = await this.teacherRepository.findOne({
-      where: { userId: userId },
-    });
-    if (!teacher) {
-      console.log(`No Teacher found for userId: ${userId}`);
-      throw new UnauthorizedException('No Teacher profile associated with this user');
-    }
-
-    return this.courseRepository.find({
-      where: { classId, teacher: { id: teacher.id } },
-      select: ['id', 'name', 'code'],
-    });
-  }
 
   async createLearningMaterial(
     createLearningMaterialDto: CreateLearningMaterialDto,
@@ -95,41 +46,35 @@ export class LearningMaterialsService {
   ): Promise<LearningMaterial> {
     const { classId, courseId, title, description } = createLearningMaterialDto;
 
-    // Log for debugging
     console.log('Received DTO:', createLearningMaterialDto);
-    console.log('File:', file?.filename);
+    console.log('File object:', file);
+    console.log('File path:', file.path);
     console.log('User ID from JWT:', userId);
 
-    // Validate inputs
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
 
-    // Validate user
     const user = await this.userRepository.findOne({
       where: { id: userId, role: Role.TEACHER },
     });
     if (!user) {
       console.log(`No User found with id: ${userId} and role: ${Role.TEACHER}`);
-      throw new UnauthorizedException('User is not a teacher or does not exist');
+      throw new ForbiddenException('Invalid user authentication');
     }
 
-    // Fetch teacher
-    const teacher = await this.teacherRepository.findOne({
-      where: { userId: userId },
-    });
+    const teacher = await this.teacherRepository.findOne({ where: { userId } });
     if (!teacher) {
-      console.log(`No Teacher found for userId: ${userId}`);
-      throw new UnauthorizedException('No Teacher profile associated with this user');
+      console.log(`Teacher not found for user ID: ${userId}`);
+      throw new NotFoundException('Your teacher record was not found');
     }
 
-    // Validate class
     const classEntity = await this.classRepository.findOne({ where: { id: classId } });
     if (!classEntity) {
+      console.log(`Class not found for id: ${classId}`);
       throw new BadRequestException('Invalid class');
     }
 
-    // Validate course
     const course = await this.courseRepository.findOne({
       where: { id: courseId, classId, teacher: { id: teacher.id } },
       relations: ['teacher'],
@@ -139,16 +84,21 @@ export class LearningMaterialsService {
       throw new BadRequestException('Invalid course or teacher not assigned');
     }
 
-    // Create learning material
     const learningMaterial = new LearningMaterial();
     learningMaterial.class = classEntity;
     learningMaterial.course = course;
     learningMaterial.teacher = user;
     learningMaterial.title = title;
     learningMaterial.description = description ?? '';
-    learningMaterial.filePath = file.filename;
+    learningMaterial.filePath = file.path;
 
-    // Save to database
-    return this.learningMaterialRepository.save(learningMaterial);
+    try {
+      const savedMaterial = await this.learningMaterialRepository.save(learningMaterial);
+      console.log(`Learning material saved: ${savedMaterial.id}`);
+      return savedMaterial;
+    } catch (error) {
+      console.error('Database error:', error);
+      throw new BadRequestException(`Failed to save learning material: ${error.message}`);
+    }
   }
 }

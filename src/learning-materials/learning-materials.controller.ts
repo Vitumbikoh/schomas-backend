@@ -1,39 +1,44 @@
-import { Controller, Get, Post, Param, Body, Request, UseGuards, UseInterceptors, UploadedFile, ValidationPipe } from '@nestjs/common';
+import { Controller, Post, Body, Request, UseGuards, UseInterceptors, UploadedFile, ValidationPipe, ForbiddenException } from '@nestjs/common';
 import { LearningMaterialsService } from './learning-materials.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { Roles } from 'src/user/decorators/roles.decorator';
+import { Role } from 'src/user/enums/role.enum';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { Class } from 'src/classes/entity/class.entity';
-import { Course } from 'src/course/entities/course.entity';
-import { CreateLearningMaterialDto } from './dtos/create-learning-material.dto';
 import { LearningMaterial } from './entities/learning-material.entity';
-import { File as MulterFile } from 'multer';
+import { CreateLearningMaterialDto } from './dtos/create-learning-material.dto';
+import { Multer } from 'multer';
 
-@Controller('api/v1/teacher')
-@UseGuards(JwtAuthGuard)
+@Controller('learning-materials')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.TEACHER)
 export class LearningMaterialsController {
   constructor(private readonly learningMaterialsService: LearningMaterialsService) {}
 
-  @Get('classes')
-  async getClasses(@Request() req): Promise<Class[]> {
-    console.log('JWT user:', req.user);
-    return this.learningMaterialsService.getClassesForTeacher(req.user.sub);
-  }
-
-  @Get('courses/by-class/:classId')
-  async getCoursesForClass(@Request() req, @Param('classId') classId: string): Promise<Course[]> {
-    console.log('JWT user:', req.user);
-    console.log('Class ID:', classId);
-    return this.learningMaterialsService.getCoursesForClass(req.user.sub, classId);
-  }
-
-  @Post('learning-materials')
-  @UseInterceptors(FileInterceptor('file', LearningMaterialsService.storageOptions))
+  @Post()
+  @UseInterceptors(FileInterceptor('file', {
+    storage: LearningMaterialsService.storageOptions,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  }))
   async createLearningMaterial(
-    @Body(new ValidationPipe()) createLearningMaterialDto: CreateLearningMaterialDto,
-    @UploadedFile() file: MulterFile,
+    @Body(ValidationPipe) createLearningMaterialDto: CreateLearningMaterialDto,
+    @UploadedFile() file: Multer.File,
     @Request() req,
-  ): Promise<LearningMaterial> {
-    console.log('JWT user:', req.user);
-    return this.learningMaterialsService.createLearningMaterial(createLearningMaterialDto, file, req.user.sub);
+  ): Promise<{ success: boolean; material: LearningMaterial; message: string }> {
+    console.log('Request user:', req.user);
+    if (!req.user?.sub) {
+      console.error('No user ID found in request');
+      throw new ForbiddenException('Invalid user authentication');
+    }
+    const material = await this.learningMaterialsService.createLearningMaterial(
+      createLearningMaterialDto,
+      file,
+      req.user.sub,
+    );
+    return {
+      success: true,
+      material,
+      message: 'Learning material uploaded successfully',
+    };
   }
 }
