@@ -122,61 +122,66 @@ export class CourseController {
     };
   }
 
-  @Get(['', 'courses'])
-  @Roles(Role.ADMIN, Role.TEACHER)
-  @ApiOperation({ summary: 'Get all courses' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiQuery({ name: 'search', required: false, type: String })
-  @ApiQuery({ name: 'classId', required: false, type: String })
-  @ApiResponse({
-    status: 200,
-    description: 'List of courses retrieved successfully',
-  })
-  async getAllCourses(
-    @Request() req,
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10',
-    @Query('search') search?: string,
-    @Query('classId') classId?: string,
-  ) {
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 10;
-    const skip = (pageNum - 1) * limitNum;
+// src/course/course.controller.ts
+@Get(['', 'courses'])
+@Roles(Role.ADMIN, Role.TEACHER)
+@ApiOperation({ summary: 'Get all courses' })
+@ApiQuery({ name: 'page', required: false, type: Number })
+@ApiQuery({ name: 'limit', required: false, type: Number })
+@ApiQuery({ name: 'search', required: false, type: String })
+@ApiQuery({ name: 'classId', required: false, type: String })
+@ApiResponse({ status: 200, description: 'List of courses retrieved successfully' })
+async getAllCourses(
+  @Request() req,
+  @Query('page') page: string = '1',
+  @Query('limit') limit: string = '10',
+  @Query('search') search?: string,
+  @Query('classId') classId?: string,
+) {
+  const pageNum = parseInt(page, 10) || 1;
+  const limitNum = parseInt(limit, 10) || 10;
+  const skip = (pageNum - 1) * limitNum;
 
-    const whereConditions: any[] = search
-      ? [
-          { name: Like(`%${search}%`) },
-          { code: Like(`%${search}%`) },
-          { description: Like(`%${search}%`) },
-        ]
-      : [];
+  const whereConditions: any[] = search
+    ? [
+        { name: Like(`%${search}%`) },
+        { code: Like(`%${search}%`) },
+        { description: Like(`%${search}%`) },
+      ]
+    : [];
 
-    if (classId && classId !== 'all') {
-      whereConditions.push({ classId });
-    }
-
-    const [courses, total] = await Promise.all([
-      this.courseService.findAll({
-        skip,
-        take: limitNum,
-        where: whereConditions.length > 0 ? whereConditions : {},
-      }),
-      this.courseService.count(
-        whereConditions.length > 0 ? whereConditions : {},
-      ),
-    ]);
-
-    return {
-      courses: await this.mapCoursesWithTeacherUUIDs(courses),
-      pagination: {
-        currentPage: pageNum,
-        totalPages: Math.ceil(total / limitNum),
-        totalItems: total,
-        itemsPerPage: limitNum,
-      },
-    };
+  if (classId && classId !== 'all') {
+    whereConditions.push({ classId });
   }
+
+  const [courses, total] = await Promise.all([
+    this.courseService.findAll({
+      skip,
+      take: limitNum,
+      where: whereConditions.length > 0 ? whereConditions : {},
+      relations: ['teacher', 'class'], // Include class relation
+    }),
+    this.courseService.count(whereConditions.length > 0 ? whereConditions : {}),
+  ]);
+
+  const mappedCourses = await this.mapCoursesWithTeacherUUIDs(courses);
+
+  // Add className to each course
+  const coursesWithClassName = mappedCourses.map((course) => ({
+    ...course,
+    className: course.class ? course.class.name : 'Not assigned', // Add className
+  }));
+
+  return {
+    courses: coursesWithClassName,
+    pagination: {
+      currentPage: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      totalItems: total,
+      itemsPerPage: limitNum,
+    },
+  };
+}
 
   @Get('stats/total-courses')
   @Roles(Role.ADMIN, Role.TEACHER)
@@ -313,39 +318,42 @@ export class CourseController {
     }
   }
 
-  @Get(':id')
-  @Roles(Role.ADMIN, Role.TEACHER)
-  @ApiOperation({ summary: 'Get a specific course' })
-  @ApiResponse({ status: 200, description: 'Course retrieved successfully' })
-  async getCourse(@Request() req, @Param('id') id: string) {
-    if (!isUUID(id)) {
-      throw new NotFoundException('Invalid course ID format');
-    }
-
-    try {
-      const course = await this.courseService.findOne(id);
-      const response: any = {
-        ...course,
-        schedule: course.schedule || { days: [], time: '', location: '' },
-      };
-
-      if (course.teacherId) {
-        const teacher = await this.teacherService.findOneById(course.teacherId);
-        response.teacher = teacher
-          ? {
-              id: teacher.id,
-              firstName: teacher.firstName,
-              lastName: teacher.lastName,
-              email: teacher.user?.email || '',
-            }
-          : null;
-      }
-
-      return response;
-    } catch (error) {
-      throw new NotFoundException(error.message);
-    }
+  // src/course/course.controller.ts
+@Get(':id')
+@Roles(Role.ADMIN, Role.TEACHER)
+@ApiOperation({ summary: 'Get a specific course' })
+@ApiResponse({ status: 200, description: 'Course retrieved successfully' })
+async getCourse(@Request() req, @Param('id') id: string) {
+  if (!isUUID(id)) {
+    throw new NotFoundException('Invalid course ID format');
   }
+
+  try {
+    const course = await this.courseService.findOne(id, ['teacher', 'class']); // Include class relation
+    const response: any = {
+      ...course,
+      schedule: course.schedule || { days: [], time: '', location: '' },
+      classId: course.classId, // Include classId
+      className: course.class ? course.class.name : 'Not assigned', // Include className
+    };
+
+    if (course.teacherId) {
+      const teacher = await this.teacherService.findOneById(course.teacherId);
+      response.teacher = teacher
+        ? {
+            id: teacher.id,
+            firstName: teacher.firstName,
+            lastName: teacher.lastName,
+            email: teacher.user?.email || '',
+          }
+        : null;
+    }
+
+    return response;
+  } catch (error) {
+    throw new NotFoundException(error.message);
+  }
+}
 
   @Put(':id')
   @Roles(Role.ADMIN)
@@ -415,43 +423,45 @@ export class CourseController {
     }
   }
 
-@Get(':courseId/enrollable-students')
-@Roles(Role.ADMIN)
-@ApiOperation({ summary: 'Get students eligible for enrollment in a course' })
-async getEnrollableStudents(@Param('courseId') courseId: string) {
-  if (!isUUID(courseId)) {
-    throw new NotFoundException('Invalid course ID format');
+  @Get(':courseId/enrollable-students')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get students eligible for enrollment in a course' })
+  async getEnrollableStudents(@Param('courseId') courseId: string) {
+    if (!isUUID(courseId)) {
+      throw new NotFoundException('Invalid course ID format');
+    }
+
+    // Fetch the course with its class relation
+    const course = await this.courseService.findOne(courseId, ['class']);
+    if (!course) {
+      throw new NotFoundException(`Course with ID ${courseId} not found`);
+    }
+
+    if (!course.classId || !course.class) {
+      throw new NotFoundException('Course has no assigned class');
+    }
+
+    // Fetch students in the class using the correct relation
+    const classStudents = await this.courseService.findStudentsByClass(
+      course.classId,
+    );
+    const enrollments = await this.courseService.getCourseEnrollments(courseId);
+    const enrolledStudentIds = enrollments.map((e) => e.student.id);
+
+    const enrollableStudents = classStudents.filter(
+      (student) => !enrolledStudentIds.includes(student.id),
+    );
+
+    return {
+      students: enrollableStudents.map((student) => ({
+        id: student.id,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        email: student.user?.email || '',
+        className: course.class?.name || 'Not assigned',
+      })),
+    };
   }
-
-  // Fetch the course with its class relation
-  const course = await this.courseService.findOne(courseId, ['class']);
-  if (!course) {
-    throw new NotFoundException(`Course with ID ${courseId} not found`);
-  }
-
-  if (!course.classId || !course.class) {
-    throw new NotFoundException('Course has no assigned class');
-  }
-
-  // Fetch students in the class using the correct relation
-  const classStudents = await this.courseService.findStudentsByClass(course.classId);
-  const enrollments = await this.courseService.getCourseEnrollments(courseId);
-  const enrolledStudentIds = enrollments.map((e) => e.student.id);
-
-  const enrollableStudents = classStudents.filter(
-    (student) => !enrolledStudentIds.includes(student.id),
-  );
-
-  return {
-    students: enrollableStudents.map((student) => ({
-      id: student.id,
-      firstName: student.firstName,
-      lastName: student.lastName,
-      email: student.user?.email || '',
-      className: course.class?.name || 'Not assigned',
-    })),
-  };
-}
 
   @Get(':courseId/enrollments')
   @Roles(Role.ADMIN, Role.TEACHER)

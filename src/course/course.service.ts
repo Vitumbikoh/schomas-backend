@@ -37,7 +37,7 @@ export class CourseService {
       skip: options.skip || 0,
       take: options.take || 10,
       where: options.where || {},
-      relations: options.relations || ['teacher'],
+      relations: options.relations || ['teacher', 'class'],
       order: { createdAt: 'DESC' },
     });
   }
