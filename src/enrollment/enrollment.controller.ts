@@ -150,4 +150,6 @@ export class EnrollmentController {
       throw new NotFoundException('Failed to unenroll student: ' + error.message);
     }
   }
+
+  
 }

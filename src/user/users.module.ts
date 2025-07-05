@@ -14,7 +14,7 @@ import { AuthModule } from 'src/auth/auth.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Teacher, Student, Parent, Finance]),
-    forwardRef(() => AuthModule),  // Circular dependency resolution
+    forwardRef(() => AuthModule), 
     DatabaseModule,
     ConfigModule,
   ],

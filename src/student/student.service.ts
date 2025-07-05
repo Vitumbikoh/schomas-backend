@@ -24,10 +24,11 @@ export class StudentsService {
     private readonly scheduleRepository: Repository<Schedule>,
   ) {}
 
-  async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
+async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
     const validatedDto = plainToClass(CreateStudentDto, createStudentDto);
     const hashedPassword = await bcrypt.hash(validatedDto.password, 10);
 
+    // Create user first
     const user = this.userRepository.create({
       username: validatedDto.username,
       email: validatedDto.email,
@@ -36,11 +37,15 @@ export class StudentsService {
     });
     await this.userRepository.save(user);
 
+    // Generate student ID
+    const studentId = await this.generateStudentId();
+
     const dateOfBirth = validatedDto.dateOfBirth
       ? new Date(validatedDto.dateOfBirth)
       : null;
 
     const studentData: Partial<Student> = {
+      studentId, // Add the generated student ID
       firstName: validatedDto.firstName,
       lastName: validatedDto.lastName,
       phoneNumber: validatedDto.phoneNumber,
@@ -67,7 +72,32 @@ export class StudentsService {
     }
 
     return this.studentRepository.save(student);
-  }
+}
+
+private async generateStudentId(): Promise<string> {
+    // Get the current year
+    const currentYear = new Date().getFullYear().toString().slice(-2); // Last 2 digits of year
+    
+    // Find the latest student ID for this year
+    const latestStudent = await this.studentRepository
+      .createQueryBuilder('student')
+      .where('student.studentId LIKE :year', { year: `${currentYear}%` })
+      .orderBy('student.studentId', 'DESC')
+      .getOne();
+
+    let sequenceNumber = 1;
+    if (latestStudent?.studentId) {
+      // Extract the sequence number from the latest ID and increment
+      const lastSeq = parseInt(latestStudent.studentId.slice(-4), 10);
+      sequenceNumber = lastSeq + 1;
+    }
+
+    // Format the sequence number with leading zeros (e.g., 0001)
+    const formattedSeq = sequenceNumber.toString().padStart(4, '0');
+    
+    // Combine to create ID (e.g., 230001 for first student in 2023)
+    return `${currentYear}${formattedSeq}`;
+}
 
   async getStudentSchedule(
     userId: string,

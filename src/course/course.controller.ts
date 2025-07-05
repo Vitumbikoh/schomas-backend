@@ -22,7 +22,13 @@ import { Role } from '../user/enums/role.enum';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Like, Repository } from 'typeorm';
 import { Teacher } from '../user/entities/teacher.entity';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { isUUID } from 'class-validator';
 
 @ApiTags('Courses')
@@ -40,7 +46,10 @@ export class CourseController {
   @Get('course-management')
   @Roles(Role.ADMIN, Role.TEACHER)
   @ApiOperation({ summary: 'Get course management dashboard' })
-  @ApiResponse({ status: 200, description: 'Dashboard data retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Dashboard data retrieved successfully',
+  })
   async getCourseManagementDashboard(@Request() req) {
     const courses = await this.courseService.findAll();
     return {
@@ -63,7 +72,9 @@ export class CourseController {
       courses.map(async (course) => {
         if (course.teacherId) {
           try {
-            const teacher = await this.teacherService.findOneById(course.teacherId);
+            const teacher = await this.teacherService.findOneById(
+              course.teacherId,
+            );
             return {
               ...course,
               teacher: teacher
@@ -111,14 +122,17 @@ export class CourseController {
     };
   }
 
-  @Get()
+  @Get(['', 'courses'])
   @Roles(Role.ADMIN, Role.TEACHER)
   @ApiOperation({ summary: 'Get all courses' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'search', required: false, type: String })
   @ApiQuery({ name: 'classId', required: false, type: String })
-  @ApiResponse({ status: 200, description: 'List of courses retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of courses retrieved successfully',
+  })
   async getAllCourses(
     @Request() req,
     @Query('page') page: string = '1',
@@ -148,7 +162,9 @@ export class CourseController {
         take: limitNum,
         where: whereConditions.length > 0 ? whereConditions : {},
       }),
-      this.courseService.count(whereConditions.length > 0 ? whereConditions : {}),
+      this.courseService.count(
+        whereConditions.length > 0 ? whereConditions : {},
+      ),
     ]);
 
     return {
@@ -165,7 +181,10 @@ export class CourseController {
   @Get('stats/total-courses')
   @Roles(Role.ADMIN, Role.TEACHER)
   @ApiOperation({ summary: 'Get total courses statistics' })
-  @ApiResponse({ status: 200, description: 'Statistics retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Statistics retrieved successfully',
+  })
   async getTotalCoursesStats(@Request() req): Promise<{
     title: string;
     value: string;
@@ -174,10 +193,26 @@ export class CourseController {
     try {
       const totalCourses = await this.courseService.count();
       const currentDate = new Date();
-      const currentMonthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-      const currentMonthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
-      const previousMonthStart = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
-      const previousMonthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth(), 0);
+      const currentMonthStart = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth(),
+        1,
+      );
+      const currentMonthEnd = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth() + 1,
+        0,
+      );
+      const previousMonthStart = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth() - 1,
+        1,
+      );
+      const previousMonthEnd = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth(),
+        0,
+      );
 
       const [currentMonthCount, previousMonthCount] = await Promise.all([
         this.courseService.count({
@@ -331,14 +366,19 @@ export class CourseController {
       }
 
       if (updateCourseDto.teacherId) {
-        const teacher = await this.teacherService.findOneById(updateCourseDto.teacherId);
+        const teacher = await this.teacherService.findOneById(
+          updateCourseDto.teacherId,
+        );
         if (!teacher) {
           throw new NotFoundException('Teacher not found');
         }
         updateCourseDto.teacherId = teacher.id;
       }
 
-      const updatedCourse = await this.courseService.update(id, updateCourseDto);
+      const updatedCourse = await this.courseService.update(
+        id,
+        updateCourseDto,
+      );
       return {
         success: true,
         course: updatedCourse,
@@ -375,35 +415,80 @@ export class CourseController {
     }
   }
 
-  @Get(':courseId/enrollable-students')
-  @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Get students eligible for enrollment in a course' })
-  @ApiResponse({ status: 200, description: 'List of enrollable students retrieved successfully' })
-  async getEnrollableStudents(@Param('courseId') courseId: string) {
+@Get(':courseId/enrollable-students')
+@Roles(Role.ADMIN)
+@ApiOperation({ summary: 'Get students eligible for enrollment in a course' })
+async getEnrollableStudents(@Param('courseId') courseId: string) {
+  if (!isUUID(courseId)) {
+    throw new NotFoundException('Invalid course ID format');
+  }
+
+  // Fetch the course with its class relation
+  const course = await this.courseService.findOne(courseId, ['class']);
+  if (!course) {
+    throw new NotFoundException(`Course with ID ${courseId} not found`);
+  }
+
+  if (!course.classId || !course.class) {
+    throw new NotFoundException('Course has no assigned class');
+  }
+
+  // Fetch students in the class using the correct relation
+  const classStudents = await this.courseService.findStudentsByClass(course.classId);
+  const enrollments = await this.courseService.getCourseEnrollments(courseId);
+  const enrolledStudentIds = enrollments.map((e) => e.student.id);
+
+  const enrollableStudents = classStudents.filter(
+    (student) => !enrolledStudentIds.includes(student.id),
+  );
+
+  return {
+    students: enrollableStudents.map((student) => ({
+      id: student.id,
+      firstName: student.firstName,
+      lastName: student.lastName,
+      email: student.user?.email || '',
+      className: course.class?.name || 'Not assigned',
+    })),
+  };
+}
+
+  @Get(':courseId/enrollments')
+  @Roles(Role.ADMIN, Role.TEACHER)
+  @ApiOperation({ summary: 'Get enrollments for a specific course' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of enrollments retrieved successfully',
+  })
+  async getCourseEnrollments(@Param('courseId') courseId: string) {
     if (!isUUID(courseId)) {
       throw new NotFoundException('Invalid course ID format');
     }
 
-    const course = await this.courseService.findOne(courseId, ['class']);
-    if (!course.classId) {
-      throw new NotFoundException('Course has no assigned class');
+    try {
+      const enrollments =
+        await this.courseService.getCourseEnrollments(courseId);
+      return {
+        enrollments: enrollments.map((enrollment) => ({
+          id: enrollment.id,
+          student: {
+            id: enrollment.student?.id || '',
+            firstName: enrollment.student?.firstName || 'Unknown',
+            lastName: enrollment.student?.lastName || '',
+            email: enrollment.student?.user?.email || '',
+          },
+          course: {
+            id: enrollment.course?.id || '',
+            name: enrollment.course?.name || 'Unknown',
+          },
+          enrollmentDate: enrollment.createdAt.toISOString(),
+          status: enrollment.status,
+        })),
+      };
+    } catch (error) {
+      throw new NotFoundException(
+        `Failed to fetch enrollments: ${error.message}`,
+      );
     }
-
-    const classStudents = await this.teacherService.findByClass(course.classId);
-    const enrollments = await this.courseService.getCourseEnrollments(courseId);
-    const enrolledStudentIds = enrollments.map((e) => e.student.id);
-
-    const enrollableStudents = classStudents.filter(
-      (student) => !enrolledStudentIds.includes(student.id),
-    );
-
-    return {
-      students: enrollableStudents.map((student) => ({
-        id: student.id,
-        firstName: student.firstName,
-        lastName: student.lastName,
-        email: student.user?.email || '',
-      })),
-    };
   }
 }

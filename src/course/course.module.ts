@@ -9,10 +9,12 @@ import { TeachersModule } from 'src/teacher/teacher.module';
 import { EnrollmentModule } from 'src/enrollment/enrollment.module';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { StudentsModule } from 'src/student/student.module';
+import { Student } from 'src/user/entities/student.entity';
+import { Class } from 'src/classes/entity/class.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Course, Teacher, Enrollment]), 
+    TypeOrmModule.forFeature([Course, Teacher, Enrollment, Student, Class]), 
     UsersModule,
     TeachersModule,
     EnrollmentModule,

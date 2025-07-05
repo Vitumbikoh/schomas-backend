@@ -54,8 +54,8 @@ export class Course {
   user: User;
 
   @ManyToOne(() => Class)
-  @JoinColumn({ name: 'classId' })
-  class: Class;
+@JoinColumn({ name: 'classId' })
+class: Class;
 
   @Column({ type: 'uuid', nullable: true })
   classId: string;

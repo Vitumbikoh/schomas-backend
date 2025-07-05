@@ -23,6 +23,10 @@ export class Student extends BaseEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+
+  @Column({ unique: true }) 
+  studentId: string;
+
   @Column()
   firstName: string;
 
