@@ -34,4 +34,7 @@ export class Parent extends BaseEntity {
   @OneToOne(() => User, (user) => user.parent)
   @JoinColumn()
   user: User;
+
+  @OneToMany(() => Student, (student) => student.parent, { nullable: true })
+  student: Student[];
 }

@@ -1,18 +1,29 @@
-// src/finance/dto/process-payment.dto.ts
-import { IsUUID, IsNumber, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsString, IsNumber, IsDateString, IsOptional, IsEnum } from 'class-validator';
 
 export class ProcessPaymentDto {
-  @IsUUID()
+  @IsString()
   studentId: string;
+
+  @IsString()
+  paymentType: string;
 
   @IsNumber()
   amount: number;
 
-  @IsString()
-  @IsNotEmpty()
-  referenceNumber: string;
+  @IsDateString()
+  paymentDate: string;
+
+  @IsEnum(['cash', 'bank_transfer'])
+  paymentMethod: 'cash' | 'bank_transfer';
 
   @IsString()
   @IsOptional()
-  notes?: string;
+  receiptNumber?: string | null;
+
+  @IsString()
+  @IsOptional()
+  notes?: string | null;
+
+  @IsString()
+  userId: string;
 }

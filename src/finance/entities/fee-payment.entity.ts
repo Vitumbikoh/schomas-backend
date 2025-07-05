@@ -1,7 +1,7 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, JoinColumn } from 'typeorm';
 import { Student } from '../../user/entities/student.entity';
 import { Finance } from '../../user/entities/finance.entity';
-import { User } from 'src/user/entities/user.entity';
+import { User } from '../../user/entities/user.entity';
 
 @Entity()
 export class FeePayment {
@@ -11,20 +11,29 @@ export class FeePayment {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   amount: number;
 
+  @Column({ type: 'varchar', nullable: true }) // Fixed from previous error
+  receiptNumber: string | null;
+
   @Column()
-  referenceNumber: string;
+  paymentType: string;
 
-  @Column({ nullable: true })
-  notes: string;
+  @Column({ type: 'enum', enum: ['cash', 'bank_transfer'] })
+  paymentMethod: 'cash' | 'bank_transfer';
 
-  @Column({ default: 'pending' })
+  @Column({ type: 'text', nullable: true }) // Fix: Explicitly set type to text
+  notes: string | null;
+
+  @Column({ type: 'enum', enum: ['pending', 'completed', 'failed'], default: 'completed' })
   status: 'pending' | 'completed' | 'failed';
+
+  @Column()
+  paymentDate: Date;
 
   @CreateDateColumn()
   createdAt: Date;
 
-  @Column({ nullable: true })
-  processedAt: Date;
+  @UpdateDateColumn()
+  updatedAt: Date;
 
   @ManyToOne(() => Student)
   @JoinColumn({ name: 'studentId' })

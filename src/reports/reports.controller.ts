@@ -4,7 +4,6 @@ import {
   UseGuards,
   Request,
   Query,
-  NotFoundException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -16,8 +15,9 @@ import { TeachersService } from '../teacher/teacher.service';
 import { CourseService } from '../course/course.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { FinanceService } from '../finance/finance.service';
-import { Between, Like } from 'typeorm';
+import { Between } from 'typeorm';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { FeePayment } from '../finance/entities/fee-payment.entity';
 
 @ApiTags('Reports')
 @ApiBearerAuth()
@@ -89,19 +89,22 @@ export class ReportsController {
         this.teachersService.findAll(teacherWhere),
         this.courseService.findAll(),
         this.enrollmentService.findAll(),
-        this.financeService.getAllPayments(),
+        this.financeService.getAllPayments(1, 1000, ''),
       ]);
 
       const totalStudents = students.length;
       const totalTeachers = teachers.length;
       const totalCourses = courses.length;
       const totalEnrollments = enrollments.length;
-      const totalFeePayments = feePayments.length;
-      const totalRevenue = feePayments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
+      const totalFeePayments = feePayments.payments.length; // Fix: Use feePayments.payments
+      const totalRevenue = feePayments.payments.reduce(
+        (sum, payment) => sum + (Number(payment.amount) || 0),
+        0,
+      ); // Fix: Use feePayments.payments
 
       const studentsByGrade = await this.getStudentsByGrade(students);
       const enrollmentsByMonth = await this.getEnrollmentsByMonth(enrollments);
-      const paymentsByMonth = await this.getPaymentsByMonth(feePayments);
+      const paymentsByMonth = await this.getPaymentsByMonth(feePayments.payments); // Fix: Use feePayments.payments
       const coursePopularity = await this.getCoursePopularity(courses, enrollments);
       const recentActivities = await this.getRecentActivities();
 
@@ -150,12 +153,12 @@ export class ReportsController {
     }));
   }
 
-  private async getPaymentsByMonth(feePayments: any[]): Promise<Array<{ month: string; amount: number }>> {
+  private async getPaymentsByMonth(feePayments: FeePayment[]): Promise<Array<{ month: string; amount: number }>> {
     const monthMap = new Map<string, number>();
     feePayments.forEach((payment) => {
       const date = new Date(payment.paymentDate);
       const month = date.toLocaleString('default', { month: 'long', year: 'numeric' });
-      monthMap.set(month, (monthMap.get(month) || 0) + (payment.amount || 0));
+      monthMap.set(month, (monthMap.get(month) || 0) + (Number(payment.amount) || 0));
     });
 
     return Array.from(monthMap.entries()).map(([month, amount]) => ({

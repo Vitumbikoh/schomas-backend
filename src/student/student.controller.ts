@@ -111,7 +111,7 @@ export class StudentController {
   }
 
   @Get('students')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.FINANCE)
   async getAllStudents(
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',

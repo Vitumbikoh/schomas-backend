@@ -21,7 +21,7 @@ import {
 } from '@nestjs/swagger';
 import { ProcessPaymentDto } from './dtos/process-payment.dto';
 import { ApproveBudgetDto } from './dtos/approve-budget.dto';
-import { Roles } from '../common/decorators/roles.decorator'; // Adjusted path
+import { Roles } from '../common/decorators/roles.decorator';
 import { CreateFinanceDto } from 'src/user/dtos/create-finance.dto';
 
 @ApiTags('Finance')
@@ -72,7 +72,7 @@ export class FinanceController {
     @Request() req,
     @Body() processPaymentDto: ProcessPaymentDto,
   ) {
-    return this.financeService.processPayment(req.user.id, processPaymentDto);
+    return this.financeService.processPayment(req.user, processPaymentDto);
   }
 
   @Post()
@@ -226,7 +226,7 @@ export class FinanceController {
   }
 
   @Get('fee-payments')
-  @Roles(Role.ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get all fee payments' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -240,8 +240,11 @@ export class FinanceController {
     @Query('limit') limit = 10,
     @Query('search') search = '',
   ) {
-    const payments = await this.financeService.getAllPayments();
-    const total = payments.length;
+    const { payments, total } = await this.financeService.getAllPayments(
+      Number(page),
+      Number(limit),
+      search,
+    );
 
     const transformedPayments = payments.map((payment) => ({
       id: payment.id,
@@ -249,9 +252,12 @@ export class FinanceController {
         ? `${payment.student.firstName} ${payment.student.lastName}`
         : 'Unknown',
       amount: payment.amount,
-      paymentDate: payment.paymentDate.toISOString(),
+      paymentDate: payment.paymentDate?.toISOString(),
+      paymentType: payment.paymentType,
       paymentMethod: payment.paymentMethod,
+      receiptNumber: payment.receiptNumber,
       status: payment.status,
+      notes: payment.notes,
     }));
 
     return {
@@ -263,6 +269,30 @@ export class FinanceController {
         itemsPerPage: limit,
       },
     };
+  }
+
+  @Get('parent-payments')
+  @Roles(Role.PARENT)
+  @ApiOperation({ summary: 'Get fee payments for parent’s children' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiResponse({
+    status: 200,
+    description: 'List of fee payments for parent’s children retrieved successfully',
+  })
+  async getParentPayments(
+    @Request() req,
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
+    @Query('search') search = '',
+  ) {
+    return this.financeService.getParentPayments(
+      req.user.id,
+      Number(page),
+      Number(limit),
+      search,
+    );
   }
 
   @Get('reports/summary')

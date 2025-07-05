@@ -1,4 +1,3 @@
-// finance.service.ts
 import {
   BadRequestException,
   ConflictException,
@@ -35,7 +34,6 @@ export class FinanceService {
     private readonly userRepository: Repository<User>,
   ) {}
 
-  // Update the getDashboardData method
   async getDashboardData(userId: string) {
     const financeUser = await this.getFinanceUser(userId);
 
@@ -53,24 +51,21 @@ export class FinanceService {
           order: { createdAt: 'DESC' },
         }),
         this.paymentRepository.find({
-          where: { status: In(['completed', 'processed']) }, // Updated to include both statuses
+          where: { status: 'completed' },
           take: 5,
-          order: { processedAt: 'DESC' },
+          order: { paymentDate: 'DESC' },
           relations: ['student'],
         }),
       ]);
 
-    // Get accurate stats
     const totalProcessedPayments = await this.paymentRepository.count({
-      where: { status: In(['completed', 'processed']) },
+      where: { status: 'completed' },
     });
 
     const totalRevenueResult = await this.paymentRepository
       .createQueryBuilder('payment')
       .select('SUM(payment.amount)', 'sum')
-      .where('payment.status IN (:...statuses)', {
-        statuses: ['completed', 'processed'],
-      })
+      .where('payment.status = :status', { status: 'completed' })
       .getRawOne();
 
     const totalRevenue = parseFloat(totalRevenueResult?.sum || '0');
@@ -79,39 +74,33 @@ export class FinanceService {
       financeUser,
       pendingPayments: pendingPayments.map((p) => ({
         ...p,
-        studentName: p.student?.lastName || 'Unknown',
+        studentName: p.student ? `${p.student.firstName} ${p.student.lastName}` : 'Unknown',
       })),
       pendingBudgets,
       recentTransactions: recentTransactions.map((t) => ({
         ...t,
-        studentName: t.student?.lastName || 'Unknown',
+        studentName: t.student ? `${t.student.firstName} ${t.student.lastName}` : 'Unknown',
       })),
       stats: {
         totalProcessedPayments,
         totalApprovedBudgets: await this.budgetRepository.count({
           where: { status: 'approved' },
         }),
-        totalRevenue: `$${totalRevenue.toFixed(2)}`, // Format as currency string
+        totalRevenue: `$${totalRevenue.toFixed(2)}`,
         pendingApprovals: pendingPayments.length + pendingBudgets.length,
       },
     };
   }
 
-  
-
-  async processPayment(userId: string, processPaymentDto: ProcessPaymentDto) {
-    // 1. Verify the processing user exists and has proper role
+  async processPayment(user: { id: string; role: Role }, processPaymentDto: ProcessPaymentDto) {
     const processingUser = await this.userRepository.findOne({
-      where: { id: userId, role: In([Role.ADMIN, Role.FINANCE]) },
+      where: { id: user.id, role: In([Role.ADMIN, Role.FINANCE]) },
     });
 
     if (!processingUser) {
-      throw new NotFoundException(
-        'Processing user not found or not authorized',
-      );
+      throw new NotFoundException('Processing user not found or not authorized');
     }
 
-    // 2. Verify the student exists
     const student = await this.studentRepository.findOne({
       where: { id: processPaymentDto.studentId },
     });
@@ -120,7 +109,6 @@ export class FinanceService {
       throw new NotFoundException('Student not found');
     }
 
-    // 3. Check if the user is a finance user or admin
     let financeUser: Finance | null = null;
     if (processingUser.role === Role.FINANCE) {
       financeUser = await this.financeRepository.findOne({
@@ -132,13 +120,27 @@ export class FinanceService {
       }
     }
 
-    // 4. Create payment with proper relation references
+    const validPaymentTypes = [
+      'tuition',
+      'exam',
+      'transport',
+      'library',
+      'hostel',
+      'uniform',
+      'other',
+    ];
+    if (!validPaymentTypes.includes(processPaymentDto.paymentType)) {
+      throw new BadRequestException('Invalid payment type');
+    }
+
     const payment = this.paymentRepository.create({
       amount: processPaymentDto.amount,
-      referenceNumber: processPaymentDto.referenceNumber,
-      notes: processPaymentDto.notes || '',
+      receiptNumber: processPaymentDto.receiptNumber,
+      paymentType: processPaymentDto.paymentType,
+      paymentMethod: processPaymentDto.paymentMethod,
+      notes: processPaymentDto.notes,
       status: 'completed',
-      processedAt: new Date(),
+      paymentDate: new Date(processPaymentDto.paymentDate),
       student: { id: student.id },
       ...(financeUser
         ? { processedBy: { id: financeUser.id } }
@@ -151,24 +153,20 @@ export class FinanceService {
         success: true,
         payment: {
           ...payment,
-          studentName: `${student.lastName} ${student.firstName}`,
+          studentName: `${student.firstName} ${student.lastName}`,
           processedByName: processingUser.username,
         },
         message: 'Payment processed successfully',
       };
     } catch (error) {
       if (error.code === '23503') {
-        throw new BadRequestException(
-          'Invalid reference in payment processing',
-        );
+        throw new BadRequestException('Invalid reference in payment processing');
       }
       throw error;
     }
   }
 
-  // finance.service.ts
   async getAllFinanceUsers(page: number, limit: number, search: string) {
-    // First get all finance users with their user relations
     const financeUsers = await this.financeRepository.find({
       relations: ['user'],
       skip: (page - 1) * limit,
@@ -184,7 +182,6 @@ export class FinanceService {
         : undefined,
     });
 
-    // Get total count for pagination
     const total = await this.financeRepository.count({
       where: search
         ? [
@@ -256,9 +253,9 @@ export class FinanceService {
           order: { createdAt: 'DESC' },
         }),
         this.paymentRepository.find({
-          where: { status: In(['completed', 'processed']) },
+          where: { status: 'completed' },
           take: 5,
-          order: { processedAt: 'DESC' },
+          order: { paymentDate: 'DESC' },
           relations: ['student'],
         }),
       ]);
@@ -284,10 +281,9 @@ export class FinanceService {
   }> {
     const paymentWhere: any = { status: 'completed' };
     const budgetWhere: any = { status: 'approved' };
-    const pendingWhere: any = {};
 
     if (dateRange?.startDate && dateRange?.endDate) {
-      paymentWhere.processedAt = Between(
+      paymentWhere.paymentDate = Between(
         dateRange.startDate,
         dateRange.endDate,
       );
@@ -312,7 +308,7 @@ export class FinanceService {
         .where('payment.status = :status', { status: 'completed' })
         .andWhere(
           dateRange?.startDate && dateRange?.endDate
-            ? 'payment.processedAt BETWEEN :startDate AND :endDate'
+            ? 'payment.paymentDate BETWEEN :startDate AND :endDate'
             : '1=1',
           {
             startDate: dateRange?.startDate,
@@ -341,27 +337,27 @@ export class FinanceService {
     const where: any = {};
 
     if (search) {
-      where.referenceNumber = Like(`%${search}%`);
+      where.receiptNumber = Like(`%${search}%`);
     }
 
     if (dateRange?.startDate && dateRange?.endDate) {
-      where.processedAt = Between(dateRange.startDate, dateRange.endDate);
+      where.paymentDate = Between(dateRange.startDate, dateRange.endDate);
     }
 
     const [transactions, total] = await this.paymentRepository.findAndCount({
       where,
-      relations: ['student', 'processedBy'],
+      relations: ['student', 'processedBy', 'processedByAdmin'],
       skip: (page - 1) * limit,
       take: limit,
-      order: { processedAt: 'DESC' },
+      order: { paymentDate: 'DESC' },
     });
 
     return {
       transactions: transactions.map((t) => ({
         ...t,
-        studentName: t.student?.lastName || 'Unknown',
-        processedAt: t.processedAt, // Ensure this is included
-        createdAt: t.createdAt, // Include creation date as well
+        studentName: t.student ? `${t.student.firstName} ${t.student.lastName}` : 'Unknown',
+        paymentDate: t.paymentDate?.toISOString(),
+        processedByName: t.processedBy?.user?.username || t.processedByAdmin?.username || 'Unknown',
       })),
       pagination: {
         totalItems: total,
@@ -372,8 +368,63 @@ export class FinanceService {
     };
   }
 
+async getParentPayments(
+  parentId: string,
+  page: number,
+  limit: number,
+  search: string,
+) {
+  const parent = await this.userRepository.findOne({
+    where: { id: parentId, role: Role.PARENT },
+    relations: ['parentProfile', 'parentProfile.children'],
+  });
+
+  if (!parent || !parent.parent?.children?.length) {
+    throw new NotFoundException('Parent or associated students not found');
+  }
+
+  const studentIds = parent.parent.children.map((child) => child.id);
+
+  const where: any = {
+    student: { id: In(studentIds) },
+  };
+
+  if (search) {
+    where.receiptNumber = Like(`%${search}%`);
+  }
+
+  const [payments, total] = await this.paymentRepository.findAndCount({
+    where,
+    relations: ['student', 'processedBy', 'processedByAdmin'],
+    skip: (page - 1) * limit,
+    take: limit,
+    order: { paymentDate: 'DESC' },
+  });
+
+  return {
+    payments: payments.map((payment) => ({
+      id: payment.id,
+      studentName: payment.student
+        ? `${payment.student.firstName} ${payment.student.lastName}`
+        : 'Unknown',
+      amount: payment.amount,
+      paymentDate: payment.paymentDate?.toISOString(),
+      paymentType: payment.paymentType,
+      paymentMethod: payment.paymentMethod,
+      receiptNumber: payment.receiptNumber,
+      status: payment.status,
+      notes: payment.notes,
+    })),
+    pagination: {
+      totalItems: total,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      itemsPerPage: limit,
+    },
+  };
+}
+
   async createFinanceUser(createFinanceDto: CreateFinanceDto) {
-    // Check if username or email already exists
     const existingUser = await this.userRepository.findOne({
       where: [
         { username: createFinanceDto.username },
@@ -385,10 +436,8 @@ export class FinanceService {
       throw new ConflictException('Username or email already exists');
     }
 
-    // Hash the password
     const hashedPassword = await bcrypt.hash(createFinanceDto.password, 10);
 
-    // Create the user first
     const user = this.userRepository.create({
       username: createFinanceDto.username,
       email: createFinanceDto.email,
@@ -399,7 +448,6 @@ export class FinanceService {
 
     await this.userRepository.save(user);
 
-    // Then create the finance profile
     const finance = this.financeRepository.create({
       firstName: createFinanceDto.firstName,
       lastName: createFinanceDto.lastName,
@@ -415,13 +463,12 @@ export class FinanceService {
 
     await this.financeRepository.save(finance);
 
-    // Return the created user without the password
     const { password, ...result } = user;
     return {
       ...result,
       financeProfile: {
         ...finance,
-        user: undefined, // Remove circular reference
+        user: undefined,
       },
     };
   }
@@ -429,7 +476,7 @@ export class FinanceService {
   async generateFinancialReport(startDate: Date, endDate: Date) {
     const transactions = await this.paymentRepository.find({
       where: {
-        processedAt: Between(startDate, endDate),
+        paymentDate: Between(startDate, endDate),
         status: 'completed',
       },
       relations: ['student'],
@@ -449,14 +496,13 @@ export class FinanceService {
       },
       transactions: transactions.map((t) => ({
         ...t,
-        studentName: t.student?.lastName || 'Unknown',
+        studentName: t.student ? `${t.student.firstName} ${t.student.lastName}` : 'Unknown',
+        paymentDate: t.paymentDate?.toISOString(),
       })),
     };
   }
 
-  // finance.service.ts
   private async getFinanceUser(userId: string): Promise<Finance | User> {
-    // First try to find finance user
     const financeUser = await this.financeRepository.findOne({
       where: { user: { id: userId } },
       relations: ['user'],
@@ -466,13 +512,12 @@ export class FinanceService {
       return financeUser;
     }
 
-    // If not found, check if it's an admin user
     const user = await this.userRepository.findOne({
       where: { id: userId, role: Role.ADMIN },
     });
 
     if (user) {
-      return user; // Return admin user directly
+      return user;
     }
 
     throw new NotFoundException('Finance user or admin not found');
@@ -481,7 +526,7 @@ export class FinanceService {
   async generateReceipt(transactionId: string): Promise<string> {
     const payment = await this.paymentRepository.findOne({
       where: { id: transactionId },
-      relations: ['student', 'processedBy'],
+      relations: ['student', 'processedBy', 'processedByAdmin'],
     });
 
     if (!payment) {
@@ -491,7 +536,6 @@ export class FinanceService {
     const fileName = `receipt_${payment.id}.pdf`;
     const filePath = `./receipts/${fileName}`;
 
-    // Ensure receipts directory exists
     if (!fs.existsSync('./receipts')) {
       fs.mkdirSync('./receipts');
     }
@@ -500,17 +544,18 @@ export class FinanceService {
     const stream = fs.createWriteStream(filePath);
     doc.pipe(stream);
 
-    // Add receipt content
     doc.fontSize(20).text('Payment Receipt', { align: 'center' });
     doc.moveDown();
-    doc.fontSize(14).text(`Receipt #: ${payment.referenceNumber}`);
-    doc.text(`Date: ${payment.processedAt.toLocaleDateString()}`);
+    doc.fontSize(14).text(`Receipt #: ${payment.receiptNumber || 'N/A'}`);
+    doc.text(`Date: ${payment.paymentDate.toLocaleDateString()}`);
     doc.text(
       `Student: ${payment.student?.firstName || 'N/A'} ${payment.student?.lastName || 'N/A'}`,
     );
     doc.text(`Amount: $${payment.amount.toFixed(2)}`);
+    doc.text(`Payment Type: ${payment.paymentType}`);
+    doc.text(`Payment Method: ${payment.paymentMethod}`);
     doc.text(
-      `Processed By: ${payment.processedBy?.user?.username || 'System'}`,
+      `Processed By: ${payment.processedBy?.user?.username || payment.processedByAdmin?.username || 'System'}`,
     );
     doc.moveDown();
     doc.text('Thank you for your payment!', { align: 'center' });
@@ -523,56 +568,37 @@ export class FinanceService {
     });
   }
 
-  // // finance.service.ts
-  // // finance.service.ts
-  // async getFinancialStats() {
-  //   // Get counts and sums with proper TypeORM syntax
-  //   const totalProcessedPayments = await this.paymentRepository.count({
-  //     where: { status: 'completed' },
-  //   });
+  async getAllPayments(page: number = 1, limit: number = 10, search: string = '') {
+    const where: any = {};
 
-  //   const totalApprovedBudgets = await this.budgetRepository.count({
-  //     where: { status: 'approved' },
-  //   });
+    if (search) {
+      where.receiptNumber = Like(`%${search}%`);
+    }
 
-  //   // For sum, we need to use query builder
-  //   const totalRevenueResult = await this.paymentRepository
-  //     .createQueryBuilder('payment')
-  //     .select('SUM(payment.amount)', 'sum')
-  //     .where('payment.status = :status', { status: 'completed' })
-  //     .getRawOne();
+    const [payments, total] = await this.paymentRepository.findAndCount({
+      where,
+      relations: ['student', 'processedBy', 'processedByAdmin'],
+      skip: (page - 1) * limit,
+      take: limit,
+      order: { paymentDate: 'DESC' },
+    });
 
-  //   const totalRevenue = parseFloat(totalRevenueResult?.sum || '0');
+    return { payments, total };
+  }
 
-  //   const pendingPayments = await this.paymentRepository.count({
-  //     where: { status: 'pending' },
-  //   });
-
-  //   const pendingBudgets = await this.budgetRepository.count({
-  //     where: { status: 'pending' },
-  //   });
-
-  //   return {
-  //     totalProcessedPayments,
-  //     totalApprovedBudgets,
-  //     totalRevenue,
-  //     pendingApprovals: pendingPayments + pendingBudgets,
-  //   };
-  // }
   async getPaymentById(id: string) {
     return this.paymentRepository.findOne({
       where: { id },
-      relations: ['student'],
+      relations: ['student', 'processedBy', 'processedByAdmin'],
     });
   }
-  async getAllPayments(): Promise<any[]> {
-  return this.paymentRepository.find();
-}
 
-async getRecentPayments(limit: number): Promise<any[]> {
-  return this.paymentRepository.find({
-    take: limit,
-    order: { processedAt: 'DESC' },
-  });
-}
+  async getRecentPayments(limit: number): Promise<any[]> {
+    return this.paymentRepository.find({
+      where: { status: 'completed' },
+      take: limit,
+      order: { paymentDate: 'DESC' },
+      relations: ['student', 'processedBy', 'processedByAdmin'],
+    });
+  }
 }

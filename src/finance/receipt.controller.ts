@@ -57,8 +57,8 @@ export class ReceiptController {
          .moveDown(0.5);
       
       doc.fontSize(12)
-         .text(`Receipt #: ${payment.referenceNumber || id}`, { continued: true })
-         .text(`Date: ${(payment.processedAt || new Date()).toLocaleDateString()}`, { align: 'right' })
+         .text(`Receipt #: ${payment.receiptNumber || id}`, { continued: true })
+         .text(`Date: ${(payment.paymentDate || new Date()).toLocaleDateString()}`, { align: 'right' })
          .moveDown();
       
       doc.text(`Student: ${payment.student?.firstName || ''} ${payment.student?.lastName || ''}`.trim() || 'N/A')
@@ -67,8 +67,17 @@ export class ReceiptController {
       doc.text(`Amount: $${amount.toFixed(2)}`)
          .moveDown();
       
+      doc.text(`Payment Type: ${payment.paymentType}`)
+         .moveDown();
+      
+      doc.text(`Payment Method: ${payment.paymentMethod}`)
+         .moveDown();
+      
       doc.text(`Status: ${payment.status?.toUpperCase() || 'COMPLETED'}`)
          .moveDown(2);
+      
+      doc.text(`Processed By: ${payment.processedBy?.user?.username || payment.processedByAdmin?.username || 'System'}`)
+         .moveDown();
       
       doc.text('Thank you for your payment!', { align: 'center' });
 
