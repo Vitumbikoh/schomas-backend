@@ -9,9 +9,8 @@ import { EnrollmentController } from './enrollment.controller';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Enrollment, Course, Student])],
-  providers: [EnrollmentService,],
+  providers: [EnrollmentService],
   controllers: [EnrollmentController],
-
-  exports: [EnrollmentService, TypeOrmModule], 
+  exports: [EnrollmentService, TypeOrmModule], // This exports the EnrollmentRepository
 })
 export class EnrollmentModule {}

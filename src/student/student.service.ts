@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindManyOptions, Repository, Like } from 'typeorm';
 import { Student } from '../user/entities/student.entity';
@@ -13,6 +13,8 @@ import { plainToClass } from 'class-transformer';
 
 @Injectable()
 export class StudentsService {
+  private readonly logger = new Logger(StudentsService.name);
+
   constructor(
     @InjectRepository(Student)
     private readonly studentRepository: Repository<Student>,
@@ -24,7 +26,8 @@ export class StudentsService {
     private readonly scheduleRepository: Repository<Schedule>,
   ) {}
 
-async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
+  async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
+    this.logger.log(`Creating student with email: ${createStudentDto.email}`);
     const validatedDto = plainToClass(CreateStudentDto, createStudentDto);
     const hashedPassword = await bcrypt.hash(validatedDto.password, 10);
 
@@ -36,6 +39,7 @@ async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
       role: Role.STUDENT,
     });
     await this.userRepository.save(user);
+    this.logger.log(`Created user with ID: ${user.id}`);
 
     // Generate student ID
     const studentId = await this.generateStudentId();
@@ -45,7 +49,7 @@ async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
       : null;
 
     const studentData: Partial<Student> = {
-      studentId, // Add the generated student ID
+      studentId,
       firstName: validatedDto.firstName,
       lastName: validatedDto.lastName,
       phoneNumber: validatedDto.phoneNumber,
@@ -54,6 +58,7 @@ async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
       gender: validatedDto.gender,
       gradeLevel: validatedDto.gradeLevel,
       user: user,
+      userId: user.id,
     };
 
     if (validatedDto.classId) {
@@ -68,17 +73,18 @@ async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
       });
       if (parent) {
         student.parent = parent;
+      } else {
+        this.logger.warn(`Parent with ID ${validatedDto.parentId} not found`);
       }
     }
 
-    return this.studentRepository.save(student);
-}
+    const savedStudent = await this.studentRepository.save(student);
+    this.logger.log(`Created student with ID: ${savedStudent.id}, studentId: ${savedStudent.studentId}`);
+    return savedStudent;
+  }
 
-private async generateStudentId(): Promise<string> {
-    // Get the current year
-    const currentYear = new Date().getFullYear().toString().slice(-2); // Last 2 digits of year
-    
-    // Find the latest student ID for this year
+  private async generateStudentId(): Promise<string> {
+    const currentYear = new Date().getFullYear().toString().slice(-2);
     const latestStudent = await this.studentRepository
       .createQueryBuilder('student')
       .where('student.studentId LIKE :year', { year: `${currentYear}%` })
@@ -87,17 +93,13 @@ private async generateStudentId(): Promise<string> {
 
     let sequenceNumber = 1;
     if (latestStudent?.studentId) {
-      // Extract the sequence number from the latest ID and increment
       const lastSeq = parseInt(latestStudent.studentId.slice(-4), 10);
       sequenceNumber = lastSeq + 1;
     }
 
-    // Format the sequence number with leading zeros (e.g., 0001)
     const formattedSeq = sequenceNumber.toString().padStart(4, '0');
-    
-    // Combine to create ID (e.g., 230001 for first student in 2023)
     return `${currentYear}${formattedSeq}`;
-}
+  }
 
   async getStudentSchedule(
     userId: string,
@@ -105,12 +107,14 @@ private async generateStudentId(): Promise<string> {
     limit: number,
     search?: string,
   ): Promise<{ schedules: any[]; total: number }> {
+    this.logger.log(`Fetching schedule for userId: ${userId}`);
     const student = await this.studentRepository.findOne({
       where: { user: { id: userId } },
       relations: ['enrollments', 'enrollments.course'],
     });
 
     if (!student) {
+      this.logger.error(`Student not found for userId: ${userId}`);
       throw new NotFoundException('Student not found');
     }
 
@@ -158,17 +162,24 @@ private async generateStudentId(): Promise<string> {
         : null,
     }));
 
+    this.logger.log(`Fetched ${total} schedules for userId: ${userId}`);
     return { schedules: formattedSchedules, total };
   }
 
   async findByUserId(userId: string): Promise<Student | null> {
-    return this.studentRepository.findOne({
+    this.logger.log(`Finding student by userId: ${userId}`);
+    const student = await this.studentRepository.findOne({
       where: { user: { id: userId } },
       relations: ['user'],
     });
+    if (!student) {
+      this.logger.warn(`No student found for userId: ${userId}`);
+    }
+    return student;
   }
 
   async findByClass(classId: string): Promise<Student[]> {
+    this.logger.log(`Finding students by classId: ${classId}`);
     return this.studentRepository.find({
       where: { classId },
       relations: ['user'],
@@ -186,12 +197,14 @@ private async generateStudentId(): Promise<string> {
   }
 
   async findOne(id: string) {
+    this.logger.log(`Finding student by id: ${id}`);
     const student = await this.studentRepository.findOne({
       where: { id },
       relations: ['user', 'parent'],
     });
 
     if (!student) {
+      this.logger.error(`Student with ID ${id} not found`);
       throw new NotFoundException(`Student with ID ${id} not found`);
     }
     return student;
@@ -218,6 +231,7 @@ private async generateStudentId(): Promise<string> {
     id: string,
     updateStudentDto: UpdateStudentDto,
   ): Promise<Student> {
+    this.logger.log(`Updating student with id: ${id}`);
     const student = await this.findOne(id);
     const { user, parentId, ...studentData } = updateStudentDto;
 
@@ -244,12 +258,15 @@ private async generateStudentId(): Promise<string> {
         where: { id: String(parentId) },
       });
       if (!parent) {
+        this.logger.warn(`Parent with ID ${parentId} not found`);
         throw new NotFoundException('Parent not found');
       }
       student.parent = parent;
     }
 
-    return this.studentRepository.save(student);
+    const savedStudent = await this.studentRepository.save(student);
+    this.logger.log(`Updated student with id: ${id}`);
+    return savedStudent;
   }
 
   async findAll(options?: FindManyOptions<Student>): Promise<Student[]> {
@@ -260,69 +277,85 @@ private async generateStudentId(): Promise<string> {
   }
 
   async remove(id: string): Promise<void> {
+    this.logger.log(`Removing student with id: ${id}`);
     const student = await this.findOne(id);
     await this.studentRepository.remove(student);
 
     if (student.user) {
       await this.userRepository.remove(student.user);
     }
+    this.logger.log(`Removed student with id: ${id}`);
   }
 
   async getStudentProfile(id: string): Promise<Student> {
     return this.findOne(id);
   }
 
-  async getStudentCourses(studentId: string) {
-    const student = await this.studentRepository.findOne({
-      where: { id: studentId },
-    });
-
-    if (!student) {
-      throw new NotFoundException('Student not found');
-    }
-
-    return this.studentRepository
-      .findOne({
-        where: { id: studentId },
+  async getStudentCourses(userId: string) {
+    this.logger.log(`Fetching courses for userId: ${userId}`);
+    try {
+      const student = await this.studentRepository.findOne({
+        where: { user: { id: userId } },
         relations: [
           'enrollments',
           'enrollments.course',
           'enrollments.course.teacher',
+          'enrollments.course.class',
         ],
-      })
-      .then((student) => {
-        if (!student) return { completed: [], active: [], upcoming: [] };
+      });
 
-        const now = new Date();
-        const courses = student.enrollments.map((enrollment) => ({
-          ...enrollment.course,
+      if (!student) {
+        this.logger.error(`Student not found for userId: ${userId}`);
+        throw new NotFoundException('Student not found');
+      }
+
+      const now = new Date();
+      const courses = student.enrollments.map((enrollment) => {
+        const course = enrollment.course;
+        return {
+          id: course.id,
+          code: course.code,
+          name: course.name,
+          description: course.description || 'No description available',
+          status: course.status,
           enrollmentStatus: enrollment.status,
           enrollmentDate: enrollment.enrollmentDate,
-          teacherName: enrollment.course.teacher
-            ? `${enrollment.course.teacher.firstName} ${enrollment.course.teacher.lastName}`
+          startDate: course.startDate ? new Date(course.startDate) : null,
+          endDate: course.endDate ? new Date(course.endDate) : null,
+          teacherName: course.teacher
+            ? `${course.teacher.firstName} ${course.teacher.lastName}`
             : 'Not assigned',
-        }));
-
-        return {
-          completed: courses.filter(
-            (course) =>
-              course.status === 'inactive' ||
-              (course.endDate && new Date(course.endDate) < now) ||
-              course.enrollmentStatus === 'completed',
-          ),
-          active: courses.filter(
-            (course) =>
-              course.status === 'active' &&
-              (!course.endDate || new Date(course.endDate) >= now) &&
-              course.enrollmentStatus === 'active',
-          ),
-          upcoming: courses.filter(
-            (course) =>
-              course.status === 'upcoming' &&
-              (!course.startDate || new Date(course.startDate) > now) &&
-              course.enrollmentStatus === 'active',
-          ),
+          schedule: course.schedule || { days: [], time: '', location: '' },
+          className: course.class ? course.class.name : 'Not assigned',
         };
       });
+
+      const result = {
+        completed: courses.filter(
+          (course) =>
+            course.status === 'inactive' ||
+            (course.endDate && course.endDate < now) ||
+            course.enrollmentStatus === 'completed',
+        ),
+        active: courses.filter(
+          (course) =>
+            course.status === 'active' &&
+            (!course.endDate || course.endDate >= now) &&
+            course.enrollmentStatus === 'active',
+        ),
+        upcoming: courses.filter(
+          (course) =>
+            course.status === 'upcoming' &&
+            (!course.startDate || course.startDate > now) &&
+            course.enrollmentStatus === 'active',
+        ),
+      };
+
+      this.logger.log(`Fetched ${courses.length} courses for userId: ${userId}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Error fetching courses for userId: ${userId}: ${error.message}`);
+      throw error;
+    }
   }
 }

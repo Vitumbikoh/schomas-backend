@@ -12,6 +12,9 @@ import { Course } from 'src/course/entities/course.entity';
 import { Teacher } from 'src/user/entities/teacher.entity';
 import { User } from 'src/user/entities/user.entity';
 import { CreateLearningMaterialDto } from './dtos/create-learning-material.dto';
+import { StudentMaterialDto } from './dtos/student-material.dto';
+import * as fs from 'fs';
+import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 
 @Injectable()
 export class LearningMaterialsService {
@@ -26,10 +29,12 @@ export class LearningMaterialsService {
     private userRepository: Repository<User>,
     @InjectRepository(Teacher)
     private teacherRepository: Repository<Teacher>,
+    @InjectRepository(Enrollment)
+    private enrollmentRepository: Repository<Enrollment>,
   ) {}
 
   static storageOptions = diskStorage({
-    destination: './uploads',
+    destination: './Uploads',
     filename: (req, file, callback) => {
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
       const ext = extname(file.originalname);
@@ -99,6 +104,56 @@ export class LearningMaterialsService {
     } catch (error) {
       console.error('Database error:', error);
       throw new BadRequestException(`Failed to save learning material: ${error.message}`);
+    }
+  }
+
+  async getStudentMaterials(studentId: string, courseId?: string): Promise<StudentMaterialDto[]> {
+    try {
+      // Fetch student's enrolled courses
+      const enrollments = await this.enrollmentRepository.find({
+        where: { student: { userId: studentId } },
+        relations: ['course'],
+      });
+
+      const courseIds = enrollments.map(enrollment => enrollment.course.id);
+
+      // Fetch materials for enrolled courses
+      const query = this.learningMaterialRepository
+        .createQueryBuilder('material')
+        .leftJoinAndSelect('material.course', 'course')
+        .where('material.courseId IN (:...courseIds)', { courseIds });
+
+      if (courseId) {
+        query.andWhere('material.courseId = :courseId', { courseId });
+      }
+
+      const materials = await query.getMany();
+
+      return materials.map(material => ({
+        id: material.id,
+        title: material.title,
+        description: material.description,
+        course: material.course.name,
+        courseId: material.course.id,
+        type: extname(material.filePath).toUpperCase().replace('.', ''),
+        uploadedOn: material.createdAt.toISOString(),
+        size: this.getFileSize(material.filePath),
+        filePath: material.filePath,
+      }));
+    } catch (error) {
+      console.error(`Failed to fetch materials for student ${studentId}:`, error);
+      throw new Error(`Failed to fetch student materials: ${error.message}`);
+    }
+  }
+
+  private getFileSize(filePath: string): string {
+    try {
+      const stats = fs.statSync(filePath);
+      const sizeInMB = (stats.size / 1024 / 1024).toFixed(1);
+      return `${sizeInMB} MB`;
+    } catch (error) {
+      console.error(`Failed to get file size for ${filePath}:`, error);
+      return 'Unknown';
     }
   }
 }

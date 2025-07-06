@@ -8,16 +8,8 @@ export class Enrollment {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  // @ManyToOne(() => Course, (course) => course.enrollments)
-  // @JoinColumn({ name: 'courseId' })
-  // course: Course;
-
   @Column({ type: 'uuid' })
   courseId: string;
-
-  // @ManyToOne(() => Student, (student) => student.enrollments)
-  // @JoinColumn({ name: 'studentId' })
-  // student: Student;
 
   @Column({ type: 'uuid' })
   studentId: string;

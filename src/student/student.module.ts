@@ -16,16 +16,23 @@ import { Class } from 'src/classes/entity/class.entity';
 import { ClassService } from 'src/classes/class.service';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
 import { ClassroomService } from 'src/classroom/classroom.service';
+import { LearningMaterial } from 'src/learning-materials/entities/learning-material.entity';
+import { LearningMaterialsService } from 'src/learning-materials/learning-materials.service';
+import { LearningMaterialsModule } from 'src/learning-materials/learning-materials.module';
+import { EnrollmentModule } from 'src/enrollment/enrollment.module';
+import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Student, User, Parent, Schedule, Course, Class, Classroom]),
+    TypeOrmModule.forFeature([Student, User, Parent, Schedule, Course, Class, Classroom, LearningMaterial, Enrollment]),
     UsersModule,
     AuthModule,
-    ConfigModule 
+    ConfigModule,
+    LearningMaterialsModule,
+    EnrollmentModule
     
   ],
-  providers: [StudentsService, ScheduleService, CourseService, ClassService, ClassroomService],
+  providers: [StudentsService, ScheduleService, CourseService, ClassService, ClassroomService, LearningMaterialsService],
   controllers: [StudentController],
   exports: [StudentsService],
 })

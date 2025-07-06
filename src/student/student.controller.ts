@@ -20,15 +20,29 @@ import { StudentsService } from 'src/student/student.service';
 import { CreateStudentDto } from 'src/user/dtos/create-student.dto';
 import { Role } from 'src/user/enums/role.enum';
 import { Like } from 'typeorm';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Logger } from '@nestjs/common';
+import { LearningMaterialsService } from 'src/learning-materials/learning-materials.service';
+import { StudentMaterialDto } from 'src/learning-materials/dtos/student-material.dto';
 
+@ApiTags('Students')
+@ApiBearerAuth()
 @Controller('student')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 export class StudentController {
-  constructor(private readonly studentService: StudentsService) {}
+  private readonly logger = new Logger(StudentController.name);
+
+  constructor(
+    private readonly studentService: StudentsService,
+    private readonly learningMaterialsService: LearningMaterialsService,
+  ) {}
 
   @Get('student-management')
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get student management dashboard' })
+  @ApiResponse({ status: 200, description: 'Dashboard data retrieved successfully' })
   async getStudentManagementDashboard(@Request() req) {
+    this.logger.log('Fetching student management dashboard');
     try {
       const students = await this.studentService.findAll();
       const stats = await this.getStudentManagementStats(students);
@@ -47,9 +61,8 @@ export class StudentController {
         },
       };
     } catch (error) {
-      throw new Error(
-        'Failed to fetch student management data: ' + error.message,
-      );
+      this.logger.error(`Failed to fetch student management data: ${error.message}`);
+      throw new Error('Failed to fetch student management data: ' + error.message);
     }
   }
 
@@ -72,13 +85,16 @@ export class StudentController {
       newRegistrations: students.filter(
         (s) => s.createdAt && new Date(s.createdAt) > thirtyDaysAgo,
       ).length,
-      averageAttendance: '95%', // Placeholder - update with real calculation
+      averageAttendance: '95%',
     };
   }
 
   @Post('students')
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Create a new student' })
+  @ApiResponse({ status: 201, description: 'Student created successfully' })
   async createStudent(@Body() createStudentDto: CreateStudentDto) {
+    this.logger.log(`Creating student: ${createStudentDto.email}`);
     try {
       if (!createStudentDto.firstName || !createStudentDto.lastName) {
         throw new Error('First name and last name are required');
@@ -91,13 +107,17 @@ export class StudentController {
         message: 'Student created successfully',
       };
     } catch (error) {
+      this.logger.error(`Failed to create student: ${error.message}`);
       throw new Error('Failed to create student: ' + error.message);
     }
   }
 
   @Get('total-students')
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get total students count' })
+  @ApiResponse({ status: 200, description: 'Total students count retrieved successfully' })
   async getTotalStudentsCount(@Query('activeOnly') activeOnly: boolean) {
+    this.logger.log(`Fetching total students count, activeOnly: ${activeOnly}`);
     try {
       const total = await this.studentService.getTotalStudentsCount(activeOnly);
       return {
@@ -106,17 +126,21 @@ export class StudentController {
         activeOnly: activeOnly || false,
       };
     } catch (error) {
+      this.logger.error(`Failed to fetch total student count: ${error.message}`);
       throw new Error('Failed to fetch total student count: ' + error.message);
     }
   }
 
   @Get('students')
   @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Get all students' })
+  @ApiResponse({ status: 200, description: 'List of students retrieved successfully' })
   async getAllStudents(
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
     @Query('search') search?: string,
   ) {
+    this.logger.log(`Fetching all students, page: ${page}, limit: ${limit}, search: ${search}`);
     try {
       const pageNum = parseInt(page, 10) || 1;
       const limitNum = parseInt(limit, 10) || 10;
@@ -146,16 +170,21 @@ export class StudentController {
         },
       };
     } catch (error) {
+      this.logger.error(`Failed to fetch students: ${error.message}`);
       throw new Error('Failed to fetch students: ' + error.message);
     }
   }
 
   @Get('profile')
   @Roles(Role.STUDENT)
+  @ApiOperation({ summary: 'Get logged-in student profile' })
+  @ApiResponse({ status: 200, description: 'Student profile retrieved successfully' })
   async getMyProfile(@Request() req) {
+    this.logger.log(`Fetching profile for userId: ${req.user?.sub}`);
     try {
       const userId = req.user?.sub;
       if (!userId) {
+        this.logger.error('Invalid user ID');
         throw new ForbiddenException('Invalid user ID');
       }
       const student = await this.studentService.getStudentProfile(userId);
@@ -164,6 +193,7 @@ export class StudentController {
         student,
       };
     } catch (error) {
+      this.logger.error(`Failed to fetch student profile: ${error.message}`);
       if (error instanceof NotFoundException || error instanceof ForbiddenException) {
         throw error;
       }
@@ -173,15 +203,19 @@ export class StudentController {
 
   @Get('my-schedules')
   @Roles(Role.STUDENT)
+  @ApiOperation({ summary: 'Get logged-in student schedules' })
+  @ApiResponse({ status: 200, description: 'Student schedules retrieved successfully' })
   async getMySchedules(
     @Request() req,
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
     @Query('search') search?: string,
   ) {
+    this.logger.log(`Fetching schedules for userId: ${req.user?.sub}`);
     try {
       const userId = req.user?.sub;
       if (!userId) {
+        this.logger.error('Invalid user ID');
         throw new ForbiddenException('Invalid user ID');
       }
 
@@ -206,7 +240,7 @@ export class StudentController {
         },
       };
     } catch (error) {
-      console.error('Error in getMySchedules:', error);
+      this.logger.error(`Failed to fetch student schedule: ${error.message}`);
       if (error instanceof NotFoundException || error instanceof ForbiddenException) {
         throw error;
       }
@@ -214,26 +248,90 @@ export class StudentController {
     }
   }
 
+  @Get(':id/courses')
+  @Roles(Role.STUDENT)
+  @ApiOperation({ summary: 'Get courses for a specific student' })
+  @ApiResponse({ status: 200, description: 'Student courses retrieved successfully' })
+  async getStudentCourses(@Request() req, @Param('id') id: string) {
+    this.logger.log(`Fetching courses for student with userId: ${id}`);
+    try {
+      const userId = req.user?.sub;
+      if (!userId || userId !== id) {
+        this.logger.error(`Forbidden: userId ${userId} does not match requested id ${id}`);
+        throw new ForbiddenException('You can only access your own courses');
+      }
+      const courses = await this.studentService.getStudentCourses(id);
+      return {
+        success: true,
+        courses,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to fetch student courses: ${error.message}`);
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new Error('Failed to fetch student courses: ' + error.message);
+    }
+  }
+
+  @Get(':id/materials')
+  @Roles(Role.STUDENT)
+  @ApiOperation({ summary: 'Get learning materials for a specific student' })
+  @ApiResponse({ status: 200, description: 'Student learning materials retrieved successfully' })
+  async getStudentMaterials(
+    @Request() req,
+    @Param('id') id: string,
+    @Query('courseId') courseId?: string,
+  ): Promise<{ success: boolean; materials: StudentMaterialDto[] }> {
+    this.logger.log(`Fetching materials for student with userId: ${id}`);
+    try {
+      const userId = req.user?.sub;
+      if (!userId || userId !== id) {
+        this.logger.error(`Forbidden: userId ${userId} does not match requested id ${id}`);
+        throw new ForbiddenException('You can only access your own materials');
+      }
+      const materials = await this.learningMaterialsService.getStudentMaterials(id, courseId);
+      return {
+        success: true,
+        materials,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to fetch student materials: ${error.message}`);
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new Error('Failed to fetch student materials: ' + error.message);
+    }
+  }
+
   @Get('students/:id')
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get a specific student' })
+  @ApiResponse({ status: 200, description: 'Student retrieved successfully' })
   async getStudent(@Param('id') id: string) {
+    this.logger.log(`Fetching student with id: ${id}`);
     try {
       const student = await this.studentService.findOne(id);
       if (!student) {
+        this.logger.error(`Student not found for id: ${id}`);
         throw new NotFoundException('Student not found');
       }
       return student;
     } catch (error) {
+      this.logger.error(`Failed to fetch student: ${error.message}`);
       throw new NotFoundException(error.message);
     }
   }
 
   @Put('students/:id')
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Update a student' })
+  @ApiResponse({ status: 200, description: 'Student updated successfully' })
   async updateStudent(
     @Param('id') id: string,
     @Body() updateStudentDto: UpdateStudentDto,
   ) {
+    this.logger.log(`Updating student with id: ${id}`);
     try {
       const updatedStudent = await this.studentService.update(
         id,
@@ -245,6 +343,7 @@ export class StudentController {
         message: 'Student updated successfully',
       };
     } catch (error) {
+      this.logger.error(`Failed to update student: ${error.message}`);
       if (error instanceof NotFoundException) {
         throw error;
       }
@@ -254,7 +353,10 @@ export class StudentController {
 
   @Delete('students/:id')
   @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Delete a student' })
+  @ApiResponse({ status: 200, description: 'Student deleted successfully' })
   async deleteStudent(@Param('id') id: string) {
+    this.logger.log(`Deleting student with id: ${id}`);
     try {
       await this.studentService.remove(id);
       return {
@@ -262,6 +364,7 @@ export class StudentController {
         message: 'Student deleted successfully',
       };
     } catch (error) {
+      this.logger.error(`Failed to delete student: ${error.message}`);
       if (error instanceof NotFoundException) {
         throw error;
       }
