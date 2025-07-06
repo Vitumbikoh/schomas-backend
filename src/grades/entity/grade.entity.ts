@@ -1,38 +1,35 @@
-// import { Class } from 'src/classes/entity/class.entity';
-// import { Course } from 'src/course/entities/course.entity';
-// import { User } from 'src/user/entities/user.entity';
-// import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+// // src/grade/entities/grade.entity.ts
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, CreateDateColumn } from 'typeorm';
+import { User } from '../../user/entities/user.entity';
+import { Course } from '../../course/entities/course.entity';
+import { Class } from '../../classes/entity/class.entity';
 
+@Entity()
+export class Grade {
+  @PrimaryGeneratedColumn('uuid')
+  gradeId: string;
 
-// @Entity()
-// export class Grade {
-//   @PrimaryGeneratedColumn('uuid')
-//   id: string;
+  @Column()
+  studentId: string;
 
-//   @ManyToOne(() => User, (user) => user.studentGrades)
-//   student: User;
+  @Column()
+  grade: string;
 
-//   @ManyToOne(() => User, (user) => user.teacherGrades)
-//   teacher: User;
+  @Column()
+  assessmentType: string;
 
-//   @ManyToOne(() => Course, (course) => course.grades)
-//   course: Course;
+  @ManyToOne(() => User, (user) => user.id)
+  student: User;
 
-//   @ManyToOne(() => Class, (cls) => cls.grades)
-//   class: Class;
+  @ManyToOne(() => User, (user) => user.id)
+  teacher: User;
 
-//   @Column()
-//   assessmentType: string;
+  @ManyToOne(() => Course, (course) => course.id)
+  course: Course;
 
-//   @Column()
-//   grade: string;
+  @ManyToOne(() => Class, (cls) => cls.id)
+  class: Class;
 
-//   @Column()
-//   date: Date;
-
-//   @CreateDateColumn()
-//   createdAt: Date;
-
-//   @UpdateDateColumn()
-//   updatedAt: Date;
-// }
+  @CreateDateColumn()
+  date: Date;
+}

@@ -97,41 +97,41 @@ export class TeacherController {
     }
   }
 
-@Get('teachers')
-@UseGuards(AuthGuard('jwt'))
-@Roles(Role.ADMIN)
-async getAllTeachers(
-  @Request() req,
-  @Query('page') page: string = '1',
-  @Query('limit') limit: string = '10',
-  @Query('search') search?: string,
-) {
-  try {
-    console.log('Authenticated user:', req.user); // Log user details
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 10;
+  @Get('teachers')
+  @UseGuards(AuthGuard('jwt'))
+  @Roles(Role.ADMIN)
+  async getAllTeachers(
+    @Request() req,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+    @Query('search') search?: string,
+  ) {
+    try {
+      console.log('Authenticated user:', req.user); // Log user details
+      const pageNum = parseInt(page, 10) || 1;
+      const limitNum = parseInt(limit, 10) || 10;
 
-    const [teachers, total] = await this.teacherService.findAllPaginated(
-      pageNum,
-      limitNum,
-      search,
-    );
+      const [teachers, total] = await this.teacherService.findAllPaginated(
+        pageNum,
+        limitNum,
+        search,
+      );
 
-    return {
-      success: true,
-      teachers,
-      pagination: {
-        currentPage: pageNum,
-        totalPages: Math.ceil(total / limitNum),
-        totalItems: total,
-        itemsPerPage: limitNum,
-      },
-    };
-  } catch (error) {
-    console.error('Error fetching teachers:', error);
-    throw new Error('Failed to fetch teachers: ' + error.message);
+      return {
+        success: true,
+        teachers,
+        pagination: {
+          currentPage: pageNum,
+          totalPages: Math.ceil(total / limitNum),
+          totalItems: total,
+          itemsPerPage: limitNum,
+        },
+      };
+    } catch (error) {
+      console.error('Error fetching teachers:', error);
+      throw new Error('Failed to fetch teachers: ' + error.message);
+    }
   }
-}
 
   @Get('my-schedules')
   @Roles(Role.TEACHER)
@@ -158,12 +158,13 @@ async getAllTeachers(
       const pageNum = parseInt(page, 10) || 1;
       const limitNum = parseInt(limit, 10) || 10;
 
-      const { schedules, total } = await this.teacherService.getSchedulesForTeacher(
-        teacher.id,
-        pageNum,
-        limitNum,
-        search,
-      );
+      const { schedules, total } =
+        await this.teacherService.getSchedulesForTeacher(
+          teacher.id,
+          pageNum,
+          limitNum,
+          search,
+        );
 
       return {
         success: true,
@@ -291,7 +292,9 @@ async getAllTeachers(
       const totalStudents = await this.teacherService.getTotalStudentsCount(
         teacher.id,
       );
-      console.log(`Total students count for teacher ${teacher.id}: ${totalStudents}`);
+      console.log(
+        `Total students count for teacher ${teacher.id}: ${totalStudents}`,
+      );
 
       return {
         success: true,
@@ -336,7 +339,9 @@ async getAllTeachers(
       const totalCourses = await this.teacherService.getTotalCoursesCount(
         teacher.id,
       );
-      console.log(`Total courses count for teacher ${teacher.id}: ${totalCourses}`);
+      console.log(
+        `Total courses count for teacher ${teacher.id}: ${totalCourses}`,
+      );
 
       return {
         success: true,
@@ -412,9 +417,7 @@ async getAllTeachers(
       ) {
         throw error;
       }
-      throw new ForbiddenException(
-        'Failed to fetch courses: ' + error.message,
-      );
+      throw new ForbiddenException('Failed to fetch courses: ' + error.message);
     }
   }
 
@@ -440,8 +443,12 @@ async getAllTeachers(
         throw new NotFoundException('Your teacher record was not found');
       }
 
-      const classes = await this.teacherService.getClassesForTeacher(teacher.id);
-      console.log(`Total classes found for teacher ${teacher.id}: ${classes.length}`);
+      const classes = await this.teacherService.getClassesForTeacher(
+        teacher.id,
+      );
+      console.log(
+        `Total classes found for teacher ${teacher.id}: ${classes.length}`,
+      );
 
       return {
         success: true,
@@ -455,9 +462,7 @@ async getAllTeachers(
       ) {
         throw error;
       }
-      throw new ForbiddenException(
-        'Failed to fetch classes: ' + error.message,
-      );
+      throw new ForbiddenException('Failed to fetch classes: ' + error.message);
     }
   }
 
@@ -492,13 +497,14 @@ async getAllTeachers(
       const pageNum = parseInt(page, 10) || 1;
       const limitNum = parseInt(limit, 10) || 10;
 
-      const { courses, total } = await this.teacherService.getCoursesForTeacherByClass(
-        teacher.id,
-        classId,
-        pageNum,
-        limitNum,
-        search,
-      );
+      const { courses, total } =
+        await this.teacherService.getCoursesForTeacherByClass(
+          teacher.id,
+          classId,
+          pageNum,
+          limitNum,
+          search,
+        );
       console.log(`Total courses found for class ${classId}: ${total}`);
 
       return {
@@ -525,55 +531,61 @@ async getAllTeachers(
     }
   }
 
- @Get('my-students/by-course/:courseId')
-@Roles(Role.TEACHER)
-async getMyStudentsByCourse(
-  @Request() req,
-  @Param('courseId') courseId: string,
-  @Query('page') page: string = '1',
-  @Query('limit') limit: string = '10',
-  @Query('search') search?: string,
-) {
-  try {
-    const userId = req.user?.sub;
-    if (!userId) {
-      throw new ForbiddenException('Invalid user authentication');
+  @Get('my-students/by-course/:courseId')
+  @Roles(Role.TEACHER)
+  async getMyStudentsByCourse(
+    @Request() req,
+    @Param('courseId') courseId: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+    @Query('search') search?: string,
+  ) {
+    try {
+      const userId = req.user?.sub;
+      if (!userId) {
+        throw new ForbiddenException('Invalid user authentication');
+      }
+
+      const teacher = await this.teacherService.findOneByUserId(userId);
+      if (!teacher) {
+        throw new NotFoundException('Your teacher record was not found');
+      }
+
+      const pageNum = parseInt(page, 10) || 1;
+      const limitNum = parseInt(limit, 10) || 10;
+
+      const { students, total } =
+        await this.teacherService.getStudentsForTeacherByCourse(
+          teacher.id,
+          courseId,
+          pageNum,
+          limitNum,
+          search,
+        );
+
+      return {
+        success: true,
+        students,
+        pagination: {
+          currentPage: pageNum,
+          totalPages: Math.ceil(total / limitNum),
+          totalItems: total,
+          itemsPerPage: limitNum,
+        },
+      };
+    } catch (error) {
+      console.error('Error in getMyStudentsByCourse:', error);
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
+        throw error;
+      }
+      throw new ForbiddenException(
+        'Failed to fetch students for course: ' + error.message,
+      );
     }
-
-    const teacher = await this.teacherService.findOneByUserId(userId);
-    if (!teacher) {
-      throw new NotFoundException('Your teacher record was not found');
-    }
-
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 10;
-
-    const { students, total } = await this.teacherService.getStudentsForTeacherByCourse(
-      teacher.id,
-      courseId,
-      pageNum,
-      limitNum,
-      search,
-    );
-
-    return {
-      success: true,
-      students,
-      pagination: {
-        currentPage: pageNum,
-        totalPages: Math.ceil(total / limitNum),
-        totalItems: total,
-        itemsPerPage: limitNum,
-      },
-    };
-  } catch (error) {
-    console.error('Error in getMyStudentsByCourse:', error);
-    if (error instanceof NotFoundException || error instanceof ForbiddenException) {
-      throw error;
-    }
-    throw new ForbiddenException('Failed to fetch students for course: ' + error.message);
   }
-}
 
   @Get('my-upcoming-classes')
   @Roles(Role.TEACHER)
@@ -593,8 +605,13 @@ async getMyStudentsByCourse(
       }
 
       const currentDate = new Date();
-      const classes = await this.teacherService.getUpcomingClassesForTeacher(teacher.id, currentDate);
-      console.log(`Total upcoming classes found for teacher ${teacher.id}: ${classes.length}`);
+      const classes = await this.teacherService.getUpcomingClassesForTeacher(
+        teacher.id,
+        currentDate,
+      );
+      console.log(
+        `Total upcoming classes found for teacher ${teacher.id}: ${classes.length}`,
+      );
 
       return {
         success: true,
@@ -602,10 +619,15 @@ async getMyStudentsByCourse(
       };
     } catch (error) {
       console.error('Error in getMyUpcomingClasses:', error);
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
-      throw new ForbiddenException('Failed to fetch upcoming classes: ' + error.message);
+      throw new ForbiddenException(
+        'Failed to fetch upcoming classes: ' + error.message,
+      );
     }
   }
 
@@ -626,8 +648,12 @@ async getMyStudentsByCourse(
         throw new NotFoundException('Your teacher record was not found');
       }
 
-      const attendance = await this.teacherService.getAttendanceForTeacherToday(teacher.id);
-      console.log(`Total attendance records found for teacher ${teacher.id}: ${attendance.length}`);
+      const attendance = await this.teacherService.getAttendanceForTeacherToday(
+        teacher.id,
+      );
+      console.log(
+        `Total attendance records found for teacher ${teacher.id}: ${attendance.length}`,
+      );
 
       return {
         success: true,
@@ -635,10 +661,15 @@ async getMyStudentsByCourse(
       };
     } catch (error) {
       console.error('Error in getMyAttendanceToday:', error);
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
-      throw new ForbiddenException('Failed to fetch attendance: ' + error.message);
+      throw new ForbiddenException(
+        'Failed to fetch attendance: ' + error.message,
+      );
     }
   }
 
@@ -704,18 +735,24 @@ async getMyStudentsByCourse(
         throw new NotFoundException('Your teacher record was not found');
       }
 
-      const classesWithCourses = await this.teacherService.getClassesWithCoursesForTeacher(teacher.id);
-      
+      const classesWithCourses =
+        await this.teacherService.getClassesWithCoursesForTeacher(teacher.id);
+
       return {
         success: true,
         classes: classesWithCourses,
       };
     } catch (error) {
       console.error('Error in getMyClassesWithCourses:', error);
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
-      throw new ForbiddenException('Failed to fetch classes with courses: ' + error.message);
+      throw new ForbiddenException(
+        'Failed to fetch classes with courses: ' + error.message,
+      );
     }
   }
 
@@ -742,13 +779,14 @@ async getMyStudentsByCourse(
       const pageNum = parseInt(page, 10) || 1;
       const limitNum = parseInt(limit, 10) || 10;
 
-      const { students, total } = await this.teacherService.getStudentsForTeacherByClass(
-        teacher.id,
-        classId,
-        pageNum,
-        limitNum,
-        search
-      );
+      const { students, total } =
+        await this.teacherService.getStudentsForTeacherByClass(
+          teacher.id,
+          classId,
+          pageNum,
+          limitNum,
+          search,
+        );
 
       return {
         success: true,
@@ -762,10 +800,15 @@ async getMyStudentsByCourse(
       };
     } catch (error) {
       console.error('Error in getMyStudentsByClass:', error);
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
-      throw new ForbiddenException('Failed to fetch students for class: ' + error.message);
+      throw new ForbiddenException(
+        'Failed to fetch students for class: ' + error.message,
+      );
     }
   }
 
@@ -784,14 +827,17 @@ async getMyStudentsByCourse(
       }
 
       // Validate the teacher has access to this class and course
-      const hasAccess = await this.teacherService.verifyTeacherClassCourseAccess(
-        teacher.id,
-        submitGradesDto.classId,
-        submitGradesDto.course
-      );
-      
+      const hasAccess =
+        await this.teacherService.verifyTeacherClassCourseAccess(
+          teacher.id,
+          submitGradesDto.classId,
+          submitGradesDto.course,
+        );
+
       if (!hasAccess) {
-        throw new ForbiddenException('You do not have access to submit grades for this class/course combination');
+        throw new ForbiddenException(
+          'You do not have access to submit grades for this class/course combination',
+        );
       }
 
       const result = await this.teacherService.submitGrades(submitGradesDto);
@@ -803,7 +849,10 @@ async getMyStudentsByCourse(
       };
     } catch (error) {
       console.error('Error in submitGrades:', error);
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
       throw new ForbiddenException('Failed to submit grades: ' + error.message);

@@ -31,7 +31,6 @@ export class TeachersService {
     private readonly scheduleRepository: Repository<Schedule>,
     @InjectRepository(Attendance)
     private readonly attendanceRepository: Repository<Attendance>,
-    
   ) {}
 
   async findOne(id: string): Promise<Teacher> {
@@ -213,61 +212,68 @@ export class TeachersService {
     };
   }
 
-  async getUpcomingClassesForTeacher(teacherId: string, currentDate: Date): Promise<any[]> {
-  console.log(`Fetching upcoming classes for teacher ID: ${teacherId}`);
+  async getUpcomingClassesForTeacher(
+    teacherId: string,
+    currentDate: Date,
+  ): Promise<any[]> {
+    console.log(`Fetching upcoming classes for teacher ID: ${teacherId}`);
 
-  if (!isUUID(teacherId)) {
-    console.error(`Invalid teacher ID: ${teacherId}`);
-    throw new NotFoundException('Invalid teacher ID');
+    if (!isUUID(teacherId)) {
+      console.error(`Invalid teacher ID: ${teacherId}`);
+      throw new NotFoundException('Invalid teacher ID');
+    }
+
+    const teacher = await this.teacherRepository.findOne({
+      where: { id: teacherId },
+      relations: ['user'],
+    });
+
+    if (!teacher) {
+      console.error(`Teacher with ID ${teacherId} not found`);
+      throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
+    }
+
+    console.log(`Teacher found: ${teacher.firstName} ${teacher.lastName}`);
+
+    const startOfDay = new Date(currentDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(currentDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Format current time for TIME comparison
+    const currentTime = format(currentDate, 'HH:mm:ss');
+    const currentDateStr = format(currentDate, 'yyyy-MM-dd');
+
+    const schedules = await this.scheduleRepository
+      .createQueryBuilder('schedule')
+      .leftJoinAndSelect('schedule.course', 'course')
+      .leftJoinAndSelect('schedule.classroom', 'classroom')
+      .leftJoinAndSelect('schedule.class', 'class')
+      .where('schedule.teacherId = :teacherId', { teacherId })
+      .andWhere('schedule.isActive = :isActive', { isActive: true })
+      .andWhere('schedule.date = :currentDateStr', { currentDateStr })
+      .andWhere("TO_CHAR(schedule.startTime, 'HH24:MI:SS') > :currentTime", {
+        currentTime,
+      })
+      .orderBy({
+        'schedule.date': 'ASC',
+        'schedule.startTime': 'ASC',
+      })
+      .take(3)
+      .getMany();
+
+    console.log(
+      `Found ${schedules.length} upcoming classes for teacher ${teacherId}`,
+    );
+
+    return schedules.map((schedule) => ({
+      id: schedule.id,
+      courseName: schedule.course?.name || 'Unknown Course',
+      className: schedule.class?.name || 'Unknown Class',
+      room: schedule.classroom?.name || 'Unknown Room',
+      startTime: format(schedule.startTime, 'HH:mm:ss'), // Format for display
+    }));
   }
-
-  const teacher = await this.teacherRepository.findOne({
-    where: { id: teacherId },
-    relations: ['user'],
-  });
-
-  if (!teacher) {
-    console.error(`Teacher with ID ${teacherId} not found`);
-    throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
-  }
-
-  console.log(`Teacher found: ${teacher.firstName} ${teacher.lastName}`);
-
-  const startOfDay = new Date(currentDate);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(currentDate);
-  endOfDay.setHours(23, 59, 59, 999);
-
-  // Format current time for TIME comparison
-  const currentTime = format(currentDate, 'HH:mm:ss');
-  const currentDateStr = format(currentDate, 'yyyy-MM-dd');
-
-  const schedules = await this.scheduleRepository
-    .createQueryBuilder('schedule')
-    .leftJoinAndSelect('schedule.course', 'course')
-    .leftJoinAndSelect('schedule.classroom', 'classroom')
-    .leftJoinAndSelect('schedule.class', 'class')
-    .where('schedule.teacherId = :teacherId', { teacherId })
-    .andWhere('schedule.isActive = :isActive', { isActive: true })
-    .andWhere('schedule.date = :currentDateStr', { currentDateStr })
-    .andWhere("TO_CHAR(schedule.startTime, 'HH24:MI:SS') > :currentTime", { currentTime })
-    .orderBy({
-      'schedule.date': 'ASC',
-      'schedule.startTime': 'ASC',
-    })
-    .take(3)
-    .getMany();
-
-  console.log(`Found ${schedules.length} upcoming classes for teacher ${teacherId}`);
-
-  return schedules.map(schedule => ({
-    id: schedule.id,
-    courseName: schedule.course?.name || 'Unknown Course',
-    className: schedule.class?.name || 'Unknown Class',
-    room: schedule.classroom?.name || 'Unknown Room',
-    startTime: format(schedule.startTime, 'HH:mm:ss'), // Format for display
-  }));
-}
 
   async getAttendanceForTeacherToday(teacherId: string): Promise<any[]> {
     console.log(`Fetching today's attendance for teacher ID: ${teacherId}`);
@@ -305,10 +311,21 @@ export class TeachersService {
       .leftJoinAndSelect('attendance.course', 'course')
       .leftJoinAndSelect('attendance.class', 'class')
       .where('attendance.courseId IN (:...courseIds)', { courseIds })
-      .andWhere('attendance.date >= :today AND attendance.date < :tomorrow', { today, tomorrow })
+      .andWhere('attendance.date >= :today AND attendance.date < :tomorrow', {
+        today,
+        tomorrow,
+      })
       .getMany();
 
-    const attendanceMap = new Map<string, { className: string; courseName: string; enrolled: number; present: number }>();
+    const attendanceMap = new Map<
+      string,
+      {
+        className: string;
+        courseName: string;
+        enrolled: number;
+        present: number;
+      }
+    >();
 
     courses.forEach((course) => {
       const className = course.class?.name || 'Unknown';
@@ -337,7 +354,9 @@ export class TeachersService {
     });
 
     const attendance = Array.from(attendanceMap.values()).slice(0, 3);
-    console.log(`Returning ${attendance.length} attendance records for teacher ${teacherId}`);
+    console.log(
+      `Returning ${attendance.length} attendance records for teacher ${teacherId}`,
+    );
 
     return attendance.map((record) => ({
       className: record.className,
@@ -432,10 +451,14 @@ export class TeachersService {
     limit: number,
     search?: string,
   ): Promise<{ students: any[]; total: number }> {
-    console.log(`Fetching students for teacher ID: ${teacherId}, course ID: ${courseId}`);
+    console.log(
+      `Fetching students for teacher ID: ${teacherId}, course ID: ${courseId}`,
+    );
 
     if (!isUUID(teacherId) || !isUUID(courseId)) {
-      console.error(`Invalid teacher ID or course ID: ${teacherId}, ${courseId}`);
+      console.error(
+        `Invalid teacher ID or course ID: ${teacherId}, ${courseId}`,
+      );
       throw new NotFoundException('Invalid teacher ID or course ID');
     }
 
@@ -451,27 +474,36 @@ export class TeachersService {
 
     const course = await this.courseRepository.findOne({
       where: { id: courseId, teacher: { id: teacherId } },
-      relations: ['enrollments', 'enrollments.student', 'enrollments.student.user', 'enrollments.student.class'],
+      relations: [
+        'enrollments',
+        'enrollments.student',
+        'enrollments.student.user',
+        'enrollments.student.class',
+      ],
     });
 
     if (!course) {
-      console.error(`Course with ID ${courseId} not found or not assigned to teacher ${teacherId}`);
+      console.error(
+        `Course with ID ${courseId} not found or not assigned to teacher ${teacherId}`,
+      );
       throw new NotFoundException(`Course with ID ${courseId} not found`);
     }
 
-    let students = course.enrollments?.map((enrollment) => ({
-      id: enrollment.student.id,
-      firstName: enrollment.student.firstName,
-      lastName: enrollment.student.lastName,
-      email: enrollment.student.user?.email || null,
-      class: enrollment.student.class
-        ? {
-            id: enrollment.student.class.id,
-            name: enrollment.student.class.name,
-          }
-        : null,
-      enrollmentDate: enrollment.enrollmentDate || enrollment.createdAt,
-    })) || [];
+    let students =
+      course.enrollments?.map((enrollment) => ({
+        id: enrollment.student.id,
+        studentId: enrollment.student.studentId, // Added this line
+        firstName: enrollment.student.firstName,
+        lastName: enrollment.student.lastName,
+        email: enrollment.student.user?.email || null,
+        class: enrollment.student.class
+          ? {
+              id: enrollment.student.class.id,
+              name: enrollment.student.class.name,
+            }
+          : null,
+        enrollmentDate: enrollment.enrollmentDate || enrollment.createdAt,
+      })) || [];
 
     if (search) {
       const searchLower = search.toLowerCase();
@@ -480,7 +512,8 @@ export class TeachersService {
           student.firstName.toLowerCase().includes(searchLower) ||
           student.lastName.toLowerCase().includes(searchLower) ||
           student.email?.toLowerCase().includes(searchLower) ||
-          student.class?.name.toLowerCase().includes(searchLower),
+          student.class?.name.toLowerCase().includes(searchLower) ||
+          student.studentId?.toString().includes(searchLower), // Added search by studentId
       );
     }
 
@@ -488,7 +521,9 @@ export class TeachersService {
     const skip = (page - 1) * limit;
     const paginatedStudents = students.slice(skip, skip + limit);
 
-    console.log(`Returning ${paginatedStudents.length} students for course ${courseId}, total: ${total}`);
+    console.log(
+      `Returning ${paginatedStudents.length} students for course ${courseId}, total: ${total}`,
+    );
     return {
       students: paginatedStudents,
       total,
@@ -694,7 +729,9 @@ export class TeachersService {
     limit: number,
     search?: string,
   ): Promise<{ courses: any[]; total: number }> {
-    console.log(`Fetching courses for teacher ID: ${teacherId}, class ID: ${classId}`);
+    console.log(
+      `Fetching courses for teacher ID: ${teacherId}, class ID: ${classId}`,
+    );
 
     if (!isUUID(teacherId) || !isUUID(classId)) {
       console.error(`Invalid teacher ID or class ID: ${teacherId}, ${classId}`);
@@ -741,7 +778,9 @@ export class TeachersService {
       take: limit,
     });
 
-    console.log(`Found ${courses.length} courses for class ${classId}, total: ${total}`);
+    console.log(
+      `Found ${courses.length} courses for class ${classId}, total: ${total}`,
+    );
 
     const formattedCourses = courses.map((course) => ({
       id: course.id,
@@ -859,99 +898,107 @@ export class TeachersService {
   }
 
   async getClassesWithCoursesForTeacher(teacherId: string): Promise<any[]> {
-  const courses = await this.courseRepository.find({
-    where: { teacher: { id: teacherId } },
-    relations: ['class'],
-  });
+    const courses = await this.courseRepository.find({
+      where: { teacher: { id: teacherId } },
+      relations: ['class'],
+    });
 
-  const classMap = new Map<string, { id: string; name: string; courses: string[] }>();
-  
-  courses.forEach(course => {
-    if (course.class) {
-      if (!classMap.has(course.class.id)) {
-        classMap.set(course.class.id, {
-          id: course.class.id,
-          name: course.class.name,
-          courses: []
-        });
-      }
-      classMap.get(course.class.id)?.courses.push(course.name);
-    }
-  });
+    const classMap = new Map<
+      string,
+      { id: string; name: string; courses: string[] }
+    >();
 
-  return Array.from(classMap.values());
-}
-
-async getStudentsForTeacherByClass(
-  teacherId: string,
-  classId: string,
-  page: number,
-  limit: number,
-  search?: string
-): Promise<{ students: any[]; total: number }> {
-  const courses = await this.courseRepository.find({
-    where: { 
-      teacher: { id: teacherId },
-      class: { id: classId }
-    },
-    relations: ['enrollments', 'enrollments.student', 'enrollments.student.user', 'enrollments.student.class'],
-  });
-
-  const studentsMap = new Map<string, any>();
-  
-  courses.forEach(course => {
-    course.enrollments?.forEach(enrollment => {
-      const student = enrollment.student;
-      if (student && !studentsMap.has(student.id)) {
-        studentsMap.set(student.id, {
-          id: student.id,
-          name: `${student.firstName} ${student.lastName}`,
-          class: student.class?.name || 'N/A'
-        });
+    courses.forEach((course) => {
+      if (course.class) {
+        if (!classMap.has(course.class.id)) {
+          classMap.set(course.class.id, {
+            id: course.class.id,
+            name: course.class.name,
+            courses: [],
+          });
+        }
+        classMap.get(course.class.id)?.courses.push(course.name);
       }
     });
-  });
 
-  let students = Array.from(studentsMap.values());
-  
-  if (search) {
-    const searchLower = search.toLowerCase();
-    students = students.filter(s => 
-      s.name.toLowerCase().includes(searchLower) ||
-      s.class.toLowerCase().includes(searchLower)
-    );
+    return Array.from(classMap.values());
   }
 
-  const total = students.length;
-  const skip = (page - 1) * limit;
-  const paginatedStudents = students.slice(skip, skip + limit);
+  async getStudentsForTeacherByClass(
+    teacherId: string,
+    classId: string,
+    page: number,
+    limit: number,
+    search?: string,
+  ): Promise<{ students: any[]; total: number }> {
+    const courses = await this.courseRepository.find({
+      where: {
+        teacher: { id: teacherId },
+        class: { id: classId },
+      },
+      relations: [
+        'enrollments',
+        'enrollments.student',
+        'enrollments.student.user',
+        'enrollments.student.class',
+      ],
+    });
 
-  return { students: paginatedStudents, total };
-}
+    const studentsMap = new Map<string, any>();
 
-async verifyTeacherClassCourseAccess(
-  teacherId: string,
-  classId: string,
-  courseName: string
-): Promise<boolean> {
-  const count = await this.courseRepository.count({
-    where: {
-      teacher: { id: teacherId },
-      class: { id: classId },
-      name: courseName
+    courses.forEach((course) => {
+      course.enrollments?.forEach((enrollment) => {
+        const student = enrollment.student;
+        if (student && !studentsMap.has(student.id)) {
+          studentsMap.set(student.id, {
+            id: student.id,
+            name: `${student.firstName} ${student.lastName}`,
+            class: student.class?.name || 'N/A',
+          });
+        }
+      });
+    });
+
+    let students = Array.from(studentsMap.values());
+
+    if (search) {
+      const searchLower = search.toLowerCase();
+      students = students.filter(
+        (s) =>
+          s.name.toLowerCase().includes(searchLower) ||
+          s.class.toLowerCase().includes(searchLower),
+      );
     }
-  });
-  return count > 0;
-}
 
-async submitGrades(submitGradesDto: SubmitGradesDto): Promise<any> {
-  // Implement your grade submission logic here
-  // This is just a placeholder implementation
-  return {
-    ...submitGradesDto,
-    submittedAt: new Date(),
-    success: true
-  };
-}
+    const total = students.length;
+    const skip = (page - 1) * limit;
+    const paginatedStudents = students.slice(skip, skip + limit);
 
+    return { students: paginatedStudents, total };
+  }
+
+  async verifyTeacherClassCourseAccess(
+    teacherId: string,
+    classId: string,
+    courseName: string,
+  ): Promise<boolean> {
+    const count = await this.courseRepository.count({
+      where: {
+        teacher: { id: teacherId },
+        class: { id: classId },
+        name: courseName,
+      },
+    });
+    return count > 0;
+  }
+
+  async submitGrades(submitGradesDto: SubmitGradesDto): Promise<any> {
+    // Implement your grade submission logic here
+    // This is just a placeholder implementation
+    return {
+      ...submitGradesDto,
+      submittedAt: new Date(),
+      success: true,
+    };
+  }
 }
