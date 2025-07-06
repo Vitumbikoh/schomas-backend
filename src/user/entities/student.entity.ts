@@ -18,6 +18,7 @@ import { FeePayment } from 'src/finance/entities/fee-payment.entity';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { Class } from 'src/classes/entity/class.entity';
 import { Course } from 'src/course/entities/course.entity';
+import { Grade } from 'src/grades/entity/grade.entity';
 @Entity()
 export class Student extends BaseEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -77,7 +78,8 @@ export class Student extends BaseEntity {
   @OneToMany(() => Enrollment, (enrollment) => enrollment.student)
   enrollments: Enrollment[];
 
-
+  @OneToMany(() => Grade, grade => grade.student)
+  grades: Grade[];
 
   @ManyToMany(() => Course, (course) => course.students)
   courses: Course[];

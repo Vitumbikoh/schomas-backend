@@ -32,4 +32,5 @@ export class Grade {
 
   @CreateDateColumn()
   date: Date;
+
 }

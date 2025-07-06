@@ -1,24 +1,31 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { GradeController } from './grade.controller';
 import { GradeService } from './grade.service';
+import { Grade } from './entity/grade.entity';
 import { User } from '../user/entities/user.entity';
 import { Course } from '../course/entities/course.entity';
 import { Class } from '../classes/entity/class.entity';
-import { Teacher } from '../user/entities/teacher.entity';
 import { Student } from '../user/entities/student.entity';
+import { Teacher } from '../user/entities/teacher.entity';
 import { AuthModule } from '../auth/auth.module';
-import { Grade } from './entity/grade.entity';
+import { GradeController } from './grade.controller';
 import { ConfigModule } from 'src/config/config.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Grade, User, Course, Class, Teacher, Student]),
+    TypeOrmModule.forFeature([
+      Grade,
+      User,
+      Course,
+      Class,
+      Student,
+      Teacher
+    ]),
     AuthModule,
     ConfigModule,
-    
   ],
-  controllers: [GradeController],
+  controllers: [GradeController], // Now properly imported
   providers: [GradeService],
+  exports: [GradeService],
 })
 export class GradeModule {}
