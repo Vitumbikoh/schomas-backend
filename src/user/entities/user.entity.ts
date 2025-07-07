@@ -41,9 +41,10 @@ export class User {
   @Column({ nullable: true })
   image?: string;
 
-  @OneToOne(() => UserSettings, (settings) => settings.user)
+  @OneToOne(() => UserSettings, (settings) => settings.user, { cascade: true })
+  @JoinColumn()
   settings: UserSettings;
-
+  
   @OneToOne(() => Teacher, (teacher) => teacher.user, { nullable: true })
   @JoinColumn()
   teacher?: Teacher;

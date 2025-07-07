@@ -1,22 +1,22 @@
-import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import { Entity, Column, PrimaryColumn } from 'typeorm';
 
 @Entity()
 export class SchoolSettings {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', default: 'default-school-settings' })
   id: string;
 
-  @Column()
+  @Column({ nullable: true })
   schoolName: string;
 
-  @Column()
+  @Column({ nullable: true })
   schoolEmail: string;
 
-  @Column()
+  @Column({ nullable: true })
   schoolPhone: string;
 
-  @Column()
+  @Column({ nullable: true })
   schoolAddress: string;
 
-  @Column('text')
+  @Column({ type: 'text', nullable: true })
   schoolAbout: string;
 }

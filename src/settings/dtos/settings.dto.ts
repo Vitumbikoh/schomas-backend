@@ -1,4 +1,4 @@
-import { IsString, IsEmail, IsOptional, IsBoolean, IsObject, ValidateNested } from 'class-validator';
+import { IsString, IsEmail, IsOptional, IsBoolean, IsObject, ValidateNested, MinLength } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class NotificationSettingsDto {
@@ -37,6 +37,47 @@ export class SchoolSettingsDto {
   schoolAbout: string;
 }
 
+export class UserSettingsDto {
+  @IsString()
+  id: string;
+
+  @IsString()
+  username: string;
+
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  role: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  image?: string;
+
+  @ValidateNested()
+  @Type(() => NotificationSettingsDto)
+  notifications: NotificationSettingsDto;
+
+  @ValidateNested()
+  @Type(() => SecuritySettingsDto)
+  security: SecuritySettingsDto;
+}
+
+export class SettingsResponseDto {
+  @ValidateNested()
+  @Type(() => UserSettingsDto)
+  user: UserSettingsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SchoolSettingsDto)
+  schoolSettings?: SchoolSettingsDto;
+}
+
 export class UpdateSettingsDto {
   @IsOptional()
   @IsString()
@@ -64,31 +105,14 @@ export class UpdateSettingsDto {
   @ValidateNested()
   @Type(() => SchoolSettingsDto)
   schoolSettings?: SchoolSettingsDto;
-}
 
-export class SettingsResponseDto {
-  user: {
-    id: string;
-    username: string;
-    email: string;
-    role: string;
-    phone?: string;
-    image?: string;
-    notifications: {
-      email: boolean;
-      sms: boolean;
-      browser: boolean;
-      weeklySummary: boolean;
-    };
-    security: {
-      twoFactor: boolean;
-    };
-  };
-  schoolSettings?: {
-    schoolName: string;
-    schoolEmail: string;
-    schoolPhone: string;
-    schoolAddress: string;
-    schoolAbout: string;
-  };
+  @IsOptional()
+  @IsString()
+  @MinLength(6, { message: 'Current password must be at least 6 characters long' })
+  currentPassword?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8, { message: 'New password must be at least 8 characters long' })
+  newPassword?: string;
 }
