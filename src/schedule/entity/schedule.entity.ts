@@ -18,8 +18,15 @@ export class Schedule {
 
   @Column()
   date: Date;
-
-  @Column()
+  
+  @Column({
+    // Remove the manual column and make it computed
+    type: 'varchar',
+    transformer: {
+      to: (value: string) => value, // We'll handle this in service
+      from: (value: string) => value,
+    },
+  })
   day: string;
 
   @Column()

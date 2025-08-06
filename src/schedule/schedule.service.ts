@@ -6,6 +6,7 @@ import { Course } from 'src/course/entities/course.entity';
 import { Teacher } from 'src/user/entities/teacher.entity';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
 import { Class } from 'src/classes/entity/class.entity';
+import { getDayName } from 'src/common/utils/date-utils';
 
 @Injectable()
 export class ScheduleService {
@@ -22,17 +23,19 @@ export class ScheduleService {
     private readonly classRepository: Repository<Class>,
   ) {}
 
-  async create(createScheduleDto: {
-    classId: string;
-    date: Date;
-    day: string;
-    startTime: Date;
-    endTime: Date;
-    courseId: string;
-    teacherId: string;
-    classroomId: string;
-    isActive?: boolean;
-  }): Promise<Schedule> {
+ async create(createScheduleDto: {
+  classId: string;
+  date: Date;
+  startTime: Date;
+  endTime: Date;
+  courseId: string;
+  teacherId: string;
+  classroomId: string;
+  isActive?: boolean;
+}): Promise<Schedule> {
+    // Convert string dates to Date objects if needed
+  const dateObj = new Date(createScheduleDto.date);
+  const dayName = getDayName(dateObj);
     const course = await this.courseRepository.findOne({
       where: { id: createScheduleDto.courseId },
     });
@@ -68,7 +71,7 @@ export class ScheduleService {
         classroomId: createScheduleDto.classroomId,
       })
       .andWhere('schedule.date = :date', { date: createScheduleDto.date })
-      .andWhere('schedule.day = :day', { day: createScheduleDto.day })
+      .andWhere('schedule.day = :day', { day: dayName })
       .andWhere(
         '(:startTime BETWEEN schedule.startTime AND schedule.endTime OR :endTime BETWEEN schedule.startTime AND schedule.endTime)',
         {
@@ -84,8 +87,8 @@ export class ScheduleService {
 
     const schedule = this.scheduleRepository.create({
       class: classEntity,
-      date: createScheduleDto.date,
-      day: createScheduleDto.day,
+      date: dateObj,
+      day: dayName,
       startTime: createScheduleDto.startTime,
       endTime: createScheduleDto.endTime,
       course,
