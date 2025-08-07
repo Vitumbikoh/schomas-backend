@@ -54,7 +54,7 @@ export class GradeController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Get('students/:studentId')
+  @Get('student/:studentId')
   async getStudentGrades(
     @Param('studentId') studentId: string,
     @Request() req,
