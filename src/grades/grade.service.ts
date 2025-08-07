@@ -11,6 +11,7 @@ import {
   Injectable,
   BadRequestException,
   UnauthorizedException,
+  NotFoundException,
 } from '@nestjs/common';
 import { Grade } from './entity/grade.entity';
 
@@ -35,8 +36,6 @@ export class GradeService {
     createGradeDto: CreateGradeDto,
     userId: string,
   ): Promise<Grade[]> {
-    console.log('Received DTO:', createGradeDto);
-
     // Validate input structure
     if (!createGradeDto || typeof createGradeDto !== 'object') {
       throw new BadRequestException('Invalid request payload');
@@ -58,7 +57,6 @@ export class GradeService {
       where: { id: userId, role: Role.TEACHER },
     });
     if (!user) {
-      console.log(`No User found with id: ${userId} and role: ${Role.TEACHER}`);
       throw new UnauthorizedException(
         'User is not a teacher or does not exist',
       );
@@ -69,14 +67,10 @@ export class GradeService {
       where: { userId: userId },
     });
     if (!teacher) {
-      console.log(`No Teacher found for userId: ${userId}`);
       throw new UnauthorizedException(
         'No Teacher profile associated with this user',
       );
     }
-    console.log(
-      `Found teacher: ${teacher.firstName} ${teacher.lastName} (${teacher.id})`,
-    );
 
     // Fetch class
     const classEntity = await this.classRepository.findOne({
@@ -92,9 +86,6 @@ export class GradeService {
       relations: ['teacher', 'enrollments', 'enrollments.student'],
     });
     if (!course) {
-      console.log(
-        `Course ${courseId} not found or not assigned to teacher ${teacher.id}`,
-      );
       throw new BadRequestException('Invalid course or teacher not assigned');
     }
 
@@ -113,37 +104,25 @@ export class GradeService {
     // Get all enrolled student IDs for this course
     const enrolledStudentIds =
       course.enrollments?.map((e) => e.student.studentId) || [];
-    console.log(
-      `Enrolled student IDs in course ${courseId}:`,
-      enrolledStudentIds,
-    );
 
     // Create grade records
     const gradeRecords: Grade[] = [];
     for (const [studentId, gradeValue] of Object.entries(grades)) {
       // Check if student is enrolled in course
       if (!enrolledStudentIds.includes(studentId)) {
-        console.log(
-          `Student ${studentId} is not enrolled in course ${courseId}`,
-        );
         throw new BadRequestException(
           `Student ${studentId} is not enrolled in this course`,
         );
       }
 
-      // Fetch Student entity by studentId (not UUID)
+      // Fetch Student entity by studentId
       const student = await this.studentRepository.findOne({
         where: { studentId },
         relations: ['user'],
       });
       if (!student) {
-        console.log(`No Student entity found for studentId: ${studentId}`);
         throw new BadRequestException(`Invalid student ID: ${studentId}`);
       }
-
-      console.log(
-        `Found student: ${student.firstName} ${student.lastName} (${student.id})`,
-      );
 
       const gradeRecord = new Grade();
       gradeRecord.student = student.user;
@@ -162,49 +141,248 @@ export class GradeService {
     return this.gradeRepository.save(gradeRecords);
   }
 
-  async getStudentGrades(
-    userId: string,
-  ): Promise<{ success: boolean; grades: any[] }> {
-    // Find the student by userId
-    const student = await this.studentRepository.findOne({
-      where: { user: { id: userId } },
-      relations: ['user'],
+  async getAllClasses(): Promise<Class[]> {
+    return this.classRepository.find({
+      relations: ['students'],
     });
-    if (!student) {
-      throw new UnauthorizedException('Student not found');
+  }
+
+  async getClassStudents(
+    classId: string,
+    userId: string,
+    academicYear?: string,
+    term?: string,
+  ): Promise<Student[]> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('User not found');
     }
 
-    // Debug: Check student details
-    console.log(`Student found: ${student.firstName} ${student.lastName}, Student ID: ${student.id}, User ID: ${student.user.id}`);
-
-    // Fetch grades directly using the student's ID (which matches grade.studentId)
-    const grades = await this.gradeRepository.find({
-      where: { studentId: student.id }, // Explicitly match grade.studentId with Student.id
-      relations: ['course'],
+    const classEntity = await this.classRepository.findOne({
+      where: { id: classId },
+      relations: ['students', 'students.user'],
     });
-    console.log(`Fetched grades count: ${grades.length}, Student ID used: ${student.id}`);
 
-    // If no grades found, try matching by userId as a fallback (though less likely)
-    if (grades.length === 0) {
-      console.log(`No grades found for Student ID ${student.id}. Trying User ID ${student.user.id}...`);
-      const fallbackGrades = await this.gradeRepository.find({
-        where: { studentId: student.user.id }, // Fallback to userId if needed
-        relations: ['course'],
+    if (!classEntity) {
+      throw new NotFoundException('Class not found');
+    }
+
+    return classEntity.students;
+  }
+
+  async getClassGrades(
+    classId: string,
+    userId: string,
+    academicYear?: string,
+    term?: string,
+  ): Promise<any> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    // Get all students in this class with their details
+    const classEntity = await this.classRepository.findOne({
+      where: { id: classId },
+      relations: ['students'],
+    });
+
+    if (!classEntity) {
+      throw new NotFoundException('Class not found');
+    }
+
+    // Create a map of user IDs to student details
+    const studentDetailsMap = new Map<
+      string,
+      { studentId: string; firstName: string; lastName: string }
+    >();
+    classEntity.students.forEach((student) => {
+      studentDetailsMap.set(student.userId, {
+        studentId: student.studentId,
+        firstName: student.firstName,
+        lastName: student.lastName,
       });
-      console.log(`Fallback grades count: ${fallbackGrades.length}`);
-      if (fallbackGrades.length > 0) {
-        grades.push(...fallbackGrades);
+    });
+
+    const query = this.gradeRepository
+      .createQueryBuilder('grade')
+      .leftJoinAndSelect('grade.student', 'student')
+      .leftJoinAndSelect('grade.course', 'course')
+      .where('grade.classId = :classId', { classId });
+
+    if (academicYear) {
+      query.andWhere('EXTRACT(YEAR FROM grade.date) = :year', {
+        year: academicYear.split('-')[0],
+      });
+    }
+
+    const grades = await query.getMany();
+
+    const studentResultsMap = new Map<string, any>();
+    grades.forEach((grade) => {
+      const studentDetails = studentDetailsMap.get(grade.studentId) || {
+        studentId: 'N/A',
+        firstName: 'Unknown',
+        lastName: 'Student',
+      };
+
+      if (!studentResultsMap.has(studentDetails.studentId)) {
+        studentResultsMap.set(studentDetails.studentId, {
+          student: {
+            id: grade.student.id,
+            studentId: studentDetails.studentId,
+            firstName: studentDetails.firstName,
+            lastName: studentDetails.lastName,
+          },
+          results: [],
+          totalMarks: 0,
+          totalPossible: 0,
+        });
+      }
+
+      const studentResult = studentResultsMap.get(studentDetails.studentId);
+      const marks = parseFloat(grade.grade) || 0;
+
+      studentResult.results.push({
+        gradeId: grade.gradeId,
+        examTitle: grade.course.name,
+        subject: grade.course.name,
+        marksObtained: marks,
+        totalMarks: 100,
+        percentage: marks,
+        grade: this.calculateLetterGrade(marks),
+        date: grade.date,
+        examType: grade.assessmentType,
+      });
+
+      studentResult.totalMarks += marks;
+      studentResult.totalPossible += 100;
+    });
+
+    const results = Array.from(studentResultsMap.values()).map(
+      (studentResult) => {
+        const totalMarks = studentResult.results.reduce(
+          (sum, exam) => sum + exam.marksObtained,
+          0,
+        );
+        const totalPossible = studentResult.results.reduce(
+          (sum, exam) => sum + exam.totalMarks,
+          0,
+        );
+        const averageScore =
+          totalPossible > 0 ? (totalMarks / totalPossible) * 100 : 0;
+
+        return {
+          ...studentResult,
+          totalMarks, // Update with actual sum of marks
+          totalPossible, // Update with actual sum of possible marks
+          averageScore,
+          overallGPA: this.calculateGPA(studentResult.results),
+          totalExams: studentResult.results.length,
+          remarks: this.getRemarks(averageScore),
+        };
+      },
+    );
+
+    return {
+      classInfo: {
+        id: classEntity.id,
+        name: classEntity.name,
+      },
+      students: results,
+    };
+  }
+
+  private getRemarks(averageScore: number): string {
+    if (averageScore >= 90) return 'Excellent';
+    if (averageScore >= 80) return 'Very Good';
+    if (averageScore >= 70) return 'Good';
+    if (averageScore >= 60) return 'Satisfactory';
+    return 'Needs Improvement';
+  }
+
+  async getStudentGrades(
+    studentId: string,
+    userId?: string,
+    classId?: string,
+    academicYear?: string,
+    term?: string,
+  ): Promise<any> {
+    if (userId) {
+      const user = await this.userRepository.findOne({ where: { id: userId } });
+      if (!user) {
+        throw new UnauthorizedException('User not found');
       }
     }
 
-    // Transform grades
-    const transformedGrades = grades.map((grade) => ({
-      course: grade.course.name,
-      grade: grade.grade,
-      assessmentType: grade.assessmentType,
-    }));
-    console.log('Transformed grades:', transformedGrades);
+    const student = await this.studentRepository.findOne({
+      where: [{ id: studentId }, { studentId: studentId }],
+      relations: ['user'],
+    });
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
 
-    return { success: true, grades: transformedGrades };
+    const query = this.gradeRepository
+      .createQueryBuilder('grade')
+      .leftJoinAndSelect('grade.course', 'course')
+      .leftJoinAndSelect('grade.class', 'class')
+      .where('grade.studentId = :studentId', { studentId: student.studentId });
+
+    if (classId) {
+      query.andWhere('grade.classId = :classId', { classId });
+    }
+    if (academicYear) {
+      query.andWhere('EXTRACT(YEAR FROM grade.date) = :year', {
+        year: academicYear.split('-')[0],
+      });
+    }
+
+    const grades = await query.getMany();
+
+    const results = grades.map((grade) => ({
+      gradeId: grade.gradeId,
+      examTitle: grade.course.name,
+      subject: grade.course.name,
+      marksObtained: parseFloat(grade.grade) || 0,
+      totalMarks: 100,
+      percentage: parseFloat(grade.grade) || 0,
+      grade: this.calculateLetterGrade(parseFloat(grade.grade) || 0),
+      date: grade.date,
+      examType: grade.assessmentType,
+    }));
+
+    return {
+      student: {
+        id: student.id,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        studentId: student.studentId,
+      },
+      results,
+      overallGPA: this.calculateGPA(results),
+      totalExams: results.length,
+    };
+  }
+
+  private calculateLetterGrade(percentage: number): string {
+    if (percentage >= 90) return 'A';
+    if (percentage >= 80) return 'B';
+    if (percentage >= 70) return 'C';
+    if (percentage >= 60) return 'D';
+    return 'F';
+  }
+
+  private calculateGPA(grades: any[]): number {
+    if (grades.length === 0) return 0;
+    const total = grades.reduce((sum, grade) => {
+      const percentage = grade.percentage || 0;
+      if (percentage >= 90) return sum + 4;
+      if (percentage >= 80) return sum + 3;
+      if (percentage >= 70) return sum + 2;
+      if (percentage >= 60) return sum + 1;
+      return sum;
+    }, 0);
+    return total / grades.length;
   }
 }
