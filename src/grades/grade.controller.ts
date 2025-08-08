@@ -64,4 +64,10 @@ export class GradeController {
   ) {
     return this.gradeService.getStudentGrades(studentId, req.user.sub);
   }
+
+  @UseGuards(JwtAuthGuard)
+@Get('students')
+async getStudentOwnGrades(@Request() req) {
+  return this.gradeService.getStudentOwnGrades(req.user.sub);
+}
 }

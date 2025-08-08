@@ -388,4 +388,46 @@ async getStudentGrades(
     }, 0);
     return total / grades.length;
   }
+
+ async getStudentOwnGrades(userId: string): Promise<any> {
+  // Find student by user ID
+  const student = await this.studentRepository.findOne({
+    where: { userId },
+    relations: ['user'],
+  });
+
+  if (!student) {
+    throw new NotFoundException('Student not found');
+  }
+
+  // Get all grades for this student
+  const grades = await this.gradeRepository.find({
+    where: { studentId: student.userId },
+    relations: ['course', 'class'],
+  });
+
+  const results = grades.map((grade) => ({
+    gradeId: grade.gradeId,
+    examTitle: grade.course.name,
+    subject: grade.course.name,
+    marksObtained: parseFloat(grade.grade) || 0,
+    totalMarks: 100,
+    percentage: parseFloat(grade.grade) || 0,
+    grade: this.calculateLetterGrade(parseFloat(grade.grade) || 0),
+    date: grade.date,
+    examType: grade.assessmentType
+  }));
+
+  return {
+    student: {
+      id: student.id,
+      firstName: student.firstName,
+      lastName: student.lastName,
+      studentId: student.studentId
+    },
+    results,
+    overallGPA: this.calculateGPA(results),
+    totalExams: results.length
+  };
+}
 }
