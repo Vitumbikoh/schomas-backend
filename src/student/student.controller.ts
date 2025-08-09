@@ -24,6 +24,7 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 import { Logger } from '@nestjs/common';
 import { LearningMaterialsService } from 'src/learning-materials/learning-materials.service';
 import { StudentMaterialDto } from 'src/learning-materials/dtos/student-material.dto';
+import { LogsService } from 'src/logs/logs.service';
 
 @ApiTags('Students')
 @ApiBearerAuth()
@@ -34,6 +35,7 @@ export class StudentController {
 
   constructor(
     private readonly studentService: StudentsService,
+     private readonly logsService: LogsService,
     private readonly learningMaterialsService: LearningMaterialsService,
   ) {}
 
@@ -90,27 +92,50 @@ export class StudentController {
   }
 
   @Post('students')
-  @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Create a new student' })
-  @ApiResponse({ status: 201, description: 'Student created successfully' })
-  async createStudent(@Body() createStudentDto: CreateStudentDto) {
-    this.logger.log(`Creating student: ${createStudentDto.email}`);
-    try {
-      if (!createStudentDto.firstName || !createStudentDto.lastName) {
-        throw new Error('First name and last name are required');
-      }
-
-      const newStudent = await this.studentService.create(createStudentDto);
-      return {
-        success: true,
-        student: newStudent,
-        message: 'Student created successfully',
-      };
-    } catch (error) {
-      this.logger.error(`Failed to create student: ${error.message}`);
-      throw new Error('Failed to create student: ' + error.message);
+@Roles(Role.ADMIN)
+@ApiOperation({ summary: 'Create a new student' })
+@ApiResponse({ status: 201, description: 'Student created successfully' })
+async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) {
+  this.logger.log(`Creating student: ${createStudentDto.email}`);
+  try {
+    if (!createStudentDto.firstName || !createStudentDto.lastName) {
+      throw new Error('First name and last name are required');
     }
+
+    // 1. Create student
+    const newStudent = await this.studentService.create(createStudentDto);
+
+    // 2. Prepare log data
+    const logData = {
+      action: 'CREATE_STUDENT',
+      performedBy: {
+        id: req.user?.sub,
+        email: req.user?.email,
+        role: req.user?.role,
+      },
+      studentCreated: {
+        id: newStudent.id,
+        fullName: `${newStudent.firstName} ${newStudent.lastName}`,
+      },
+      timestamp: new Date(),
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    };
+
+    // 3. Save log to DB (assuming you have LogsService)
+    await this.logsService.create(logData); 
+
+    return {
+      success: true,
+      student: newStudent,
+      message: 'Student created successfully',
+    };
+  } catch (error) {
+    this.logger.error(`Failed to create student: ${error.message}`);
+    throw new Error('Failed to create student: ' + error.message);
   }
+}
+
 
   @Get('total-students')
   @Roles(Role.ADMIN)

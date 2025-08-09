@@ -21,10 +21,12 @@ import { LearningMaterialsService } from 'src/learning-materials/learning-materi
 import { LearningMaterialsModule } from 'src/learning-materials/learning-materials.module';
 import { EnrollmentModule } from 'src/enrollment/enrollment.module';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
+import { Log } from 'src/logs/logs.entity';
+import { LogsService } from 'src/logs/logs.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Student, User, Parent, Schedule, Course, Class, Classroom, LearningMaterial, Enrollment]),
+    TypeOrmModule.forFeature([Student, User, Parent, Schedule, Course, Class, Classroom, LearningMaterial, Enrollment, Log]),
     UsersModule,
     AuthModule,
     ConfigModule,
@@ -32,7 +34,7 @@ import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
     EnrollmentModule
     
   ],
-  providers: [StudentsService, ScheduleService, CourseService, ClassService, ClassroomService, LearningMaterialsService],
+  providers: [StudentsService, ScheduleService, CourseService, ClassService, ClassroomService, LearningMaterialsService, LogsService],
   controllers: [StudentController],
   exports: [StudentsService],
 })
