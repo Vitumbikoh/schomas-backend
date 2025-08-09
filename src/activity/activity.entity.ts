@@ -1,30 +1,32 @@
-// src/activity/activity.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
-import { User } from '../user/entities/user.entity';
+// import { Entity, PrimaryColumn, Column } from 'typeorm';
 
-@Entity()
-export class Activity {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+// @Entity('logs') // Match the actual table name
+// export class Activity {
+//   @PrimaryColumn('uuid')
+//   id: string;
 
-  @Column()
-  description: string;
+//   @Column()
+//   action: string;
 
-  @Column({ nullable: true })
-  userId: string;
+//   @Column('jsonb', { name: 'performedBy' }) // Explicit column name
+//   performedBy: {
+//     id?: string;
+//     email: string;
+//     role: string;
+//   };
 
-  @Column({ nullable: true })
-  entityId: string;
+//   @Column('jsonb', { name: 'studentCreated', nullable: true })
+//   studentCreated?: {
+//     id: string;
+//     fullName: string;
+//   };
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
-  date: Date;
+//   @Column({ name: 'timestamp', type: 'timestamp' })
+//   timestamp: Date;
 
-  @Column()
-  type: string;
+//   @Column({ name: 'ipAddress' })
+//   ipAddress: string;
 
-  @Column()
-  action: string;
-
-  @ManyToOne(() => User, (user) => user.activities, { eager: false })
-  user: User;
-}
+//   @Column({ name: 'userAgent' })
+//   userAgent: string;
+// }

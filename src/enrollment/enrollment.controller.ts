@@ -13,16 +13,26 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../user/enums/role.enum';
 import { EnrollmentService } from './enrollment.service';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { NotFoundException } from '@nestjs/common';
 import { isUUID } from 'class-validator';
+import { LogsService } from 'src/logs/logs.service';
 
 @ApiTags('Enrollments')
 @ApiBearerAuth()
 @Controller('enrollments')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 export class EnrollmentController {
-  constructor(private readonly enrollmentService: EnrollmentService) {}
+  constructor(
+    private readonly enrollmentService: EnrollmentService,
+    private readonly logsService: LogsService,
+  ) {}
 
   @Get()
   @Roles(Role.ADMIN)
@@ -39,11 +49,12 @@ export class EnrollmentController {
     @Query('limit') limit = 10,
     @Query('search') search = '',
   ) {
-    const { enrollments, total } = await this.enrollmentService.getAllEnrollments(
-      Number(page),
-      Number(limit),
-      search,
-    );
+    const { enrollments, total } =
+      await this.enrollmentService.getAllEnrollments(
+        Number(page),
+        Number(limit),
+        search,
+      );
 
     const transformedEnrollments = enrollments.map((enrollment) => ({
       id: enrollment.id,
@@ -89,32 +100,44 @@ export class EnrollmentController {
 
   @Post(':courseId/enroll/:studentId')
   @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Enroll a student in a course' })
-  @ApiResponse({ status: 201, description: 'Student enrolled successfully' })
   async enrollStudent(
     @Param('courseId') courseId: string,
     @Param('studentId') studentId: string,
+    @Request() req, // ✅ to get user & IP
   ) {
-    if (!isUUID(courseId)) {
+    if (!isUUID(courseId))
       throw new NotFoundException('Invalid course ID format');
-    }
-    if (!isUUID(studentId)) {
+    if (!isUUID(studentId))
       throw new NotFoundException('Invalid student ID format');
-    }
 
     try {
       const enrollment = await this.enrollmentService.enrollStudent(
         courseId,
         studentId,
       );
+
+      // ✅ Create log
+      await this.logsService.create({
+        action: 'ENROLL_STUDENT',
+        performedBy: {
+          id: req.user.id,
+          email: req.user.email,
+          role: req.user.role,
+        },
+        studentCreated: {
+          id: enrollment.student.id,
+          fullName: `${enrollment.student.firstName} ${enrollment.student.lastName}`,
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
       return {
         success: true,
         enrollment: {
           id: enrollment.id,
-          studentName: enrollment.student
-            ? `${enrollment.student.firstName} ${enrollment.student.lastName}`
-            : 'Unknown',
-          courseName: enrollment.course ? enrollment.course.name : 'Unknown',
+          studentName: `${enrollment.student.firstName} ${enrollment.student.lastName}`,
+          courseName: enrollment.course.name,
           enrollmentDate: enrollment.createdAt.toISOString(),
           status: enrollment.status,
         },
@@ -127,29 +150,36 @@ export class EnrollmentController {
 
   @Delete(':courseId/enroll/:studentId')
   @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Unenroll a student from a course' })
-  @ApiResponse({ status: 200, description: 'Student unenrolled successfully' })
   async unenrollStudent(
     @Param('courseId') courseId: string,
     @Param('studentId') studentId: string,
+    @Request() req,
   ) {
-    if (!isUUID(courseId)) {
+    if (!isUUID(courseId))
       throw new NotFoundException('Invalid course ID format');
-    }
-    if (!isUUID(studentId)) {
+    if (!isUUID(studentId))
       throw new NotFoundException('Invalid student ID format');
-    }
 
     try {
       await this.enrollmentService.unenrollStudent(courseId, studentId);
-      return {
-        success: true,
-        message: 'Student unenrolled successfully',
-      };
+
+      await this.logsService.create({
+        action: 'UNENROLL_STUDENT',
+        performedBy: {
+          id: req.user.id,
+          email: req.user.email,
+          role: req.user.role,
+        },
+        studentCreated: { id: studentId }, // only ID since we don't have full object
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
+      return { success: true, message: 'Student unenrolled successfully' };
     } catch (error) {
-      throw new NotFoundException('Failed to unenroll student: ' + error.message);
+      throw new NotFoundException(
+        'Failed to unenroll student: ' + error.message,
+      );
     }
   }
-
-  
 }

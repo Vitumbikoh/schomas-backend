@@ -19,6 +19,7 @@ import { ReportsModule } from './reports/reports.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { LearningMaterialsModule } from './learning-materials/learning-materials.module';
 import { GradeModule } from './grades/grade.module';
+import { ActivitiesModule } from './activity/activity.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { GradeModule } from './grades/grade.module';
     AttendanceModule,
     LearningMaterialsModule,
     GradeModule, 
+    ActivitiesModule,
   ],
 })
 export class AppModule {}
