@@ -1,4 +1,4 @@
-import { IsString, IsEmail, IsOptional, IsBoolean, IsObject, ValidateNested, MinLength } from 'class-validator';
+import { IsString, IsEmail, IsOptional, IsBoolean, IsObject, ValidateNested, MinLength, IsDateString, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class NotificationSettingsDto {
@@ -35,6 +35,44 @@ export class SchoolSettingsDto {
 
   @IsString()
   schoolAbout: string;
+}
+
+export class AcademicCalendarDto {
+  @IsString()
+  @Matches(/^\d{4}-\d{4}$/, { message: 'Academic year must be in YYYY-YYYY format' })
+  academicYear: string;
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+}
+
+export class TermDto {
+  @IsOptional()
+  @IsString()
+  id?: string;
+
+  @IsString()
+  termName: string;
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @IsBoolean()
+  isCurrent: boolean;
+
+  @IsString()
+  @Matches(/^\d{4}-\d{4}$/, { message: 'Academic year must be in YYYY-YYYY format' })
+  academicYear: string;
 }
 
 export class UserSettingsDto {
@@ -76,6 +114,16 @@ export class SettingsResponseDto {
   @ValidateNested()
   @Type(() => SchoolSettingsDto)
   schoolSettings?: SchoolSettingsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AcademicCalendarDto)
+  academicCalendar?: AcademicCalendarDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TermDto)
+  currentTerm?: TermDto;
 }
 
 export class UpdateSettingsDto {
@@ -105,6 +153,16 @@ export class UpdateSettingsDto {
   @ValidateNested()
   @Type(() => SchoolSettingsDto)
   schoolSettings?: SchoolSettingsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AcademicCalendarDto)
+  academicCalendar?: AcademicCalendarDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TermDto)
+  currentTerm?: TermDto;
 
   @IsOptional()
   @IsString()

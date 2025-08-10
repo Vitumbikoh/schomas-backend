@@ -21,4 +21,6 @@ export class UserSettings {
   security: {
     twoFactor: boolean;
   };
+
+  
 }
