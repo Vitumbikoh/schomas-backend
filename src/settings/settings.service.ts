@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { QueryFailedError, QueryRunner, Repository } from 'typeorm';
+import { DataSource, QueryFailedError, QueryRunner, Repository } from 'typeorm';
 import { UserSettings } from './entities/user-settings.entity';
 import { User } from '../user/entities/user.entity';
 import { SchoolSettings } from './entities/school-settings.entity';
@@ -52,58 +52,52 @@ export class SettingsService {
     private academicCalendarRepository: Repository<AcademicCalendar>,
     @InjectRepository(Term)
     private termRepository: Repository<Term>,
+     private dataSource: DataSource,
   ) {
     this.initializeDefaultTerms();
   }
 
-  private async initializeDefaultTerms() {
-    if (this.isInitialized) return;
+private async initializeDefaultTerms() {
+  if (this.isInitialized) return;
 
-    try {
-      const termsCount = await this.termRepository.count();
-      if (termsCount === 0) {
-        const defaultAcademicYear = `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
+  try {
+    const termsCount = await this.termRepository.count();
+    if (termsCount === 0) {
+      const defaultAcademicYear = `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
 
-        // Create default academic calendar if it doesn't exist
-        const academicCalendar = await this.academicCalendarRepository.findOne({
-          where: { academicYear: defaultAcademicYear },
-        });
+      // Create default terms
+      const defaultTerms = [
+        {
+          termName: 'Term 1',
+          academicYear: defaultAcademicYear,
+          isCurrent: true, // Set first term as current by default
+          startDate: new Date(`${new Date().getFullYear()}-09-01`),
+          endDate: new Date(`${new Date().getFullYear()}-12-15`),
+        },
+        {
+          termName: 'Term 2',
+          academicYear: defaultAcademicYear,
+          isCurrent: false,
+          startDate: new Date(`${new Date().getFullYear() + 1}-01-10`),
+          endDate: new Date(`${new Date().getFullYear() + 1}-04-15`),
+        },
+        {
+          termName: 'Term 3',
+          academicYear: defaultAcademicYear,
+          isCurrent: false,
+          startDate: new Date(`${new Date().getFullYear() + 1}-05-01`),
+          endDate: new Date(`${new Date().getFullYear() + 1}-08-31`),
+        },
+      ];
 
-        if (!academicCalendar) {
-          await this.academicCalendarRepository.save({
-            academicYear: defaultAcademicYear,
-            startDate: new Date(`${new Date().getFullYear()}-09-01`), // Default start date
-            endDate: new Date(`${new Date().getFullYear() + 1}-06-30`), // Default end date
-          });
-        }
-
-        // Create default terms
-        const defaultTerms = [
-          {
-            termName: 'Term 1',
-            academicYear: defaultAcademicYear,
-            isCurrent: false,
-          },
-          {
-            termName: 'Term 2',
-            academicYear: defaultAcademicYear,
-            isCurrent: false,
-          },
-          {
-            termName: 'Term 3',
-            academicYear: defaultAcademicYear,
-            isCurrent: false,
-          },
-        ];
-
-        await this.termRepository.save(defaultTerms);
-        this.logger.log('Default terms initialized successfully');
-      }
-      this.isInitialized = true;
-    } catch (error) {
-      this.logger.error('Failed to initialize default terms', error.stack);
+      await this.termRepository.save(defaultTerms);
+      this.logger.log('Default terms initialized successfully');
     }
+    this.isInitialized = true;
+  } catch (error) {
+    this.logger.error('Failed to initialize default terms', error.stack);
   }
+}
 
   async getSettings(userId: string): Promise<SettingsResponseDto> {
     if (!userId) {
@@ -142,94 +136,110 @@ export class SettingsService {
         await this.userRepository.save(user);
       }
 
-      // Get phone number based on role
-      let phone: string | undefined;
-      if (user.role === Role.TEACHER && user.teacher) {
-        phone = user.teacher.phoneNumber;
-      } else if (user.role === Role.STUDENT && user.student) {
-        phone = user.student.phoneNumber;
-      } else if (user.role === Role.PARENT && user.parent) {
-        phone = user.parent.phoneNumber;
-      } else if (user.role === Role.FINANCE && user.finance) {
-        phone = user.finance.phoneNumber;
-      } else if (user.role === Role.ADMIN) {
-        phone = user.phone;
-      }
-
-      // Initialize response object
+      // Initialize response object without phone number for admin
       const response: SettingsResponseDto = {
         user: {
           id: user.id,
           username: user.username,
           email: user.email,
           role: user.role,
-          phone,
           image: user.image,
           notifications: user.settings.notifications,
           security: user.settings.security,
         },
       };
 
+      // Only get phone number for non-admin roles
+      if (user.role !== Role.ADMIN) {
+        let phone: string | undefined;
+        if (user.role === Role.TEACHER && user.teacher) {
+          phone = user.teacher.phoneNumber;
+        } else if (user.role === Role.STUDENT && user.student) {
+          phone = user.student.phoneNumber;
+        } else if (user.role === Role.PARENT && user.parent) {
+          phone = user.parent.phoneNumber;
+        } else if (user.role === Role.FINANCE && user.finance) {
+          phone = user.finance.phoneNumber;
+        }
+        response.user.phone = phone;
+      }
+
       // Only include admin-specific settings if user is admin
       if (user.role === Role.ADMIN) {
-        // School settings
-        let schoolSettings = await this.schoolSettingsRepository.findOne({
-          where: { id: 'default-school-settings' },
-        });
-
-        if (!schoolSettings) {
-          this.logger.log('Creating default school settings');
-          schoolSettings = this.schoolSettingsRepository.create({
-            id: 'default-school-settings',
-            schoolName: '',
-            schoolEmail: '',
-            schoolPhone: '',
-            schoolAddress: '',
-            schoolAbout: '',
+        // School settings - handle case where they don't exist
+        try {
+          let schoolSettings = await this.schoolSettingsRepository.findOne({
+            where: { id: 'default-school-settings' },
           });
-          schoolSettings =
-            await this.schoolSettingsRepository.save(schoolSettings);
+
+          if (!schoolSettings) {
+            this.logger.log('Creating default school settings');
+            schoolSettings = this.schoolSettingsRepository.create({
+              id: 'default-school-settings',
+              schoolName: '',
+              schoolEmail: '',
+              schoolPhone: '',
+              schoolAddress: '',
+              schoolAbout: '',
+            });
+            schoolSettings =
+              await this.schoolSettingsRepository.save(schoolSettings);
+          }
+
+          response.schoolSettings = {
+            schoolName: schoolSettings.schoolName,
+            schoolEmail: schoolSettings.schoolEmail,
+            schoolPhone: schoolSettings.schoolPhone,
+            schoolAddress: schoolSettings.schoolAddress,
+            schoolAbout: schoolSettings.schoolAbout,
+          };
+        } catch (error) {
+          this.logger.warn('Failed to fetch school settings', error);
+          // Continue without school settings if there's an error
         }
 
-        response.schoolSettings = {
-          schoolName: schoolSettings.schoolName,
-          schoolEmail: schoolSettings.schoolEmail,
-          schoolPhone: schoolSettings.schoolPhone,
-          schoolAddress: schoolSettings.schoolAddress,
-          schoolAbout: schoolSettings.schoolAbout,
-        };
+        // Academic calendar - make optional
+        try {
+          const academicCalendar =
+            await this.academicCalendarRepository.findOne({
+              order: { createdAt: 'DESC' },
+            });
 
-        // Academic calendar
-        const academicCalendar = await this.academicCalendarRepository.findOne({
-          order: { createdAt: 'DESC' },
-        });
-
-        if (academicCalendar) {
-          response.academicCalendar = {
-            academicYear: academicCalendar.academicYear,
-            startDate: academicCalendar.startDate?.toISOString(),
-            endDate: academicCalendar.endDate?.toISOString(),
-          };
+          if (academicCalendar) {
+            response.academicCalendar = {
+              academicYear: academicCalendar.academicYear,
+              startDate: academicCalendar.startDate?.toISOString(),
+              endDate: academicCalendar.endDate?.toISOString(),
+            };
+          }
+        } catch (error) {
+          this.logger.warn('Failed to fetch academic calendar', error);
         }
 
-        // Current term
-        // In settings.service.ts, modify the current term lookup:
-        const currentTerm = await this.termRepository.findOne({
-          where: {
-            isCurrent: true,
-            academicYear: academicCalendar?.academicYear, // Add academic year if available
-          },
-          order: { createdAt: 'DESC' }, // Add ordering for consistency
-        });
+        // Current term - make optional
+        try {
+          const academicCalendar = response.academicCalendar;
+          const currentTerm = await this.termRepository.findOne({
+            where: {
+              isCurrent: true,
+              ...(academicCalendar?.academicYear
+                ? { academicYear: academicCalendar.academicYear }
+                : {}),
+            },
+            order: { createdAt: 'DESC' },
+          });
 
-        if (currentTerm) {
-          response.currentTerm = {
-            termName: currentTerm.termName,
-            startDate: currentTerm.startDate?.toISOString(),
-            endDate: currentTerm.endDate?.toISOString(),
-            isCurrent: currentTerm.isCurrent,
-            academicYear: currentTerm.academicYear,
-          };
+          if (currentTerm) {
+            response.currentTerm = {
+              termName: currentTerm.termName,
+              startDate: currentTerm.startDate?.toISOString(),
+              endDate: currentTerm.endDate?.toISOString(),
+              isCurrent: currentTerm.isCurrent,
+              academicYear: currentTerm.academicYear,
+            };
+          }
+        } catch (error) {
+          this.logger.warn('Failed to fetch current term', error);
         }
       }
 
@@ -246,136 +256,157 @@ export class SettingsService {
     }
   }
 
- // In your SettingsService class
-async updateSettings(
-  userId: string,
-  updateDto: UpdateSettingsDto,
-  externalQueryRunner?: QueryRunner
-): Promise<SettingsResponseDto> {
-  // Determine if we need to manage the transaction lifecycle
-  const shouldManageTransaction = !externalQueryRunner;
-  const queryRunner = externalQueryRunner || 
-    this.userRepository.manager.connection.createQueryRunner();
+  // In your SettingsService class
+  async updateSettings(
+    userId: string,
+    updateDto: UpdateSettingsDto,
+    externalQueryRunner?: QueryRunner,
+  ): Promise<SettingsResponseDto> {
+    // Determine if we need to manage the transaction lifecycle
+    const shouldManageTransaction = !externalQueryRunner;
+    const queryRunner =
+      externalQueryRunner ||
+      this.userRepository.manager.connection.createQueryRunner();
 
-  if (shouldManageTransaction) {
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-  }
-
-  try {
-    // 1. Get user with relations
-    const user = await queryRunner.manager.findOne(User, {
-      where: { id: userId },
-      relations: ['settings', 'teacher', 'student', 'parent', 'finance'],
-    });
-
-    if (!user) {
-      throw new NotFoundException(`User with ID ${userId} not found`);
+    if (shouldManageTransaction) {
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
     }
 
-    // 2. Ensure settings exist
-    if (!user.settings) {
-      const newSettings = this.userSettingsRepository.create({
-        notifications: { 
-          email: true, 
-          sms: false, 
-          browser: true, 
-          weeklySummary: true 
-        },
-        security: { 
-          twoFactor: false 
-        },
+    try {
+      // 1. Get user with relations
+      const user = await queryRunner.manager.findOne(User, {
+        where: { id: userId },
+        relations: ['settings', 'teacher', 'student', 'parent', 'finance'],
       });
-      user.settings = await queryRunner.manager.save(UserSettings, newSettings);
+
+      if (!user) {
+        throw new NotFoundException(`User with ID ${userId} not found`);
+      }
+
+      // 2. Ensure settings exist
+      if (!user.settings) {
+        const newSettings = this.userSettingsRepository.create({
+          notifications: {
+            email: true,
+            sms: false,
+            browser: true,
+            weeklySummary: true,
+          },
+          security: {
+            twoFactor: false,
+          },
+        });
+        user.settings = await queryRunner.manager.save(
+          UserSettings,
+          newSettings,
+        );
+        await queryRunner.manager.save(User, user);
+      }
+
+      // 3. Handle password update if provided
+      if (updateDto.currentPassword && updateDto.newPassword) {
+        const isPasswordValid = await bcrypt.compare(
+          updateDto.currentPassword,
+          user.password,
+        );
+        if (!isPasswordValid) {
+          throw new UnauthorizedException('Current password is incorrect');
+        }
+        if (updateDto.currentPassword === updateDto.newPassword) {
+          throw new BadRequestException(
+            'New password must be different from current password',
+          );
+        }
+        user.password = await bcrypt.hash(updateDto.newPassword, 10);
+      } else if (updateDto.currentPassword || updateDto.newPassword) {
+        throw new BadRequestException(
+          'Both current and new passwords are required',
+        );
+      }
+
+      // 4. Update user details
+      if (updateDto.username) user.username = updateDto.username;
+      if (updateDto.email) user.email = updateDto.email;
+
+      // 5. Update phone number based on role
+      if (updateDto.phone) {
+        await this.updatePhoneNumber(user, updateDto.phone, queryRunner);
+      }
+
+      // 6. Update user settings
+      if (updateDto.notifications) {
+        user.settings.notifications = {
+          ...user.settings.notifications,
+          ...updateDto.notifications,
+        };
+      }
+      if (updateDto.security) {
+        user.settings.security = {
+          ...user.settings.security,
+          ...updateDto.security,
+        };
+      }
+
+      // 7. Save user and settings
+      await queryRunner.manager.save(UserSettings, user.settings);
       await queryRunner.manager.save(User, user);
-    }
 
-    // 3. Handle password update if provided
-    if (updateDto.currentPassword && updateDto.newPassword) {
-      const isPasswordValid = await bcrypt.compare(updateDto.currentPassword, user.password);
-      if (!isPasswordValid) {
-        throw new UnauthorizedException('Current password is incorrect');
+      // 8. Update school settings (admin only)
+      if (updateDto.schoolSettings) {
+        if (user.role !== Role.ADMIN) {
+          throw new ForbiddenException(
+            'Only admins can update school settings',
+          );
+        }
+        await this.updateSchoolSettings(updateDto.schoolSettings, queryRunner);
       }
-      if (updateDto.currentPassword === updateDto.newPassword) {
-        throw new BadRequestException('New password must be different from current password');
+
+      // 9. Update academic calendar (admin only)
+      if (updateDto.academicCalendar) {
+        if (user.role !== Role.ADMIN) {
+          throw new ForbiddenException(
+            'Only admins can update academic calendar',
+          );
+        }
+        await this.updateAcademicCalendar(
+          updateDto.academicCalendar,
+          queryRunner,
+        );
       }
-      user.password = await bcrypt.hash(updateDto.newPassword, 10);
-    } else if (updateDto.currentPassword || updateDto.newPassword) {
-      throw new BadRequestException('Both current and new passwords are required');
-    }
 
-    // 4. Update user details
-    if (updateDto.username) user.username = updateDto.username;
-    if (updateDto.email) user.email = updateDto.email;
-
-    // 5. Update phone number based on role
-    if (updateDto.phone) {
-      await this.updatePhoneNumber(user, updateDto.phone, queryRunner);
-    }
-
-    // 6. Update user settings
-    if (updateDto.notifications) {
-      user.settings.notifications = {
-        ...user.settings.notifications,
-        ...updateDto.notifications,
-      };
-    }
-    if (updateDto.security) {
-      user.settings.security = {
-        ...user.settings.security,
-        ...updateDto.security,
-      };
-    }
-
-    // 7. Save user and settings
-    await queryRunner.manager.save(UserSettings, user.settings);
-    await queryRunner.manager.save(User, user);
-
-    // 8. Update school settings (admin only)
-    if (updateDto.schoolSettings) {
-      if (user.role !== Role.ADMIN) {
-        throw new ForbiddenException('Only admins can update school settings');
+      // 10. Update current term (admin only)
+      if (updateDto.currentTerm) {
+        if (user.role !== Role.ADMIN) {
+          throw new ForbiddenException('Only admins can update terms');
+        }
+        await this.updateCurrentTerm(updateDto.currentTerm, queryRunner);
       }
-      await this.updateSchoolSettings(updateDto.schoolSettings, queryRunner);
-    }
 
-    // 9. Update academic calendar (admin only)
-    if (updateDto.academicCalendar) {
-      if (user.role !== Role.ADMIN) {
-        throw new ForbiddenException('Only admins can update academic calendar');
+      // 11. Commit transaction if we're managing it
+      if (shouldManageTransaction) {
+        await queryRunner.commitTransaction();
       }
-      await this.updateAcademicCalendar(updateDto.academicCalendar, queryRunner);
-    }
 
-    // 10. Update current term (admin only)
-    if (updateDto.currentTerm) {
-      if (user.role !== Role.ADMIN) {
-        throw new ForbiddenException('Only admins can update terms');
+      // 12. Return updated settings
+      return await this.getSettings(userId);
+    } catch (error) {
+      // Rollback transaction if we're managing it
+      if (shouldManageTransaction) {
+        await queryRunner.rollbackTransaction();
       }
-      await this.updateCurrentTerm(updateDto.currentTerm, queryRunner);
-    }
-
-    // 11. Commit transaction if we're managing it
-    if (shouldManageTransaction) {
-      await queryRunner.commitTransaction();
-    }
-
-    // 12. Return updated settings
-    return await this.getSettings(userId);
-  } catch (error) {
-    // Rollback transaction if we're managing it
-    if (shouldManageTransaction) {
-      await queryRunner.rollbackTransaction();
-    }
-    this.logger.error(`Failed to update settings for user ${userId}`, error.stack);
-    throw error;
-  } finally {
-    // Release query runner if we created it
-    if (shouldManageTransaction) {
-      await queryRunner.release();
+      this.logger.error(
+        `Failed to update settings for user ${userId}`,
+        error.stack,
+      );
+      throw error;
+    } finally {
+      // Release query runner if we created it
+      if (shouldManageTransaction) {
+        await queryRunner.release();
+      }
     }
   }
-}
 
   private async updatePhoneNumber(
     user: User,
@@ -460,34 +491,83 @@ async updateSettings(
     }
   }
 
-private async updateAcademicCalendar(
-  academicCalendar: AcademicCalendarDto, 
-  queryRunner: QueryRunner
-): Promise<void> {
+  // Add these methods to SettingsService
+
+async getAllAcademicCalendars(): Promise<AcademicCalendar[]> {
+  return this.academicCalendarRepository.find({
+    order: { createdAt: 'DESC' },
+  });
+}
+
+async activateAcademicCalendar(id: string): Promise<AcademicCalendar> {
+  const queryRunner = this.dataSource.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
+
   try {
-    const existingCalendar = await queryRunner.manager.findOne(AcademicCalendar, {
-      where: { academicYear: academicCalendar.academicYear },
+    // First deactivate all other calendars
+    await queryRunner.manager.update(
+      AcademicCalendar,
+      { isActive: true },
+      { isActive: false }
+    );
+
+    // Then activate the selected one
+    const calendar = await queryRunner.manager.findOne(AcademicCalendar, {
+      where: { id }
     });
 
-    const calendarData: Partial<AcademicCalendar> = {
-      academicYear: academicCalendar.academicYear,
-      startDate: academicCalendar.startDate ? new Date(academicCalendar.startDate) : undefined,
-      endDate: academicCalendar.endDate ? new Date(academicCalendar.endDate) : undefined,
-    };
-
-    if (existingCalendar) {
-      await queryRunner.manager.save(AcademicCalendar, {
-        ...existingCalendar,
-        ...calendarData
-      });
-    } else {
-      await queryRunner.manager.save(AcademicCalendar, calendarData);
+    if (!calendar) {
+      throw new NotFoundException('Academic calendar not found');
     }
+
+    calendar.isActive = true;
+    const updatedCalendar = await queryRunner.manager.save(AcademicCalendar, calendar);
+
+    await queryRunner.commitTransaction();
+    return updatedCalendar;
   } catch (error) {
-    this.logger.error('Failed to update academic calendar', error.stack);
+    await queryRunner.rollbackTransaction();
+    this.logger.error('Failed to activate academic calendar', error.stack);
     throw error;
+  } finally {
+    await queryRunner.release();
   }
 }
+
+  async updateAcademicCalendar(
+    academicCalendar: AcademicCalendarDto, 
+    queryRunner: QueryRunner
+  ): Promise<AcademicCalendar> {
+    try {
+      // Find existing calendar by academic year
+      const existingCalendar = await queryRunner.manager.findOne(AcademicCalendar, {
+        where: { academicYear: academicCalendar.academicYear },
+      });
+
+      const calendarData: Partial<AcademicCalendar> = {
+        academicYear: academicCalendar.academicYear,
+        startDate: academicCalendar.startDate ? new Date(academicCalendar.startDate) : undefined,
+        endDate: academicCalendar.endDate ? new Date(academicCalendar.endDate) : undefined,
+      };
+
+      let savedCalendar: AcademicCalendar;
+      
+      if (existingCalendar) {
+        savedCalendar = await queryRunner.manager.save(AcademicCalendar, {
+          ...existingCalendar,
+          ...calendarData
+        });
+      } else {
+        savedCalendar = await queryRunner.manager.save(AcademicCalendar, calendarData);
+      }
+
+      return savedCalendar;
+    } catch (error) {
+      this.logger.error('Failed to update academic calendar', error.stack);
+      throw error;
+    }
+  }
 
   private async updateCurrentTerm(
     currentTerm: TermDto,

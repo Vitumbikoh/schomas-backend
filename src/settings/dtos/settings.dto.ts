@@ -1,5 +1,6 @@
 import { IsString, IsEmail, IsOptional, IsBoolean, IsObject, ValidateNested, MinLength, IsDateString, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
+import { AcademicCalendarDto } from './academic-calendar.dto';
 
 export class NotificationSettingsDto {
   @IsBoolean()
@@ -35,20 +36,6 @@ export class SchoolSettingsDto {
 
   @IsString()
   schoolAbout: string;
-}
-
-export class AcademicCalendarDto {
-  @IsString()
-  @Matches(/^\d{4}-\d{4}$/, { message: 'Academic year must be in YYYY-YYYY format' })
-  academicYear: string;
-
-  @IsOptional()
-  @IsDateString()
-  startDate?: string;
-
-  @IsOptional()
-  @IsDateString()
-  endDate?: string;
 }
 
 export class TermDto {
@@ -174,3 +161,5 @@ export class UpdateSettingsDto {
   @MinLength(8, { message: 'New password must be at least 8 characters long' })
   newPassword?: string;
 }
+
+export { AcademicCalendarDto };

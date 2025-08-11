@@ -25,7 +25,8 @@ import {
 } from './dtos/settings.dto';
 import { AcademicCalendar } from './entities/academic-calendar.entity';
 import { Term } from './entities/term.entity';
-import { DataSource } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
 
 @Controller('settings')
 export class SettingsController {
@@ -34,6 +35,10 @@ export class SettingsController {
   constructor(
     private readonly settingsService: SettingsService,
     private readonly dataSource: DataSource,
+    @InjectRepository(AcademicCalendar)
+    private readonly academicCalendarRepository: Repository<AcademicCalendar>,
+    @InjectRepository(Term)
+    private readonly termRepository: Repository<Term>,
   ) {}
 
   @UseGuards(JwtAuthGuard)
@@ -96,32 +101,47 @@ export class SettingsController {
     @Request() req,
     @Body() dto: AcademicCalendarDto,
   ): Promise<AcademicCalendarDto> {
-    // Get the connection from the injected DataSource
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException(
+        'Only admins can create academic calendars',
+      );
+    }
+
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      if (req.user.role !== 'ADMIN') {
-        throw new UnauthorizedException(
-          'Only admins can create academic calendars',
+      // First deactivate all other calendars if this one should be active
+      if (dto.isActive) {
+        await queryRunner.manager.update(
+          AcademicCalendar,
+          { isActive: true },
+          { isActive: false },
         );
       }
 
-      const result = await this.settingsService.updateSettings(
-        req.user.sub,
-        { academicCalendar: dto },
-        queryRunner,
+      const calendarData = {
+        academicYear: dto.academicYear,
+        startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+        endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+        isActive: dto.isActive ?? false,
+      };
+
+      const savedCalendar = await queryRunner.manager.save(
+        AcademicCalendar,
+        calendarData,
       );
 
-      if (!result.academicCalendar) {
-        throw new NotFoundException(
-          'Academic calendar not found after creation',
-        );
-      }
-
       await queryRunner.commitTransaction();
-      return result.academicCalendar;
+
+      return {
+        id: savedCalendar.id,
+        academicYear: savedCalendar.academicYear,
+        startDate: savedCalendar.startDate?.toISOString(),
+        endDate: savedCalendar.endDate?.toISOString(),
+        isActive: savedCalendar.isActive,
+      };
     } catch (error) {
       await queryRunner.rollbackTransaction();
       this.logger.error('Failed to create academic calendar', error.stack);
@@ -139,11 +159,24 @@ export class SettingsController {
         'Only admins can access academic calendars',
       );
     }
-    const settings = await this.settingsService.getSettings(req.user.sub);
-    if (!settings.academicCalendar) {
-      throw new NotFoundException('Academic calendar not found');
+
+    const academicCalendar = await this.academicCalendarRepository.findOne({
+      order: { createdAt: 'DESC' },
+    });
+
+    if (!academicCalendar) {
+      return {
+        academicYear: '',
+        startDate: '',
+        endDate: '',
+      };
     }
-    return settings.academicCalendar;
+
+    return {
+      academicYear: academicCalendar.academicYear,
+      startDate: academicCalendar.startDate?.toISOString(),
+      endDate: academicCalendar.endDate?.toISOString(),
+    };
   }
 
   // Term Endpoints
@@ -168,15 +201,33 @@ export class SettingsController {
   async getTerms(
     @Request() req,
     @Query('academicYear') academicYear?: string,
-  ): Promise<TermDto> {
+  ): Promise<TermDto[]> {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can access terms');
     }
-    const settings = await this.settingsService.getSettings(req.user.sub);
-    if (!settings.currentTerm) {
-      throw new NotFoundException('No current term found');
+
+    const where: any = {};
+    if (academicYear) {
+      where.academicYear = academicYear;
     }
-    return settings.currentTerm;
+
+    const terms = await this.termRepository.find({
+      where,
+      order: { termName: 'ASC' },
+    });
+
+    if (!terms || terms.length === 0) {
+      return [];
+    }
+
+    return terms.map((term) => ({
+      id: term.id,
+      termName: term.termName,
+      startDate: term.startDate?.toISOString(),
+      endDate: term.endDate?.toISOString(),
+      isCurrent: term.isCurrent,
+      academicYear: term.academicYear,
+    }));
   }
 
   @UseGuards(JwtAuthGuard)
@@ -197,5 +248,89 @@ export class SettingsController {
       throw new NotFoundException('Term not found after update');
     }
     return settings.currentTerm;
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('academic-calendars')
+  async getAllAcademicCalendars(
+    @Request() req,
+  ): Promise<AcademicCalendarDto[]> {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException(
+        'Only admins can access academic calendars',
+      );
+    }
+
+    const calendars = await this.academicCalendarRepository.find({
+      order: { createdAt: 'DESC' },
+    });
+
+    return calendars.map((calendar) => ({
+      id: calendar.id,
+      academicYear: calendar.academicYear,
+      startDate: calendar.startDate
+        ? new Date(calendar.startDate).toISOString()
+        : undefined,
+      endDate: calendar.endDate
+        ? new Date(calendar.endDate).toISOString()
+        : undefined,
+      isActive: calendar.isActive,
+    }));
+  }
+  @UseGuards(JwtAuthGuard)
+  @Patch('academic-calendar/:id/activate')
+  async activateAcademicCalendar(
+    @Request() req,
+    @Param('id') id: string,
+  ): Promise<AcademicCalendarDto> {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException(
+        'Only admins can activate academic calendars',
+      );
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // First deactivate all other calendars
+      await queryRunner.manager.update(
+        AcademicCalendar,
+        { isActive: true },
+        { isActive: false },
+      );
+
+      // Then activate the selected one
+      const calendar = await queryRunner.manager.findOneBy(AcademicCalendar, {
+        id,
+      });
+
+      if (!calendar) {
+        throw new NotFoundException('Academic calendar not found');
+      }
+
+      calendar.isActive = true;
+      const updatedCalendar = await queryRunner.manager.save(
+        AcademicCalendar,
+        calendar,
+      );
+
+      await queryRunner.commitTransaction();
+
+      return {
+        id: updatedCalendar.id,
+        academicYear: updatedCalendar.academicYear,
+        startDate: updatedCalendar.startDate?.toISOString(),
+        endDate: updatedCalendar.endDate?.toISOString(),
+        isActive: updatedCalendar.isActive,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error('Failed to activate academic calendar', error.stack);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 }
