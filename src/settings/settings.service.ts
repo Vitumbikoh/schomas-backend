@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, QueryFailedError, QueryRunner, Repository } from 'typeorm';
+import { DataSource, QueryRunner, Repository } from 'typeorm';
 import { UserSettings } from './entities/user-settings.entity';
 import { User } from '../user/entities/user.entity';
 import { SchoolSettings } from './entities/school-settings.entity';
@@ -27,11 +27,15 @@ import {
 } from './dtos/settings.dto';
 import { AcademicCalendar } from './entities/academic-calendar.entity';
 import { Term } from './entities/term.entity';
+import { AcademicYear } from './entities/academic-year.entity';
+import {
+  AcademicYearTermDto,
+  CreateAcademicYearTermDto,
+} from './dtos/academic-year-term.dto';
 
 @Injectable()
 export class SettingsService {
   private readonly logger = new Logger(SettingsService.name);
-  private isInitialized = false;
 
   constructor(
     @InjectRepository(User)
@@ -52,75 +56,33 @@ export class SettingsService {
     private academicCalendarRepository: Repository<AcademicCalendar>,
     @InjectRepository(Term)
     private termRepository: Repository<Term>,
-     private dataSource: DataSource,
-  ) {
-    this.initializeDefaultTerms();
+    @InjectRepository(AcademicYear)
+    private academicYearRepository: Repository<AcademicYear>,
+    private dataSource: DataSource,
+  ) {}
+
+  async onModuleInit() {
+    await this.initializeDefaultTerms();
   }
 
-private async initializeDefaultTerms() {
-  if (this.isInitialized) return;
-
-  try {
-    const termsCount = await this.termRepository.count();
-    if (termsCount === 0) {
-      const defaultAcademicYear = `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
-
-      // Create default terms
-      const defaultTerms = [
-        {
-          termName: 'Term 1',
-          academicYear: defaultAcademicYear,
-          isCurrent: true, // Set first term as current by default
-          startDate: new Date(`${new Date().getFullYear()}-09-01`),
-          endDate: new Date(`${new Date().getFullYear()}-12-15`),
-        },
-        {
-          termName: 'Term 2',
-          academicYear: defaultAcademicYear,
-          isCurrent: false,
-          startDate: new Date(`${new Date().getFullYear() + 1}-01-10`),
-          endDate: new Date(`${new Date().getFullYear() + 1}-04-15`),
-        },
-        {
-          termName: 'Term 3',
-          academicYear: defaultAcademicYear,
-          isCurrent: false,
-          startDate: new Date(`${new Date().getFullYear() + 1}-05-01`),
-          endDate: new Date(`${new Date().getFullYear() + 1}-08-31`),
-        },
-      ];
-
-      await this.termRepository.save(defaultTerms);
-      this.logger.log('Default terms initialized successfully');
-    }
-    this.isInitialized = true;
-  } catch (error) {
-    this.logger.error('Failed to initialize default terms', error.stack);
-  }
-}
-
+  // User Settings Methods
   async getSettings(userId: string): Promise<SettingsResponseDto> {
     if (!userId) {
-      this.logger.error('User ID is required');
       throw new BadRequestException('User ID is required');
     }
 
     try {
-      this.logger.log(`Fetching settings for user ${userId}`);
-
       const user = await this.userRepository.findOne({
         where: { id: userId },
         relations: ['settings', 'teacher', 'student', 'parent', 'finance'],
       });
 
       if (!user) {
-        this.logger.error(`User with ID ${userId} not found`);
         throw new NotFoundException(`User with ID ${userId} not found`);
       }
 
       // Initialize default settings if they don't exist
       if (!user.settings) {
-        this.logger.log(`Creating default settings for user ${userId}`);
         const newSettings = this.userSettingsRepository.create({
           notifications: {
             email: true,
@@ -136,7 +98,6 @@ private async initializeDefaultTerms() {
         await this.userRepository.save(user);
       }
 
-      // Initialize response object without phone number for admin
       const response: SettingsResponseDto = {
         user: {
           id: user.id,
@@ -151,99 +112,82 @@ private async initializeDefaultTerms() {
 
       // Only get phone number for non-admin roles
       if (user.role !== Role.ADMIN) {
-        let phone: string | undefined;
         if (user.role === Role.TEACHER && user.teacher) {
-          phone = user.teacher.phoneNumber;
+          response.user.phone = user.teacher.phoneNumber;
         } else if (user.role === Role.STUDENT && user.student) {
-          phone = user.student.phoneNumber;
+          response.user.phone = user.student.phoneNumber;
         } else if (user.role === Role.PARENT && user.parent) {
-          phone = user.parent.phoneNumber;
+          response.user.phone = user.parent.phoneNumber;
         } else if (user.role === Role.FINANCE && user.finance) {
-          phone = user.finance.phoneNumber;
+          response.user.phone = user.finance.phoneNumber;
         }
-        response.user.phone = phone;
       }
 
-      // Only include admin-specific settings if user is admin
+      // Rest of your admin-specific settings...
       if (user.role === Role.ADMIN) {
-        // School settings - handle case where they don't exist
-        try {
-          let schoolSettings = await this.schoolSettingsRepository.findOne({
+        // School settings
+        const schoolSettings =
+          (await this.schoolSettingsRepository.findOne({
             where: { id: 'default-school-settings' },
-          });
+          })) ||
+          (await this.schoolSettingsRepository.save({
+            id: 'default-school-settings',
+            schoolName: '',
+            schoolEmail: '',
+            schoolPhone: '',
+            schoolAddress: '',
+            schoolAbout: '',
+          }));
 
-          if (!schoolSettings) {
-            this.logger.log('Creating default school settings');
-            schoolSettings = this.schoolSettingsRepository.create({
-              id: 'default-school-settings',
-              schoolName: '',
-              schoolEmail: '',
-              schoolPhone: '',
-              schoolAddress: '',
-              schoolAbout: '',
-            });
-            schoolSettings =
-              await this.schoolSettingsRepository.save(schoolSettings);
-          }
+        response.schoolSettings = {
+          schoolName: schoolSettings.schoolName,
+          schoolEmail: schoolSettings.schoolEmail,
+          schoolPhone: schoolSettings.schoolPhone,
+          schoolAddress: schoolSettings.schoolAddress,
+          schoolAbout: schoolSettings.schoolAbout,
+        };
 
-          response.schoolSettings = {
-            schoolName: schoolSettings.schoolName,
-            schoolEmail: schoolSettings.schoolEmail,
-            schoolPhone: schoolSettings.schoolPhone,
-            schoolAddress: schoolSettings.schoolAddress,
-            schoolAbout: schoolSettings.schoolAbout,
+        // Academic calendar - with proper date handling
+        const academicCalendar = await this.academicCalendarRepository.findOne({
+          where: { isActive: true },
+        });
+
+        // Update the academic calendar handling part
+        if (academicCalendar) {
+          response.academicCalendar = {
+            id: academicCalendar.id,
+            academicYear: academicCalendar.academicYear,
+            startDate: academicCalendar.startDate
+              ? new Date(academicCalendar.startDate).toISOString()
+              : undefined,
+            endDate: academicCalendar.endDate
+              ? new Date(academicCalendar.endDate).toISOString()
+              : undefined,
+            isActive: academicCalendar.isActive,
           };
-        } catch (error) {
-          this.logger.warn('Failed to fetch school settings', error);
-          // Continue without school settings if there's an error
-        }
 
-        // Academic calendar - make optional
-        try {
-          const academicCalendar =
-            await this.academicCalendarRepository.findOne({
-              order: { createdAt: 'DESC' },
-            });
-
-          if (academicCalendar) {
-            response.academicCalendar = {
-              academicYear: academicCalendar.academicYear,
-              startDate: academicCalendar.startDate?.toISOString(),
-              endDate: academicCalendar.endDate?.toISOString(),
-            };
-          }
-        } catch (error) {
-          this.logger.warn('Failed to fetch academic calendar', error);
-        }
-
-        // Current term - make optional
-        try {
-          const academicCalendar = response.academicCalendar;
-          const currentTerm = await this.termRepository.findOne({
+          // Current term
+          const currentTerm = await this.academicYearRepository.findOne({
             where: {
+              academicCalendar: { id: academicCalendar.id },
               isCurrent: true,
-              ...(academicCalendar?.academicYear
-                ? { academicYear: academicCalendar.academicYear }
-                : {}),
             },
-            order: { createdAt: 'DESC' },
+            relations: ['term'],
           });
 
           if (currentTerm) {
             response.currentTerm = {
-              termName: currentTerm.termName,
-              startDate: currentTerm.startDate?.toISOString(),
-              endDate: currentTerm.endDate?.toISOString(),
+              id: currentTerm.id,
+              termName: currentTerm.term.name,
+              startDate: currentTerm.startDate.toISOString(),
+              endDate: currentTerm.endDate.toISOString(),
               isCurrent: currentTerm.isCurrent,
-              academicYear: currentTerm.academicYear,
+              academicYear: academicCalendar.academicYear,
             };
           }
-        } catch (error) {
-          this.logger.warn('Failed to fetch current term', error);
         }
       }
 
-      this.logger.log(`Successfully retrieved settings for user ${userId}`);
       return response;
     } catch (error) {
       this.logger.error(
@@ -256,17 +200,14 @@ private async initializeDefaultTerms() {
     }
   }
 
-  // In your SettingsService class
   async updateSettings(
     userId: string,
     updateDto: UpdateSettingsDto,
     externalQueryRunner?: QueryRunner,
   ): Promise<SettingsResponseDto> {
-    // Determine if we need to manage the transaction lifecycle
     const shouldManageTransaction = !externalQueryRunner;
     const queryRunner =
-      externalQueryRunner ||
-      this.userRepository.manager.connection.createQueryRunner();
+      externalQueryRunner || this.dataSource.createQueryRunner();
 
     if (shouldManageTransaction) {
       await queryRunner.connect();
@@ -274,7 +215,6 @@ private async initializeDefaultTerms() {
     }
 
     try {
-      // 1. Get user with relations
       const user = await queryRunner.manager.findOne(User, {
         where: { id: userId },
         relations: ['settings', 'teacher', 'student', 'parent', 'finance'],
@@ -284,27 +224,16 @@ private async initializeDefaultTerms() {
         throw new NotFoundException(`User with ID ${userId} not found`);
       }
 
-      // 2. Ensure settings exist
-      if (!user.settings) {
-        const newSettings = this.userSettingsRepository.create({
-          notifications: {
-            email: true,
-            sms: false,
-            browser: true,
-            weeklySummary: true,
-          },
-          security: {
-            twoFactor: false,
-          },
-        });
-        user.settings = await queryRunner.manager.save(
-          UserSettings,
-          newSettings,
-        );
-        await queryRunner.manager.save(User, user);
+      // Update user details
+      if (updateDto.username) user.username = updateDto.username;
+      if (updateDto.email) user.email = updateDto.email;
+
+      // Update phone number
+      if (updateDto.phone) {
+        await this.updatePhoneNumber(user, updateDto.phone, queryRunner);
       }
 
-      // 3. Handle password update if provided
+      // Update password if provided
       if (updateDto.currentPassword && updateDto.newPassword) {
         const isPasswordValid = await bcrypt.compare(
           updateDto.currentPassword,
@@ -319,22 +248,9 @@ private async initializeDefaultTerms() {
           );
         }
         user.password = await bcrypt.hash(updateDto.newPassword, 10);
-      } else if (updateDto.currentPassword || updateDto.newPassword) {
-        throw new BadRequestException(
-          'Both current and new passwords are required',
-        );
       }
 
-      // 4. Update user details
-      if (updateDto.username) user.username = updateDto.username;
-      if (updateDto.email) user.email = updateDto.email;
-
-      // 5. Update phone number based on role
-      if (updateDto.phone) {
-        await this.updatePhoneNumber(user, updateDto.phone, queryRunner);
-      }
-
-      // 6. Update user settings
+      // Update settings
       if (updateDto.notifications) {
         user.settings.notifications = {
           ...user.settings.notifications,
@@ -348,50 +264,34 @@ private async initializeDefaultTerms() {
         };
       }
 
-      // 7. Save user and settings
       await queryRunner.manager.save(UserSettings, user.settings);
       await queryRunner.manager.save(User, user);
 
-      // 8. Update school settings (admin only)
-      if (updateDto.schoolSettings) {
-        if (user.role !== Role.ADMIN) {
-          throw new ForbiddenException(
-            'Only admins can update school settings',
+      // Update admin-specific settings
+      if (user.role === Role.ADMIN) {
+        if (updateDto.schoolSettings) {
+          await this.updateSchoolSettings(
+            updateDto.schoolSettings,
+            queryRunner,
           );
         }
-        await this.updateSchoolSettings(updateDto.schoolSettings, queryRunner);
-      }
-
-      // 9. Update academic calendar (admin only)
-      if (updateDto.academicCalendar) {
-        if (user.role !== Role.ADMIN) {
-          throw new ForbiddenException(
-            'Only admins can update academic calendar',
+        if (updateDto.academicCalendar) {
+          await this.updateAcademicCalendar(
+            updateDto.academicCalendar,
+            queryRunner,
           );
         }
-        await this.updateAcademicCalendar(
-          updateDto.academicCalendar,
-          queryRunner,
-        );
-      }
-
-      // 10. Update current term (admin only)
-      if (updateDto.currentTerm) {
-        if (user.role !== Role.ADMIN) {
-          throw new ForbiddenException('Only admins can update terms');
+        if (updateDto.currentTerm) {
+          await this.updateCurrentTerm(updateDto.currentTerm, queryRunner);
         }
-        await this.updateCurrentTerm(updateDto.currentTerm, queryRunner);
       }
 
-      // 11. Commit transaction if we're managing it
       if (shouldManageTransaction) {
         await queryRunner.commitTransaction();
       }
 
-      // 12. Return updated settings
       return await this.getSettings(userId);
     } catch (error) {
-      // Rollback transaction if we're managing it
       if (shouldManageTransaction) {
         await queryRunner.rollbackTransaction();
       }
@@ -401,10 +301,499 @@ private async initializeDefaultTerms() {
       );
       throw error;
     } finally {
-      // Release query runner if we created it
       if (shouldManageTransaction) {
         await queryRunner.release();
       }
+    }
+  }
+
+  // Academic Calendar Methods
+  async createAcademicCalendar(
+    dto: AcademicCalendarDto,
+    queryRunner: QueryRunner,
+  ): Promise<AcademicCalendarDto> {
+    // First deactivate all other calendars if this one should be active
+    if (dto.isActive) {
+      await queryRunner.manager.update(
+        AcademicCalendar,
+        { isActive: true },
+        { isActive: false },
+      );
+    }
+
+    const calendar = await queryRunner.manager.save(AcademicCalendar, {
+      academicYear: dto.academicYear,
+      startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+      endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+      isActive: dto.isActive ?? false,
+    });
+
+    // Create default terms for the new academic calendar
+    const terms = await this.termRepository.find();
+    if (terms.length === 0) {
+      await this.initializeDefaultTerms();
+    }
+
+    for (const term of await this.termRepository.find()) {
+      await queryRunner.manager.save(AcademicYear, {
+        academicCalendar: calendar,
+        term,
+        startDate: new Date(dto.startDate || new Date().toISOString()),
+        endDate: new Date(dto.endDate || new Date().toISOString()),
+        isCurrent: false,
+      });
+    }
+
+    return {
+      id: calendar.id,
+      academicYear: calendar.academicYear,
+      startDate: calendar.startDate?.toISOString(),
+      endDate: calendar.endDate?.toISOString(),
+      isActive: calendar.isActive,
+    };
+  }
+
+  async getAllAcademicCalendars(): Promise<AcademicCalendarDto[]> {
+    const calendars = await this.academicCalendarRepository.find({
+      order: { createdAt: 'DESC' },
+    });
+
+    return calendars.map((calendar) => ({
+      id: calendar.id,
+      academicYear: calendar.academicYear,
+      startDate: calendar.startDate?.toISOString(),
+      endDate: calendar.endDate?.toISOString(),
+      isActive: calendar.isActive,
+    }));
+  }
+
+  async activateAcademicCalendar(id: string): Promise<AcademicCalendarDto> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // First deactivate all other calendars
+      await queryRunner.manager.update(
+        AcademicCalendar,
+        { isActive: true },
+        { isActive: false },
+      );
+
+      // Then activate the selected one
+      const calendar = await queryRunner.manager.findOne(AcademicCalendar, {
+        where: { id },
+      });
+
+      if (!calendar) {
+        throw new NotFoundException('Academic calendar not found');
+      }
+
+      calendar.isActive = true;
+      const updatedCalendar = await queryRunner.manager.save(
+        AcademicCalendar,
+        calendar,
+      );
+
+      await queryRunner.commitTransaction();
+
+      return {
+        id: updatedCalendar.id,
+        academicYear: updatedCalendar.academicYear,
+        startDate: updatedCalendar.startDate?.toISOString(),
+        endDate: updatedCalendar.endDate?.toISOString(),
+        isActive: updatedCalendar.isActive,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error('Failed to activate academic calendar', error.stack);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  // Term Methods
+  async createTerm(dto: TermDto): Promise<TermDto> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // First find or create the term
+      let term = await this.termRepository.findOne({
+        where: { name: dto.termName },
+      });
+
+      if (!term) {
+        term = await queryRunner.manager.save(Term, {
+          name: dto.termName,
+          order: parseInt(dto.termName.split(' ')[1]),
+        });
+      }
+
+      // Find the academic calendar
+      const academicCalendar = await this.academicCalendarRepository.findOne({
+        where: { academicYear: dto.academicYear },
+      });
+
+      if (!academicCalendar) {
+        throw new NotFoundException('Academic calendar not found');
+      }
+
+      // Create the academic year entry
+      const academicYear = await queryRunner.manager.save(AcademicYear, {
+        academicCalendar,
+        term,
+        startDate: new Date(dto.startDate),
+        endDate: new Date(dto.endDate),
+        isCurrent: dto.isCurrent,
+      });
+
+      // If activating this term, deactivate others
+      if (dto.isCurrent) {
+        await queryRunner.manager.update(
+          AcademicYear,
+          {
+            academicCalendar: { id: academicCalendar.id },
+            isCurrent: true,
+          },
+          { isCurrent: false },
+        );
+        await queryRunner.manager.update(
+          AcademicYear,
+          { id: academicYear.id },
+          { isCurrent: true },
+        );
+      }
+
+      await queryRunner.commitTransaction();
+
+      return {
+        id: academicYear.id,
+        termName: term.name,
+        startDate: academicYear.startDate.toISOString(),
+        endDate: academicYear.endDate.toISOString(),
+        isCurrent: academicYear.isCurrent,
+        academicYear: academicCalendar.academicYear,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error('Failed to create term', error.stack);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  // Term Methods
+  async getAvailableTerms(): Promise<Term[]> {
+    return this.termRepository.find({ order: { order: 'ASC' } });
+  }
+
+  async getAcademicYearTerms(
+    academicCalendarId?: string,
+  ): Promise<AcademicYearTermDto[]> {
+    const where: any = {};
+    if (academicCalendarId) {
+      where.academicCalendar = { id: academicCalendarId };
+    }
+
+    const academicYears = await this.academicYearRepository.find({
+      where,
+      relations: ['academicCalendar', 'term'],
+      order: { term: { order: 'ASC' } },
+    });
+
+    return academicYears.map((ay) => ({
+      id: ay.id,
+      termId: ay.term.id,
+      termName: ay.term.name,
+      academicCalendarId: ay.academicCalendar.id,
+      startDate: ay.startDate.toISOString(),
+      endDate: ay.endDate.toISOString(),
+      isCurrent: ay.isCurrent,
+    }));
+  }
+
+  async activateAcademicYearTerm(id: string): Promise<AcademicYearTermDto> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const academicYear = await queryRunner.manager.findOne(AcademicYear, {
+        where: { id },
+        relations: ['academicCalendar', 'term'],
+      });
+
+      if (!academicYear) {
+        throw new NotFoundException('Academic year term not found');
+      }
+
+      // First deactivate all other terms in this academic calendar
+      await queryRunner.manager.update(
+        AcademicYear,
+        {
+          academicCalendar: { id: academicYear.academicCalendar.id },
+          isCurrent: true,
+        },
+        { isCurrent: false },
+      );
+
+      // Then activate this term
+      academicYear.isCurrent = true;
+      const updatedAcademicYear = await queryRunner.manager.save(
+        AcademicYear,
+        academicYear,
+      );
+      await queryRunner.commitTransaction();
+
+      return {
+        id: updatedAcademicYear.id,
+        termId: academicYear.term.id,
+        termName: academicYear.term.name, // Now matches DTO
+        academicCalendarId: academicYear.academicCalendar.id,
+        startDate: updatedAcademicYear.startDate.toISOString(),
+        endDate: updatedAcademicYear.endDate.toISOString(),
+        isCurrent: updatedAcademicYear.isCurrent,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error('Failed to activate academic year term', error.stack);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async getTerms(academicCalendarId?: string): Promise<TermDto[]> {
+    const where: any = {};
+    if (academicCalendarId) {
+      where.academicCalendar = { id: academicCalendarId };
+    }
+
+    const academicYears = await this.academicYearRepository.find({
+      where,
+      relations: ['academicCalendar', 'term'],
+      order: { term: { order: 'ASC' } },
+    });
+
+    return academicYears.map((ay) => ({
+      id: ay.id,
+      termName: ay.term.name,
+      startDate: ay.startDate.toISOString(),
+      endDate: ay.endDate.toISOString(),
+      isCurrent: ay.isCurrent,
+      academicYear: ay.academicCalendar.academicYear,
+    }));
+  }
+
+  async updateTerm(id: string, dto: TermDto): Promise<TermDto> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const academicYear = await queryRunner.manager.findOne(AcademicYear, {
+        where: { id },
+        relations: ['academicCalendar', 'term'],
+      });
+
+      if (!academicYear) {
+        throw new NotFoundException('Term not found');
+      }
+
+      academicYear.startDate = new Date(dto.startDate);
+      academicYear.endDate = new Date(dto.endDate);
+      academicYear.isCurrent = dto.isCurrent;
+
+      // If activating this term, deactivate others
+      if (dto.isCurrent) {
+        await queryRunner.manager.update(
+          AcademicYear,
+          {
+            academicCalendar: { id: academicYear.academicCalendar.id },
+            isCurrent: true,
+          },
+          { isCurrent: false },
+        );
+      }
+
+      const updatedAcademicYear = await queryRunner.manager.save(
+        AcademicYear,
+        academicYear,
+      );
+      await queryRunner.commitTransaction();
+
+      return {
+        id: updatedAcademicYear.id,
+        termName: academicYear.term.name,
+        startDate: updatedAcademicYear.startDate.toISOString(),
+        endDate: updatedAcademicYear.endDate.toISOString(),
+        isCurrent: updatedAcademicYear.isCurrent,
+        academicYear: academicYear.academicCalendar.academicYear,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error('Failed to update term', error.stack);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  // Add this to your SettingsService class
+  async createAcademicYearTerm(
+    dto: CreateAcademicYearTermDto,
+  ): Promise<AcademicYearTermDto> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // Get the active academic calendar
+      const activeCalendar = await this.academicCalendarRepository.findOne({
+        where: { isActive: true },
+      });
+
+      if (!activeCalendar) {
+        throw new BadRequestException('No active academic calendar found');
+      }
+
+      // Get the term
+      const term = await this.termRepository.findOne({
+        where: { id: dto.termId },
+      });
+
+      if (!term) {
+        throw new NotFoundException('Term not found');
+      }
+
+      // Check if this term already exists for the academic calendar
+      const existingTerm = await this.academicYearRepository.findOne({
+        where: {
+          academicCalendar: { id: activeCalendar.id },
+          term: { id: dto.termId },
+        },
+      });
+
+      if (existingTerm) {
+        throw new BadRequestException(
+          'This term already exists for the academic year',
+        );
+      }
+
+      // Create the academic year term
+      const academicYearTerm = this.academicYearRepository.create({
+        academicCalendar: activeCalendar,
+        term,
+        startDate: new Date(dto.startDate),
+        endDate: new Date(dto.endDate),
+        isCurrent: dto.isCurrent,
+      });
+
+      // If this term is being set as current, deactivate others
+      if (dto.isCurrent) {
+        await queryRunner.manager.update(
+          AcademicYear,
+          {
+            academicCalendar: { id: activeCalendar.id },
+            isCurrent: true,
+          },
+          { isCurrent: false },
+        );
+      }
+
+      const savedTerm = await queryRunner.manager.save(academicYearTerm);
+      await queryRunner.commitTransaction();
+
+      return {
+        id: savedTerm.id,
+        termId: savedTerm.term.id,
+        termName: savedTerm.term.name, // Now matches DTO
+        academicCalendarId: savedTerm.academicCalendar.id,
+        startDate: savedTerm.startDate.toISOString(),
+        endDate: savedTerm.endDate.toISOString(),
+        isCurrent: savedTerm.isCurrent,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error('Failed to create academic year term', error.stack);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async activateTerm(id: string): Promise<TermDto> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const academicYear = await queryRunner.manager.findOne(AcademicYear, {
+        where: { id },
+        relations: ['academicCalendar', 'term'],
+      });
+
+      if (!academicYear) {
+        throw new NotFoundException('Term not found');
+      }
+
+      // First deactivate all other terms in this academic calendar
+      await queryRunner.manager.update(
+        AcademicYear,
+        {
+          academicCalendar: { id: academicYear.academicCalendar.id },
+          isCurrent: true,
+        },
+        { isCurrent: false },
+      );
+
+      // Then activate this term
+      academicYear.isCurrent = true;
+      const updatedAcademicYear = await queryRunner.manager.save(
+        AcademicYear,
+        academicYear,
+      );
+      await queryRunner.commitTransaction();
+
+      return {
+        id: updatedAcademicYear.id,
+        termName: academicYear.term.name,
+        startDate: updatedAcademicYear.startDate.toISOString(),
+        endDate: updatedAcademicYear.endDate.toISOString(),
+        isCurrent: updatedAcademicYear.isCurrent,
+        academicYear: academicYear.academicCalendar.academicYear,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error('Failed to activate term', error.stack);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  // Helper Methods
+  private async initializeDefaultTerms() {
+    try {
+      const termsCount = await this.termRepository.count();
+      if (termsCount === 0) {
+        const termsToCreate = [
+          { name: 'Term 1', order: 1 },
+          { name: 'Term 2', order: 2 },
+          { name: 'Term 3', order: 3 },
+        ];
+        await this.termRepository.save(termsToCreate);
+        this.logger.log('Default terms initialized successfully');
+      }
+    } catch (error) {
+      this.logger.error('Failed to initialize default terms', error.stack);
+      throw new InternalServerErrorException(
+        'Failed to initialize default terms',
+      );
     }
   }
 
@@ -491,156 +880,63 @@ private async initializeDefaultTerms() {
     }
   }
 
-  // Add these methods to SettingsService
-
-async getAllAcademicCalendars(): Promise<AcademicCalendar[]> {
-  return this.academicCalendarRepository.find({
-    order: { createdAt: 'DESC' },
-  });
-}
-
-async activateAcademicCalendar(id: string): Promise<AcademicCalendar> {
-  const queryRunner = this.dataSource.createQueryRunner();
-  await queryRunner.connect();
-  await queryRunner.startTransaction();
-
-  try {
-    // First deactivate all other calendars
-    await queryRunner.manager.update(
-      AcademicCalendar,
-      { isActive: true },
-      { isActive: false }
-    );
-
-    // Then activate the selected one
-    const calendar = await queryRunner.manager.findOne(AcademicCalendar, {
-      where: { id }
+  private async updateAcademicCalendar(
+    academicCalendar: AcademicCalendarDto,
+    queryRunner: QueryRunner,
+  ): Promise<AcademicCalendar> {
+    const existing = await queryRunner.manager.findOne(AcademicCalendar, {
+      where: { academicYear: academicCalendar.academicYear },
     });
 
-    if (!calendar) {
-      throw new NotFoundException('Academic calendar not found');
-    }
+    const calendarData: Partial<AcademicCalendar> = {
+      academicYear: academicCalendar.academicYear,
+      startDate: academicCalendar.startDate
+        ? new Date(academicCalendar.startDate)
+        : undefined,
+      endDate: academicCalendar.endDate
+        ? new Date(academicCalendar.endDate)
+        : undefined,
+      isActive: academicCalendar.isActive,
+    };
 
-    calendar.isActive = true;
-    const updatedCalendar = await queryRunner.manager.save(AcademicCalendar, calendar);
-
-    await queryRunner.commitTransaction();
-    return updatedCalendar;
-  } catch (error) {
-    await queryRunner.rollbackTransaction();
-    this.logger.error('Failed to activate academic calendar', error.stack);
-    throw error;
-  } finally {
-    await queryRunner.release();
-  }
-}
-
-  async updateAcademicCalendar(
-    academicCalendar: AcademicCalendarDto, 
-    queryRunner: QueryRunner
-  ): Promise<AcademicCalendar> {
-    try {
-      // Find existing calendar by academic year
-      const existingCalendar = await queryRunner.manager.findOne(AcademicCalendar, {
-        where: { academicYear: academicCalendar.academicYear },
+    if (existing) {
+      return queryRunner.manager.save(AcademicCalendar, {
+        ...existing,
+        ...calendarData,
       });
-
-      const calendarData: Partial<AcademicCalendar> = {
-        academicYear: academicCalendar.academicYear,
-        startDate: academicCalendar.startDate ? new Date(academicCalendar.startDate) : undefined,
-        endDate: academicCalendar.endDate ? new Date(academicCalendar.endDate) : undefined,
-      };
-
-      let savedCalendar: AcademicCalendar;
-      
-      if (existingCalendar) {
-        savedCalendar = await queryRunner.manager.save(AcademicCalendar, {
-          ...existingCalendar,
-          ...calendarData
-        });
-      } else {
-        savedCalendar = await queryRunner.manager.save(AcademicCalendar, calendarData);
-      }
-
-      return savedCalendar;
-    } catch (error) {
-      this.logger.error('Failed to update academic calendar', error.stack);
-      throw error;
     }
+    return queryRunner.manager.save(AcademicCalendar, calendarData);
   }
 
   private async updateCurrentTerm(
     currentTerm: TermDto,
     queryRunner: QueryRunner,
   ) {
+    const academicYear = await this.academicYearRepository.findOne({
+      where: { id: currentTerm.id },
+      relations: ['academicCalendar'],
+    });
+
+    if (!academicYear) {
+      throw new NotFoundException('Term not found');
+    }
+
     // Reset current flag on all terms if activating a new term
     if (currentTerm.isCurrent) {
       await queryRunner.manager.update(
-        Term,
-        { isCurrent: true },
+        AcademicYear,
+        {
+          academicCalendar: { id: academicYear.academicCalendar.id },
+          isCurrent: true,
+        },
         { isCurrent: false },
       );
     }
 
-    // Find existing term for this academic year and term name
-    const existingTerm = await queryRunner.manager.findOne(Term, {
-      where: {
-        termName: currentTerm.termName,
-        academicYear: currentTerm.academicYear,
-      },
-    });
+    academicYear.startDate = new Date(currentTerm.startDate);
+    academicYear.endDate = new Date(currentTerm.endDate);
+    academicYear.isCurrent = currentTerm.isCurrent;
 
-    const termData: Partial<Term> = {
-      termName: currentTerm.termName,
-      academicYear: currentTerm.academicYear,
-      isCurrent: currentTerm.isCurrent,
-    };
-
-    if (currentTerm.startDate) {
-      termData.startDate = new Date(currentTerm.startDate);
-    } else if (existingTerm?.startDate) {
-      termData.startDate = existingTerm.startDate;
-    }
-
-    if (currentTerm.endDate) {
-      termData.endDate = new Date(currentTerm.endDate);
-    } else if (existingTerm?.endDate) {
-      termData.endDate = existingTerm.endDate;
-    }
-
-    if (existingTerm) {
-      await queryRunner.manager.save(Term, {
-        ...existingTerm,
-        ...termData,
-      });
-    } else {
-      await queryRunner.manager.save(Term, termData);
-    }
-  }
-
-  async getTerms(academicYear?: string): Promise<Term[]> {
-    const where: any = {};
-    if (academicYear) {
-      where.academicYear = academicYear;
-    }
-
-    return this.termRepository.find({
-      where,
-      order: { termName: 'ASC' },
-    });
-  }
-
-  async deactivateAllTerms(): Promise<void> {
-    await this.termRepository.update({ isCurrent: true }, { isCurrent: false });
-  }
-
-  async activateTerm(id: string): Promise<Term> {
-    const term = await this.termRepository.findOne({ where: { id } });
-    if (!term) {
-      throw new NotFoundException(`Term with ID ${id} not found`);
-    }
-
-    term.isCurrent = true;
-    return this.termRepository.save(term);
+    await queryRunner.manager.save(AcademicYear, academicYear);
   }
 }

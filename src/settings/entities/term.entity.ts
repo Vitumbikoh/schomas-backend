@@ -1,5 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
-import { AcademicCalendar } from './academic-calendar.entity';
+// src/settings/entities/term.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
 
 @Entity()
 export class Term {
@@ -7,27 +7,8 @@ export class Term {
   id: string;
 
   @Column()
-  termName: string; // "Term 1", "Term 2", "Term 3"
-
-  @Column({ type: 'date', nullable: true })
-  startDate?: Date;
-
-  @Column({ type: 'date', nullable: true })
-  endDate?: Date;
-
-  @Column({ default: false })
-  isCurrent: boolean;
-
-  @ManyToOne(() => AcademicCalendar)
-  @JoinColumn({ name: 'academicYear', referencedColumnName: 'academicYear' })
-  academicCalendar: AcademicCalendar;
+  name: string; // Changed from termName to name for consistency
 
   @Column()
-  academicYear: string;
-
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
-  createdAt: Date;
-
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
-  updatedAt: Date;
+  order: number; // To maintain term order (1, 2, 3)
 }

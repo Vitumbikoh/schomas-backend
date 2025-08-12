@@ -1,27 +1,26 @@
-// // src/settings/entities/academic-year.entity.ts
-// import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
-// import { AcademicCalendar } from './academic-calendar.entity';
-// import { Term } from './term.entity';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
+import { AcademicCalendar } from './academic-calendar.entity';
+import { Term } from './term.entity';
 
-// @Entity()
-// export class AcademicYear {
-//   @PrimaryGeneratedColumn('uuid')
-//   id: string;
+@Entity()
+export class AcademicYear {
+    @PrimaryGeneratedColumn('uuid')
+    id: string;
 
-//   @ManyToOne(() => AcademicCalendar)
-//   @JoinColumn()
-//   academicCalendar: AcademicCalendar;
+    @ManyToOne(() => AcademicCalendar, { eager: true })
+    @JoinColumn()
+    academicCalendar: AcademicCalendar;
 
-//   @ManyToOne(() => Term)
-//   @JoinColumn()
-//   term: Term;
+    @ManyToOne(() => Term, { eager: true })
+    @JoinColumn()
+    term: Term;
 
-//   @Column({ type: 'date' })
-//   startDate: Date;
+    @Column()
+    startDate: Date;
 
-//   @Column({ type: 'date' })
-//   endDate: Date;
+    @Column()
+    endDate: Date;
 
-//   @Column({ default: false })
-//   isCurrent: boolean;
-// }
+    @Column({ default: false })
+    isCurrent: boolean;
+}

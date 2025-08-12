@@ -1,5 +1,6 @@
 // src/settings/entities/academic-calendar.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
+import { AcademicYear } from './academic-year.entity';
 
 @Entity()
 export class AcademicCalendar {
@@ -23,4 +24,7 @@ export class AcademicCalendar {
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
   updatedAt: Date;
+
+   @OneToMany(() => AcademicYear, academicYear => academicYear.academicCalendar)
+  academicYears: AcademicYear[];
 }

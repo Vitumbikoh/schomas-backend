@@ -27,6 +27,7 @@ import { AcademicCalendar } from './entities/academic-calendar.entity';
 import { Term } from './entities/term.entity';
 import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
+import { AcademicYearTermDto, CreateAcademicYearTermDto } from './dtos/academic-year-term.dto';
 
 @Controller('settings')
 export class SettingsController {
@@ -186,48 +187,19 @@ export class SettingsController {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can create terms');
     }
-    await this.settingsService.updateSettings(req.user.sub, {
-      currentTerm: dto,
-    });
-    const settings = await this.settingsService.getSettings(req.user.sub);
-    if (!settings.currentTerm) {
-      throw new NotFoundException('Term not found after creation');
-    }
-    return settings.currentTerm;
+    return this.settingsService.createTerm(dto);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get('terms')
   async getTerms(
     @Request() req,
-    @Query('academicYear') academicYear?: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
   ): Promise<TermDto[]> {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can access terms');
     }
-
-    const where: any = {};
-    if (academicYear) {
-      where.academicYear = academicYear;
-    }
-
-    const terms = await this.termRepository.find({
-      where,
-      order: { termName: 'ASC' },
-    });
-
-    if (!terms || terms.length === 0) {
-      return [];
-    }
-
-    return terms.map((term) => ({
-      id: term.id,
-      termName: term.termName,
-      startDate: term.startDate?.toISOString(),
-      endDate: term.endDate?.toISOString(),
-      isCurrent: term.isCurrent,
-      academicYear: term.academicYear,
-    }));
+    return this.settingsService.getTerms(academicCalendarId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -240,14 +212,7 @@ export class SettingsController {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can update terms');
     }
-    await this.settingsService.updateSettings(req.user.sub, {
-      currentTerm: dto,
-    });
-    const settings = await this.settingsService.getSettings(req.user.sub);
-    if (!settings.currentTerm) {
-      throw new NotFoundException('Term not found after update');
-    }
-    return settings.currentTerm;
+    return this.settingsService.updateTerm(id, dto);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -333,4 +298,50 @@ export class SettingsController {
       await queryRunner.release();
     }
   }
+
+   @UseGuards(JwtAuthGuard)
+  @Get('terms/available')
+  async getAvailableTerms(@Request() req): Promise<Term[]> {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can access terms');
+    }
+    return this.settingsService.getAvailableTerms();
+  }
+
+  @UseGuards(JwtAuthGuard)
+@Post('terms/academic-year')
+async createAcademicYearTerm(
+  @Request() req,
+  @Body() dto: CreateAcademicYearTermDto,
+): Promise<AcademicYearTermDto> {
+  if (req.user.role !== 'ADMIN') {
+    throw new UnauthorizedException('Only admins can create academic year terms');
+  }
+  return this.settingsService.createAcademicYearTerm(dto);
+}
+
+  @UseGuards(JwtAuthGuard)
+  @Get('terms/academic-year')
+  async getAcademicYearTerms(
+    @Request() req,
+    @Query('academicCalendarId') academicCalendarId?: string,
+  ): Promise<AcademicYearTermDto[]> {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can access academic year terms');
+    }
+    return this.settingsService.getAcademicYearTerms(academicCalendarId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('terms/academic-year/:id/activate')
+  async activateAcademicYearTerm(
+    @Request() req,
+    @Param('id') id: string,
+  ): Promise<AcademicYearTermDto> {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can activate academic year terms');
+    }
+    return this.settingsService.activateAcademicYearTerm(id);
+  }
+
 }

@@ -13,6 +13,7 @@ import { Student } from '../user/entities/student.entity';
 import { Teacher } from '../user/entities/teacher.entity';
 import { AcademicCalendar } from './entities/academic-calendar.entity';
 import { Term } from './entities/term.entity';
+import { AcademicYear } from './entities/academic-year.entity';
 
 @Module({
   imports: [
@@ -25,7 +26,8 @@ import { Term } from './entities/term.entity';
       Parent, 
       Finance,
       AcademicCalendar,
-      Term
+      Term,
+      AcademicYear
     ]),
     AuthModule,
     ConfigModule,

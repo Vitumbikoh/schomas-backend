@@ -46,13 +46,11 @@ export class TermDto {
   @IsString()
   termName: string;
 
-  @IsOptional()
-  @IsDateString()
-  startDate?: string;
+   @IsDateString()
+  startDate: string; // Make required
 
-  @IsOptional()
   @IsDateString()
-  endDate?: string;
+  endDate: string; // Make required
 
   @IsBoolean()
   isCurrent: boolean;
