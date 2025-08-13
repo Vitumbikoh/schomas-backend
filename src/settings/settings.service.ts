@@ -59,6 +59,7 @@ export class SettingsService {
     @InjectRepository(AcademicYear)
     private academicYearRepository: Repository<AcademicYear>,
     private dataSource: DataSource,
+    
   ) {}
 
   async onModuleInit() {
@@ -939,4 +940,16 @@ export class SettingsService {
 
     await queryRunner.manager.save(AcademicYear, academicYear);
   }
+async getCurrentAcademicYear(): Promise<{ id: string } | null> {
+    try {
+        const academicYear = await this.academicYearRepository.findOne({
+            where: { isCurrent: true },
+            select: ['id'],
+        });
+        return academicYear ? { id: academicYear.id } : null;
+    } catch (error) {
+        this.logger.error('Failed to get current academic year', error.stack);
+        throw new InternalServerErrorException('Failed to get academic year');
+    }
+}
 }

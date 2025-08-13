@@ -22,6 +22,7 @@ import { Finance } from 'src/user/entities/finance.entity';
 import { FeePayment } from 'src/finance/entities/fee-payment.entity';
 import { Budget } from 'src/finance/entities/budget.entity';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
+import { SettingsModule } from 'src/settings/settings.module';
 
 @Module({
   imports: [
@@ -40,8 +41,8 @@ import { Classroom } from 'src/classroom/entity/classroom.entity';
       Budget,
       Schedule,
       Classroom,
-    
     ]),
+    SettingsModule,
   ],
   controllers: [ReportsController],
   providers: [

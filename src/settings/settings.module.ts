@@ -34,6 +34,6 @@ import { AcademicYear } from './entities/academic-year.entity';
   ],
   providers: [SettingsService],
   controllers: [SettingsController],
-  exports: [TypeOrmModule],
+  exports: [TypeOrmModule, SettingsService],
 })
 export class SettingsModule {}

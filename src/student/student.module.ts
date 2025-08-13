@@ -23,6 +23,7 @@ import { EnrollmentModule } from 'src/enrollment/enrollment.module';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { Log } from 'src/logs/logs.entity';
 import { LogsService } from 'src/logs/logs.service';
+import { SettingsModule } from 'src/settings/settings.module';
 
 @Module({
   imports: [
@@ -31,8 +32,8 @@ import { LogsService } from 'src/logs/logs.service';
     AuthModule,
     ConfigModule,
     LearningMaterialsModule,
-    EnrollmentModule
-    
+    EnrollmentModule,
+    SettingsModule,    
   ],
   providers: [StudentsService, ScheduleService, CourseService, ClassService, ClassroomService, LearningMaterialsService, LogsService],
   controllers: [StudentController],

@@ -51,4 +51,7 @@ export class CreateStudentDto {
   @IsOptional()
   @IsNumberString()
   parentId?: string;
+
+  @IsOptional()
+  academicYearId?: string;
 }

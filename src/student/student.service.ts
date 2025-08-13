@@ -10,6 +10,7 @@ import { CreateStudentDto } from 'src/user/dtos/create-student.dto';
 import * as bcrypt from 'bcrypt';
 import { Role } from 'src/user/enums/role.enum';
 import { plainToClass } from 'class-transformer';
+import { SettingsService } from 'src/settings/settings.service';
 
 @Injectable()
 export class StudentsService {
@@ -24,12 +25,20 @@ export class StudentsService {
     private readonly parentRepository: Repository<Parent>,
     @InjectRepository(Schedule)
     private readonly scheduleRepository: Repository<Schedule>,
+    private readonly settingsService: SettingsService,
+    
   ) {}
 
   async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
     this.logger.log(`Creating student with email: ${createStudentDto.email}`);
     const validatedDto = plainToClass(CreateStudentDto, createStudentDto);
     const hashedPassword = await bcrypt.hash(validatedDto.password, 10);
+
+    // Get the current academic year
+    const academicYear = await this.settingsService.getCurrentAcademicYear();
+    if (!academicYear) {
+        throw new NotFoundException('No current academic year found');
+    }
 
     // Create user first
     const user = this.userRepository.create({
@@ -59,6 +68,7 @@ export class StudentsService {
       gradeLevel: validatedDto.gradeLevel,
       user: user,
       userId: user.id,
+      academicYearId: academicYear.id, 
     };
 
     if (validatedDto.classId) {

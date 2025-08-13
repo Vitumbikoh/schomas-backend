@@ -84,5 +84,6 @@ export class Student extends BaseEntity {
   @ManyToMany(() => Course, (course) => course.students)
   courses: Course[];
 
-  
+   @Column({ nullable: true })
+  academicYearId: string;
 }
