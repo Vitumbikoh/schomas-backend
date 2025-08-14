@@ -1,8 +1,10 @@
-// // src/grade/entities/grade.entity.ts
-import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, CreateDateColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, CreateDateColumn, JoinColumn } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Course } from '../../course/entities/course.entity';
 import { Class } from '../../classes/entity/class.entity';
+import { Exam } from 'src/exams/entities/exam.entity';
+import { Student } from 'src/user/entities/student.entity';
+import { Teacher } from 'src/user/entities/teacher.entity';
 
 @Entity()
 export class Grade {
@@ -10,27 +12,32 @@ export class Grade {
   gradeId: string;
 
   @Column()
-  studentId: string;
-
-  @Column()
   grade: string;
 
   @Column()
   assessmentType: string;
 
-  @ManyToOne(() => User, (user) => user.id)
-  student: User;
+  @ManyToOne(() => Student, (student) => student.grades)
+  @JoinColumn({ name: 'studentId' })
+  student: Student;
 
-  @ManyToOne(() => User, (user) => user.id)
-  teacher: User;
+  // Relationship to Teacher profile
+  @ManyToOne(() => Teacher)
+  @JoinColumn({ name: 'teacherId' })
+  teacher: Teacher;
 
-  @ManyToOne(() => Course, (course) => course.id)
+  @ManyToOne(() => Course)
+  @JoinColumn({ name: 'courseId' })
   course: Course;
 
-  @ManyToOne(() => Class, (cls) => cls.id)
+  @ManyToOne(() => Class)
+  @JoinColumn({ name: 'classId' })
   class: Class;
 
   @CreateDateColumn()
   date: Date;
 
+  @ManyToOne(() => Exam)
+  @JoinColumn({ name: 'examId' })
+  exam: Exam;
 }

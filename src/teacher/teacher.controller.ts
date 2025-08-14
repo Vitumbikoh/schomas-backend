@@ -23,6 +23,7 @@ import { CreateTeacherDto } from 'src/user/dtos/create-teacher.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
 import { UsersService } from 'src/user/user.service';
 import { SubmitGradesDto } from 'src/exams/dto/submit-grades.dto';
+import { ExamService } from 'src/exams/exam.service';
 
 @Controller('teacher')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -30,6 +31,7 @@ export class TeacherController {
   constructor(
     private readonly teacherService: TeachersService,
     private readonly userService: UsersService,
+    private readonly examService: ExamService,
   ) {}
 
   @Get('teacher-management')
@@ -368,7 +370,7 @@ export class TeacherController {
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
     @Query('search') search?: string,
-     @Query('includeExams') includeExams?: string,
+    @Query('includeExams') includeExams?: string,
   ) {
     try {
       const userId = req.user?.sub;
@@ -410,7 +412,7 @@ export class TeacherController {
           totalPages: Math.ceil(total / limitNum),
           totalItems: total,
           itemsPerPage: limitNum,
-          shouldIncludeExams
+          shouldIncludeExams,
         },
       };
     } catch (error) {
@@ -816,6 +818,26 @@ export class TeacherController {
     }
   }
 
+  @Get('exams-for-grading')
+  @Roles(Role.TEACHER)
+  async getExamsForGrading(
+    @Request() req,
+    @Query('courseId') courseId: string,
+  ) {
+    const userId = req.user?.sub;
+    const teacher = await this.teacherService.findOneByUserId(userId);
+
+    const exams = await this.teacherService.getExamsForGrading(
+      teacher.id,
+      courseId,
+    );
+
+    return {
+      success: true,
+      exams: exams.filter((exam) => exam.status !== 'graded'), // Only show ungraded exams
+    };
+  }
+
   @Post('submit-grades')
   @Roles(Role.TEACHER)
   async submitGrades(@Request() req, @Body() submitGradesDto: SubmitGradesDto) {
@@ -830,21 +852,18 @@ export class TeacherController {
         throw new NotFoundException('Your teacher record was not found');
       }
 
-      // Validate the teacher has access to this class and course
-      const hasAccess =
-        await this.teacherService.verifyTeacherClassCourseAccess(
-          teacher.id,
-          submitGradesDto.classId,
-          submitGradesDto.course,
-        );
-
-      if (!hasAccess) {
+      // Verify the exam belongs to this teacher
+      const exam = await this.examService.findOne(submitGradesDto.examId);
+      if (exam.teacher.id !== teacher.id) {
         throw new ForbiddenException(
-          'You do not have access to submit grades for this class/course combination',
+          'You are not authorized to grade this exam',
         );
       }
 
-      const result = await this.teacherService.submitGrades(submitGradesDto);
+      const result = await this.teacherService.submitExamGrades(
+        teacher.id,
+        submitGradesDto,
+      );
 
       return {
         success: true,

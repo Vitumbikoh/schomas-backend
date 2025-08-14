@@ -22,14 +22,17 @@ import { SettingsService } from 'src/settings/settings.service';
 import { Exam } from 'src/exams/entities/exam.entity';
 import { AcademicYear } from 'src/settings/entities/academic-year.entity';
 import { SettingsModule } from 'src/settings/settings.module';
+import { ExamModule } from 'src/exams/exam.module';
+import { Grade } from 'src/grades/entity/grade.entity';
 
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom,Attendance, Exam, AcademicYear]),
+    TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom,Attendance, Grade, Exam, AcademicYear]),
     UsersModule,
     AuthModule,
-    SettingsModule
+    SettingsModule,
+    ExamModule,
   ],
   providers: [
     TeachersService,

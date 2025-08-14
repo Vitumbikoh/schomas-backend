@@ -86,4 +86,6 @@ export class Student extends BaseEntity {
 
    @Column({ nullable: true })
   academicYearId: string;
+
+  
 }

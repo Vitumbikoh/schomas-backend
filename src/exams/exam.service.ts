@@ -214,4 +214,14 @@ async getExamCountByCourse(courseIds: string[]): Promise<Map<string, number>> {
     }
     return exam;
   }
+
+  async findByCourseAndTeacher(courseId: string, teacherId: string): Promise<Exam[]> {
+  return this.examRepository.find({
+    where: {
+      course: { id: courseId },
+      teacher: { id: teacherId },
+    },
+    relations: ['course', 'teacher'],
+  });
+}
 }

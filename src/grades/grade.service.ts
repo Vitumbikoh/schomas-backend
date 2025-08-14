@@ -1,5 +1,5 @@
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { CreateGradeDto } from './dtos/grade.dto';
 import { User } from '../user/entities/user.entity';
 import { Course } from '../course/entities/course.entity';
@@ -118,20 +118,18 @@ export class GradeService {
       // Fetch Student entity by studentId
       const student = await this.studentRepository.findOne({
         where: { studentId },
-        relations: ['user'],
       });
       if (!student) {
         throw new BadRequestException(`Invalid student ID: ${studentId}`);
       }
 
       const gradeRecord = new Grade();
-      gradeRecord.student = student.user;
-      gradeRecord.teacher = user;
+      gradeRecord.student = student; // Set the Student entity directly
+      // gradeRecord.teacher = teacher; // Set the Teacher entity
       gradeRecord.course = course;
       gradeRecord.class = classEntity;
       gradeRecord.assessmentType = assessmentType;
       gradeRecord.grade = String(gradeValue);
-      gradeRecord.studentId = studentId;
       gradeRecord.date = new Date();
 
       gradeRecords.push(gradeRecord);
@@ -146,7 +144,7 @@ export class GradeService {
       relations: ['students'],
     });
   }
-// Get all students in a class with their details
+
   async getClassStudents(
     classId: string,
     userId: string,
@@ -191,13 +189,13 @@ export class GradeService {
       throw new NotFoundException('Class not found');
     }
 
-    // Create a map of user IDs to student details
+    // Create a map of student IDs to student details
     const studentDetailsMap = new Map<
       string,
       { studentId: string; firstName: string; lastName: string }
     >();
     classEntity.students.forEach((student) => {
-      studentDetailsMap.set(student.userId, {
+      studentDetailsMap.set(student.id, {
         studentId: student.studentId,
         firstName: student.firstName,
         lastName: student.lastName,
@@ -220,7 +218,7 @@ export class GradeService {
 
     const studentResultsMap = new Map<string, any>();
     grades.forEach((grade) => {
-      const studentDetails = studentDetailsMap.get(grade.studentId) || {
+      const studentDetails = studentDetailsMap.get(grade.student.id) || {
         studentId: 'N/A',
         firstName: 'Unknown',
         lastName: 'Student',
@@ -274,8 +272,8 @@ export class GradeService {
 
         return {
           ...studentResult,
-          totalMarks, // Update with actual sum of marks
-          totalPossible, // Update with actual sum of possible marks
+          totalMarks,
+          totalPossible,
           averageScore,
           overallGPA: this.calculateGPA(studentResult.results),
           totalExams: studentResult.results.length,
@@ -293,6 +291,115 @@ export class GradeService {
     };
   }
 
+  async getStudentGrades(
+    studentId: string,
+    userId?: string,
+    classId?: string,
+    academicYear?: string,
+    term?: string,
+  ): Promise<any> {
+    if (userId) {
+      const user = await this.userRepository.findOne({ where: { id: userId } });
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+    }
+
+    // Find student by UUID (id)
+    const student = await this.studentRepository.findOne({
+      where: { id: studentId },
+      relations: ['user'],
+    });
+
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    // Create query using student's id for grades
+    const query = this.gradeRepository
+      .createQueryBuilder('grade')
+      .leftJoinAndSelect('grade.course', 'course')
+      .leftJoinAndSelect('grade.class', 'class')
+      .where('grade.student = :studentId', { studentId: student.id });
+
+    if (classId) {
+      query.andWhere('grade.classId = :classId', { classId });
+    }
+    if (academicYear) {
+      query.andWhere('EXTRACT(YEAR FROM grade.date) = :year', {
+        year: academicYear.split('-')[0],
+      });
+    }
+
+    const grades = await query.getMany();
+
+    const results = grades.map((grade) => ({
+      gradeId: grade.gradeId,
+      examTitle: grade.course.name,
+      subject: grade.course.name,
+      marksObtained: parseFloat(grade.grade) || 0,
+      totalMarks: 100,
+      percentage: parseFloat(grade.grade) || 0,
+      grade: this.calculateLetterGrade(parseFloat(grade.grade) || 0),
+      date: grade.date,
+      examType: grade.assessmentType,
+    }));
+
+    return {
+      student: {
+        id: student.id,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        studentId: student.studentId,
+      },
+      results,
+      overallGPA: this.calculateGPA(results),
+      totalExams: results.length,
+    };
+  }
+
+  async getStudentOwnGrades(userId: string): Promise<any> {
+    // Find student by user ID
+    const student = await this.studentRepository.findOne({
+      where: { userId },
+      relations: ['user'],
+    });
+
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    // Get all grades for this student
+    const grades = await this.gradeRepository.find({
+      where: { student: { id: student.id } },
+      relations: ['course', 'class'],
+    });
+
+    const results = grades.map((grade) => ({
+      gradeId: grade.gradeId,
+      examTitle: grade.course.name,
+      subject: grade.course.name,
+      marksObtained: parseFloat(grade.grade) || 0,
+      totalMarks: 100,
+      percentage: parseFloat(grade.grade) || 0,
+      grade: this.calculateLetterGrade(parseFloat(grade.grade) || 0),
+      date: grade.date,
+      examType: grade.assessmentType,
+    }));
+
+    return {
+      student: {
+        id: student.id,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        studentId: student.studentId,
+      },
+      results,
+      overallGPA: this.calculateGPA(results),
+      totalExams: results.length,
+    };
+  }
+
   private getRemarks(averageScore: number): string {
     if (averageScore >= 90) return 'Excellent';
     if (averageScore >= 80) return 'Very Good';
@@ -300,73 +407,6 @@ export class GradeService {
     if (averageScore >= 60) return 'Satisfactory';
     return 'Needs Improvement';
   }
-
-async getStudentGrades(
-  studentId: string,
-  userId?: string,
-  classId?: string,
-  academicYear?: string,
-  term?: string,
-): Promise<any> {
-  if (userId) {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) {
-      throw new UnauthorizedException('User not found');
-    }
-  }
-
-  // Find student by UUID (id)
-  const student = await this.studentRepository.findOne({
-    where: { id: studentId },
-    relations: ['user'],
-  });
-
-  if (!student) {
-    throw new NotFoundException('Student not found');
-  }
-
-  // Create query using student's userId for grades (maintaining existing relationship)
-  const query = this.gradeRepository
-    .createQueryBuilder('grade')
-    .leftJoinAndSelect('grade.course', 'course')
-    .leftJoinAndSelect('grade.class', 'class')
-    .where('grade.studentId = :studentId', { studentId: student.userId }); // Key change here
-
-  if (classId) {
-    query.andWhere('grade.classId = :classId', { classId });
-  }
-  if (academicYear) {
-    query.andWhere('EXTRACT(YEAR FROM grade.date) = :year', {
-      year: academicYear.split('-')[0],
-    });
-  }
-
-  const grades = await query.getMany();
-
-  const results = grades.map((grade) => ({
-    gradeId: grade.gradeId,
-    examTitle: grade.course.name,
-    subject: grade.course.name,
-    marksObtained: parseFloat(grade.grade) || 0,
-    totalMarks: 100,
-    percentage: parseFloat(grade.grade) || 0,
-    grade: this.calculateLetterGrade(parseFloat(grade.grade) || 0),
-    date: grade.date,
-    examType: grade.assessmentType,
-  }));
-
-  return {
-    student: {
-      id: student.id,
-      firstName: student.firstName,
-      lastName: student.lastName,
-      studentId: student.studentId,
-    },
-    results,
-    overallGPA: this.calculateGPA(results),
-    totalExams: results.length,
-  };
-}
 
   private calculateLetterGrade(percentage: number): string {
     if (percentage >= 90) return 'A';
@@ -388,46 +428,4 @@ async getStudentGrades(
     }, 0);
     return total / grades.length;
   }
-
- async getStudentOwnGrades(userId: string): Promise<any> {
-  // Find student by user ID
-  const student = await this.studentRepository.findOne({
-    where: { userId },
-    relations: ['user'],
-  });
-
-  if (!student) {
-    throw new NotFoundException('Student not found');
-  }
-
-  // Get all grades for this student
-  const grades = await this.gradeRepository.find({
-    where: { studentId: student.userId },
-    relations: ['course', 'class'],
-  });
-
-  const results = grades.map((grade) => ({
-    gradeId: grade.gradeId,
-    examTitle: grade.course.name,
-    subject: grade.course.name,
-    marksObtained: parseFloat(grade.grade) || 0,
-    totalMarks: 100,
-    percentage: parseFloat(grade.grade) || 0,
-    grade: this.calculateLetterGrade(parseFloat(grade.grade) || 0),
-    date: grade.date,
-    examType: grade.assessmentType
-  }));
-
-  return {
-    student: {
-      id: student.id,
-      firstName: student.firstName,
-      lastName: student.lastName,
-      studentId: student.studentId
-    },
-    results,
-    overallGPA: this.calculateGPA(results),
-    totalExams: results.length
-  };
-}
 }
