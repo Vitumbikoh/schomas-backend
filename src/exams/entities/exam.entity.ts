@@ -1,7 +1,15 @@
-import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
+// src/exams/entities/exam.entity.ts
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { Class } from '../../classes/entity/class.entity';
 import { Teacher } from '../../user/entities/teacher.entity';
 import { Course } from '../../course/entities/course.entity';
+import { AcademicYear } from '../../settings/entities/academic-year.entity';
 
 @Entity()
 export class Exam {
@@ -28,13 +36,16 @@ export class Exam {
   @Column({ nullable: false })
   duration: string;
 
+  @Column({ type: 'uuid' })
+  academicYearId: string;
+
   @Column({ type: 'integer', nullable: false })
   totalMarks: number;
 
   @Column({
     type: 'enum',
     enum: ['upcoming', 'administered', 'graded'],
-    default: 'upcoming'
+    default: 'upcoming',
   })
   status: 'upcoming' | 'administered' | 'graded';
 
@@ -43,9 +54,6 @@ export class Exam {
 
   @Column({ type: 'integer', default: 0 })
   studentsCompleted: number;
-
-  @Column({ nullable: false })
-  academicYear: string;
 
   @Column({ type: 'text', nullable: true })
   description?: string;
@@ -59,4 +67,8 @@ export class Exam {
   @ManyToOne(() => Course)
   @JoinColumn({ name: 'courseId' })
   course: Course;
+
+  @ManyToOne(() => AcademicYear)
+  @JoinColumn({ name: 'academicYearId' })
+  academicYear: AcademicYear;
 }

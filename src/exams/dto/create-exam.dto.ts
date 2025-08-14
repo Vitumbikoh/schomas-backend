@@ -1,4 +1,5 @@
-import { IsNotEmpty, IsNumber, IsString, IsOptional } from 'class-validator';
+// src/exams/dto/create-exam.dto.ts
+import { IsNotEmpty, IsNumber, IsString, IsOptional, IsUUID } from 'class-validator';
 
 export class CreateExamDto {
   @IsNotEmpty()
@@ -34,11 +35,11 @@ export class CreateExamDto {
   subject: string;
 
   @IsNotEmpty()
-  @IsString()
+  @IsUUID()
   classId: string;
 
   @IsNotEmpty()
-  @IsString()
+  @IsUUID()
   teacherId: string;
 
   @IsOptional()
@@ -50,11 +51,11 @@ export class CreateExamDto {
   @IsOptional()
   studentsCompleted?: number = 0;
 
-  @IsNotEmpty()
-  @IsString()
-  academicYear: string;
+  // @IsNotEmpty()
+  // @IsUUID()
+  // academicYearId: string; // Changed from academicYear to academicYearId
 
   @IsNotEmpty()
-  @IsString()
+  @IsUUID()
   courseId: string;
 }

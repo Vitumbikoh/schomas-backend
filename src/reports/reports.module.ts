@@ -23,6 +23,8 @@ import { FeePayment } from 'src/finance/entities/fee-payment.entity';
 import { Budget } from 'src/finance/entities/budget.entity';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
 import { SettingsModule } from 'src/settings/settings.module';
+import { ExamService } from 'src/exams/exam.service';
+import { Exam } from 'src/exams/entities/exam.entity';
 
 @Module({
   imports: [
@@ -41,6 +43,7 @@ import { SettingsModule } from 'src/settings/settings.module';
       Budget,
       Schedule,
       Classroom,
+      Exam
     ]),
     SettingsModule,
   ],
@@ -53,7 +56,8 @@ import { SettingsModule } from 'src/settings/settings.module';
     FinanceService,
     UsersService,
     ScheduleService,
-    ParentsService
+    ParentsService,
+    ExamService
   ],
 })
 export class ReportsModule {}

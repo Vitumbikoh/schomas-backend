@@ -15,6 +15,7 @@ import { Class } from 'src/classes/entity/class.entity';
 import { Attendance } from 'src/attendance/entity/attendance.entity';
 import { format } from 'date-fns';
 import { SubmitGradesDto } from 'src/exams/dto/submit-grades.dto';
+import { ExamService } from 'src/exams/exam.service';
 
 @Injectable()
 export class TeachersService {
@@ -31,6 +32,7 @@ export class TeachersService {
     private readonly scheduleRepository: Repository<Schedule>,
     @InjectRepository(Attendance)
     private readonly attendanceRepository: Repository<Attendance>,
+    private readonly examService: ExamService,
   ) {}
 
   async findOne(id: string): Promise<Teacher> {
@@ -606,48 +608,70 @@ export class TeachersService {
     return courseCount;
   }
 
-  async getCoursesForTeacher(
-    teacherId: string,
-    page: number,
-    limit: number,
-    search?: string,
-  ): Promise<{ courses: any[]; total: number }> {
-    console.log(`Fetching courses for teacher ID: ${teacherId}`);
+  // src/teacher/teacher.service.ts
+async getCoursesForTeacher(
+  teacherId: string,
+  page: number,
+  limit: number,
+  search?: string,
+  includeExams: boolean = false,
+): Promise<{ courses: any[]; total: number }> {
+  console.log(`Fetching courses for teacher ID: ${teacherId}, includeExams: ${includeExams}`);
 
-    if (!isUUID(teacherId)) {
-      console.error(`Invalid teacher ID: ${teacherId}`);
-      throw new NotFoundException('Invalid teacher ID');
-    }
+  if (!isUUID(teacherId)) {
+    throw new NotFoundException('Invalid teacher ID');
+  }
 
-    const teacher = await this.teacherRepository.findOne({
-      where: { id: teacherId },
-      relations: ['user'],
-    });
+  const teacher = await this.teacherRepository.findOne({
+    where: { id: teacherId },
+    relations: ['user'],
+  });
 
-    if (!teacher) {
-      console.error(`Teacher with ID ${teacherId} not found`);
-      throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
-    }
+  if (!teacher) {
+    throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
+  }
 
-    console.log(`Teacher found: ${teacher.firstName} ${teacher.lastName}`);
+  console.log(`Teacher found: ${teacher.firstName} ${teacher.lastName}`);
 
-    const skip = (page - 1) * limit;
-    const where: any = { teacher: { id: teacherId } };
+  const skip = (page - 1) * limit;
+  const where: any = { teacher: { id: teacherId } };
 
-    if (search) {
-      where.name = Like(`%${search}%`);
-    }
+  if (search) {
+    where.name = Like(`%${search}%`);
+  }
 
-    const [courses, total] = await this.courseRepository.findAndCount({
-      where,
-      relations: ['enrollments', 'class'],
-      skip,
-      take: limit,
-    });
+  const relations = ['enrollments', 'class'];
+  if (includeExams) {
+    relations.push('exams');
+  }
 
-    console.log(`Found ${courses.length} courses, total: ${total}`);
+  const [courses, total] = await this.courseRepository.findAndCount({
+    where,
+    relations,
+    skip,
+    take: limit,
+  });
 
-    const formattedCourses = courses.map((course) => ({
+  console.log(`Found ${courses.length} courses, total: ${total}`);
+  console.log('Courses:', courses.map((c) => ({
+    id: c.id,
+    name: c.name,
+    exams: includeExams ? (c.exams ? c.exams.length : 0) : 'not included',
+    examIds: includeExams ? (c.exams ? c.exams.map(e => e.id) : []) : 'not included',
+  })));
+
+  // Get exam counts as a fallback
+  let examCountMap = new Map<string, number>();
+  if (includeExams) {
+    const courseIds = courses.map((c) => c.id);
+    console.log('Course IDs for exam count query:', courseIds);
+    examCountMap = await this.examService.getExamCountByCourse(courseIds);
+    console.log('Exam count map:', Array.from(examCountMap.entries()));
+  }
+
+  const formattedCourses = courses.map((course) => {
+    const examsCount = includeExams ? (examCountMap.get(course.id) || course.exams?.length || 0) : 0;
+    return {
       id: course.id,
       name: course.name,
       code: course.code,
@@ -659,15 +683,19 @@ export class TeachersService {
             name: course.class.name,
           }
         : null,
+      exams: includeExams ? (course.exams || []) : undefined,
+      examsCount,
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,
-    }));
-
-    return {
-      courses: formattedCourses,
-      total,
     };
-  }
+  });
+
+  console.log(`Total courses found: ${formattedCourses.length}`);
+  return {
+    courses: formattedCourses,
+    total,
+  };
+}
 
   async findByClass(classId: string): Promise<Teacher[]> {
     return this.teacherRepository

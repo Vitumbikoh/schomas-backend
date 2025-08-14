@@ -368,6 +368,7 @@ export class TeacherController {
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
     @Query('search') search?: string,
+     @Query('includeExams') includeExams?: string,
   ) {
     try {
       const userId = req.user?.sub;
@@ -390,6 +391,8 @@ export class TeacherController {
 
       const pageNum = parseInt(page, 10) || 1;
       const limitNum = parseInt(limit, 10) || 10;
+      const shouldIncludeExams = includeExams === 'true';
+
       const { courses, total } = await this.teacherService.getCoursesForTeacher(
         teacher.id,
         pageNum,
@@ -407,6 +410,7 @@ export class TeacherController {
           totalPages: Math.ceil(total / limitNum),
           totalItems: total,
           itemsPerPage: limitNum,
+          shouldIncludeExams
         },
       };
     } catch (error) {

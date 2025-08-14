@@ -77,9 +77,9 @@ class: Class;
   @ManyToOne(() => Teacher, (teacher) => teacher.courses)
   @JoinColumn({ name: 'teacherId' })
   teacher: Teacher;
-
-  @OneToMany(() => Exam, (exam) => exam.course)
-  exams: Exam[];
+  
+@OneToMany(() => Exam, (exam) => exam.course)
+exams: Exam[];
 
   @ManyToMany(() => Student, (student) => student.courses)
   @JoinTable()

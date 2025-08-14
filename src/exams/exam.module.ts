@@ -9,6 +9,7 @@ import { Course } from '../course/entities/course.entity';
 import { CourseModule } from '../course/course.module';
 import { ClassModule } from 'src/classes/class.module';
 import { UsersModule } from 'src/user/users.module';
+import { SettingsModule } from 'src/settings/settings.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { UsersModule } from 'src/user/users.module';
     ClassModule,
     UsersModule,
     CourseModule,
+    SettingsModule
   ],
   controllers: [ExamController],
   providers: [ExamService],

@@ -17,13 +17,19 @@ import { ScheduleService } from 'src/schedule/schedule.service';
 import { ClassroomService } from 'src/classroom/classroom.service';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
 import { Attendance } from 'src/attendance/entity/attendance.entity';
+import { ExamService } from 'src/exams/exam.service';
+import { SettingsService } from 'src/settings/settings.service';
+import { Exam } from 'src/exams/entities/exam.entity';
+import { AcademicYear } from 'src/settings/entities/academic-year.entity';
+import { SettingsModule } from 'src/settings/settings.module';
 
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom,Attendance]),
+    TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom,Attendance, Exam, AcademicYear]),
     UsersModule,
     AuthModule,
+    SettingsModule
   ],
   providers: [
     TeachersService,
@@ -32,6 +38,9 @@ import { Attendance } from 'src/attendance/entity/attendance.entity';
     ClassService,
     ScheduleService,
     ClassroomService,
+   
+    ExamService,
+    SettingsService,
   ],
   controllers: [TeacherController],
   exports: [TeachersService],

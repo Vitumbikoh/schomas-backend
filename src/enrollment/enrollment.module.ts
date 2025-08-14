@@ -8,9 +8,11 @@ import { Student } from 'src/user/entities/student.entity';
 import { EnrollmentController } from './enrollment.controller';
 import { LogsService } from 'src/logs/logs.service';
 import { Log } from 'src/logs/logs.entity';
+import { SettingsModule } from 'src/settings/settings.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Enrollment, Course, Student, Log])],
+  imports: [TypeOrmModule.forFeature([Enrollment, Course, Student, Log]),
+ SettingsModule,],
   providers: [EnrollmentService, LogsService],
   controllers: [EnrollmentController],
   exports: [EnrollmentService, TypeOrmModule], // This exports the EnrollmentRepository

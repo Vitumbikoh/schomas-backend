@@ -5,6 +5,7 @@ import { Like, Repository } from 'typeorm';
 import { Enrollment } from './entities/enrollment.entity';
 import { Course } from 'src/course/entities/course.entity';
 import { Student } from 'src/user/entities/student.entity';
+import { SettingsService } from 'src/settings/settings.service';
 
 @Injectable()
 export class EnrollmentService {
@@ -15,9 +16,13 @@ export class EnrollmentService {
     private readonly courseRepository: Repository<Course>,
     @InjectRepository(Student)
     private readonly studentRepository: Repository<Student>,
+    private readonly settingsService: SettingsService,
   ) {}
 
-  async enrollStudent(courseId: string, studentId: string): Promise<Enrollment> {
+  async enrollStudent(
+    courseId: string,
+    studentId: string,
+  ): Promise<Enrollment> {
     const [course, student] = await Promise.all([
       this.courseRepository.findOne({ where: { id: courseId } }),
       this.studentRepository.findOne({ where: { id: studentId } }),
@@ -30,17 +35,30 @@ export class EnrollmentService {
       throw new NotFoundException('Student not found');
     }
 
-    // Check if already enrolled
+    // Get current academic year
+    const academicYear = await this.settingsService.getCurrentAcademicYear();
+    if (!academicYear) {
+      throw new NotFoundException('No current academic year found');
+    }
+
+    // Check if already enrolled in this academic year
     const existingEnrollment = await this.enrollmentRepository.findOne({
-      where: { courseId, studentId },
+      where: {
+        courseId,
+        studentId,
+        academicYearId: academicYear.id,
+      },
     });
     if (existingEnrollment) {
-      throw new Error('Student is already enrolled in this course');
+      throw new Error(
+        'Student is already enrolled in this course for the current academic year',
+      );
     }
 
     const enrollment = this.enrollmentRepository.create({
       course,
       student,
+      academicYearId: academicYear.id, // Add academic year
       enrollmentDate: new Date(),
       status: 'active',
     });
@@ -62,7 +80,9 @@ export class EnrollmentService {
     }
 
     // Update course enrollment count
-    const course = await this.courseRepository.findOne({ where: { id: courseId } });
+    const course = await this.courseRepository.findOne({
+      where: { id: courseId },
+    });
     if (course && course.enrollmentCount > 0) {
       course.enrollmentCount -= 1;
       await this.courseRepository.save(course);
@@ -77,7 +97,7 @@ export class EnrollmentService {
       relations: ['course', 'course.teacher'],
     });
   }
-  
+
   async getCourseEnrollments(courseId: string): Promise<Enrollment[]> {
     return this.enrollmentRepository.find({
       where: { courseId },
@@ -85,10 +105,11 @@ export class EnrollmentService {
     });
   }
   async findAll(): Promise<any[]> {
-  return this.enrollmentRepository.find({ relations: ['student', 'course'] });
-}
+    return this.enrollmentRepository.find({ relations: ['student', 'course'] });
+  }
 
-async getAllEnrollments(page: number, limit: number, search: string) {
+  // Update getAllEnrollments to include academic year
+  async getAllEnrollments(page: number, limit: number, search: string) {
     const skip = (page - 1) * limit;
     const where = search
       ? [
@@ -100,7 +121,7 @@ async getAllEnrollments(page: number, limit: number, search: string) {
 
     const [enrollments, total] = await this.enrollmentRepository.findAndCount({
       where,
-      relations: ['student', 'course'],
+      relations: ['student', 'course', 'academicYear'],
       skip,
       take: limit,
       order: { createdAt: 'DESC' },
@@ -109,17 +130,11 @@ async getAllEnrollments(page: number, limit: number, search: string) {
     return { enrollments, total };
   }
 
-  
-
-async findRecent(limit: number): Promise<any[]> {
-  return this.enrollmentRepository.find({
-    take: limit,
-    order: { createdAt: 'DESC' },
-    relations: ['student', 'course'],
-  });
-}
-
-
-
-
+  async findRecent(limit: number): Promise<any[]> {
+    return this.enrollmentRepository.find({
+      take: limit,
+      order: { createdAt: 'DESC' },
+      relations: ['student', 'course'],
+    });
+  }
 }

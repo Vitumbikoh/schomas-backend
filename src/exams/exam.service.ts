@@ -1,3 +1,4 @@
+// src/exam/exam.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -7,6 +8,8 @@ import { Class } from '../classes/entity/class.entity';
 import { Teacher } from '../user/entities/teacher.entity';
 import { Course } from '../course/entities/course.entity';
 import { User } from '../user/entities/user.entity';
+import { SettingsService } from '../settings/settings.service'; // Add this import
+import { AcademicYear } from 'src/settings/entities/academic-year.entity';
 
 @Injectable()
 export class ExamService {
@@ -19,27 +22,36 @@ export class ExamService {
     private teacherRepository: Repository<Teacher>,
     @InjectRepository(Course)
     private courseRepository: Repository<Course>,
+    @InjectRepository(AcademicYear) // Add this injection
+    private academicYearRepository: Repository<AcademicYear>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    private settingsService: SettingsService, // Add this
   ) {}
 
   async findAll(): Promise<Exam[]> {
     return this.examRepository.find({
-      relations: ['class', 'teacher', 'course'],
+      relations: ['class', 'teacher', 'course', 'academicYear'], // Include academicYear
     });
   }
 
   async create(createExamDto: CreateExamDto): Promise<Exam> {
     const { classId, teacherId, courseId, ...examData } = createExamDto;
 
-    const classEntity = await this.classRepository.findOne({ 
-      where: { id: classId }
+    // Get current academic year automatically
+    const academicYear = await this.settingsService.getCurrentAcademicYear();
+    if (!academicYear) {
+      throw new NotFoundException('No current academic year found');
+    }
+
+    const classEntity = await this.classRepository.findOne({
+      where: { id: classId },
     });
     if (!classEntity) {
       throw new NotFoundException(`Class with ID ${classId} not found`);
     }
 
-    const teacher = await this.teacherRepository.findOne({ 
+    const teacher = await this.teacherRepository.findOne({
       where: { userId: teacherId },
       relations: ['user'],
     });
@@ -47,8 +59,8 @@ export class ExamService {
       throw new NotFoundException(`Teacher with userId ${teacherId} not found`);
     }
 
-    const course = await this.courseRepository.findOne({ 
-      where: { id: courseId }
+    const course = await this.courseRepository.findOne({
+      where: { id: courseId },
     });
     if (!course) {
       throw new NotFoundException(`Course with ID ${courseId} not found`);
@@ -59,6 +71,7 @@ export class ExamService {
       class: classEntity,
       teacher: teacher,
       course: course,
+      academicYearId: academicYear.id, // Set automatically
     });
 
     return this.examRepository.save(exam);
@@ -76,7 +89,8 @@ export class ExamService {
       .leftJoinAndSelect('exam.class', 'class')
       .leftJoinAndSelect('exam.teacher', 'teacher')
       .leftJoinAndSelect('teacher.user', 'user')
-      .leftJoinAndSelect('exam.course', 'course');
+      .leftJoinAndSelect('exam.course', 'course')
+      .leftJoinAndSelect('exam.academicYear', 'academicYear'); // Include academicYear
 
     if (searchTerm) {
       query.where(
@@ -100,13 +114,10 @@ export class ExamService {
     }
 
     if (academicYear && academicYear !== 'All Years') {
-      const [startYear, endYear] = academicYear.split('-');
-      const startDate = new Date(`${startYear}-09-01`);
-      const endDate = new Date(`${endYear}-08-31`);
-      
-      query.andWhere('exam.date BETWEEN :startDate AND :endDate', {
-        startDate,
-        endDate,
+      // Update to filter by academicYear.id if you have the ID
+      // Or keep the date range filter if you prefer
+      query.andWhere('academicYear.id = :academicYearId', {
+        academicYearId: academicYear,
       });
     }
 
@@ -119,12 +130,20 @@ export class ExamService {
     gradedExams: number;
     upcomingExams: number;
   }> {
-    const [totalExams, administeredExams, gradedExams, upcomingExams] = await Promise.all([
-      this.examRepository.count(),
-      this.examRepository.count({ where: { status: 'administered' } }),
-      this.examRepository.count({ where: { status: 'graded' } }),
-      this.examRepository.count({ where: { status: 'upcoming' } }),
-    ]);
+    // Get current academic year
+    const academicYear = await this.settingsService.getCurrentAcademicYear();
+
+    const where = academicYear ? { academicYearId: academicYear.id } : {};
+
+    const [totalExams, administeredExams, gradedExams, upcomingExams] =
+      await Promise.all([
+        this.examRepository.count({ where }),
+        this.examRepository.count({
+          where: { ...where, status: 'administered' },
+        }),
+        this.examRepository.count({ where: { ...where, status: 'graded' } }),
+        this.examRepository.count({ where: { ...where, status: 'upcoming' } }),
+      ]);
 
     return {
       totalExams,
@@ -134,26 +153,61 @@ export class ExamService {
     };
   }
 
-  async getDistinctAcademicYears(): Promise<string[]> {
-    const exams = await this.examRepository.find({
-      select: ['date'],
-      order: { date: 'ASC' },
-    });
-
-    const years = new Set<string>();
-    exams.forEach((exam) => {
-      const dateObj = new Date(exam.date);
-      const year = dateObj.getFullYear();
-      years.add(`${year}-${year + 1}`);
-    });
-
-    return ['All Years', ...Array.from(years).sort()];
+// src/exam/exam.service.ts
+async getExamCountByCourse(courseIds: string[]): Promise<Map<string, number>> {
+  if (!courseIds || courseIds.length === 0) {
+    console.log('No course IDs provided for exam count query');
+    return new Map<string, number>();
   }
 
-    async findOne(id: string): Promise<Exam> {
+  console.log('Querying exam counts for course IDs:', courseIds);
+
+  const examCounts = await this.examRepository.query(`
+    SELECT "courseId", COUNT(id) AS "examCount"
+    FROM exam
+    WHERE "courseId" IN (:...courseIds)
+    GROUP BY "courseId"
+  `, [courseIds]);
+
+  console.log('Raw exam counts:', examCounts);
+
+  const examCountMap = new Map<string, number>();
+  examCounts.forEach((ec: any) => {
+    examCountMap.set(ec.courseId, parseInt(ec.examCount));
+  });
+
+  courseIds.forEach((courseId) => {
+    if (!examCountMap.has(courseId)) {
+      examCountMap.set(courseId, 0);
+    }
+  });
+
+  console.log('Exam count map:', Array.from(examCountMap.entries()));
+  return examCountMap;
+}
+
+  async getDistinctAcademicYears(): Promise<string[]> {
+    // Get all academic years with their calendar relations
+    const academicYears = await this.academicYearRepository.find({
+      relations: ['academicCalendar'],
+      order: { startDate: 'ASC' },
+    });
+
+    // Extract unique academic years from the calendar
+    const years = new Set<string>();
+    academicYears.forEach((ay) => {
+      if (ay.academicCalendar?.academicYear) {
+        years.add(ay.academicCalendar.academicYear);
+      }
+    });
+
+    return ['All Years', ...Array.from(years)];
+  }
+
+  async findOne(id: string): Promise<Exam> {
     const exam = await this.examRepository.findOne({
       where: { id },
-      relations: ['class', 'teacher', 'course'],
+      relations: ['class', 'teacher', 'course', 'academicYear'], // Include academicYear
     });
     if (!exam) {
       throw new NotFoundException(`Exam with ID ${id} not found`);
