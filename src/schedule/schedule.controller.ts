@@ -11,6 +11,7 @@ import {
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { ScheduleService } from './schedule.service';
+import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { ApiBearerAuth, ApiTags, ApiResponse } from '@nestjs/swagger';
@@ -22,7 +23,10 @@ import { Roles } from 'src/user/decorators/roles.decorator';
 @Controller('schedules')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ScheduleController {
-  constructor(private readonly scheduleService: ScheduleService) {}
+  constructor(
+    private readonly scheduleService: ScheduleService,
+    private readonly systemLoggingService: SystemLoggingService,
+  ) {}
 
   @Post()
   @Roles(Role.ADMIN, Role.TEACHER)
@@ -44,7 +48,16 @@ export class ScheduleController {
       isActive?: boolean;
     },
   ) {
-    return this.scheduleService.create(createScheduleDto);
+    const created = await this.scheduleService.create(createScheduleDto);
+    await this.systemLoggingService.logAction({
+      action: 'SCHEDULE_CREATED',
+      module: 'SCHEDULE',
+      level: 'info',
+      entityId: created.id,
+      entityType: 'Schedule',
+      newValues: created as any
+    });
+    return created;
   }
 
   @Get('dashboard')
@@ -106,14 +119,35 @@ export class ScheduleController {
       isActive?: boolean;
     },
   ) {
-    return this.scheduleService.update(id, updateScheduleDto);
+    const before = await this.scheduleService.findOne(id);
+    const updated = await this.scheduleService.update(id, updateScheduleDto);
+    await this.systemLoggingService.logAction({
+      action: 'SCHEDULE_UPDATED',
+      module: 'SCHEDULE',
+      level: 'info',
+      entityId: id,
+      entityType: 'Schedule',
+      oldValues: before as any,
+      newValues: updated as any
+    });
+    return updated;
   }
 
   @Delete(':id')
   @Roles(Role.ADMIN)
   @ApiResponse({ status: 200, description: 'Schedule deleted' })
   async remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.scheduleService.remove(id);
+    const before = await this.scheduleService.findOne(id);
+    const result = await this.scheduleService.remove(id);
+    await this.systemLoggingService.logAction({
+      action: 'SCHEDULE_DELETED',
+      module: 'SCHEDULE',
+      level: 'info',
+      entityId: id,
+      entityType: 'Schedule',
+      oldValues: before as any
+    });
+    return result;
   }
 
   @Get('teacher/:teacherId')

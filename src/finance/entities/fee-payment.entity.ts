@@ -2,6 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, Up
 import { Student } from '../../user/entities/student.entity';
 import { Finance } from '../../user/entities/finance.entity';
 import { User } from '../../user/entities/user.entity';
+import { AcademicYear } from '../../settings/entities/academic-year.entity';
 
 @Entity()
 export class FeePayment {
@@ -38,6 +39,13 @@ export class FeePayment {
   @ManyToOne(() => Student)
   @JoinColumn({ name: 'studentId' })
   student: Student;
+
+  @Column({ type: 'uuid' })
+  academicYearId: string;
+
+  @ManyToOne(() => AcademicYear)
+  @JoinColumn({ name: 'academicYearId' })
+  academicYear: AcademicYear;
 
   @ManyToOne(() => Finance, { nullable: true })
   @JoinColumn({ name: 'processedById' })

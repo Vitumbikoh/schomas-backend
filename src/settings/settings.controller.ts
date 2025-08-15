@@ -16,6 +16,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { SettingsService } from './settings.service';
+import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   SettingsResponseDto,
@@ -35,7 +36,8 @@ export class SettingsController {
 
   constructor(
     private readonly settingsService: SettingsService,
-    private readonly dataSource: DataSource,
+  private readonly dataSource: DataSource,
+  private readonly systemLoggingService: SystemLoggingService,
     @InjectRepository(AcademicCalendar)
     private readonly academicCalendarRepository: Repository<AcademicCalendar>,
     @InjectRepository(Term)
@@ -93,7 +95,19 @@ export class SettingsController {
     if (!req.user || !req.user.sub) {
       throw new UnauthorizedException('Invalid user credentials');
     }
-    return this.settingsService.updateSettings(req.user.sub, updateDto);
+    const before = await this.settingsService.getSettings(req.user.sub);
+    const updated = await this.settingsService.updateSettings(req.user.sub, updateDto);
+    await this.systemLoggingService.logAction({
+      action: 'SETTINGS_UPDATED',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityType: 'Settings',
+      oldValues: before as any,
+      newValues: updated as any,
+      metadata: { description: 'System settings updated' }
+    });
+    return updated;
   }
 
   @UseGuards(JwtAuthGuard)
@@ -136,13 +150,24 @@ export class SettingsController {
 
       await queryRunner.commitTransaction();
 
-      return {
+      const response = {
         id: savedCalendar.id,
         academicYear: savedCalendar.academicYear,
         startDate: savedCalendar.startDate?.toISOString(),
         endDate: savedCalendar.endDate?.toISOString(),
         isActive: savedCalendar.isActive,
       };
+      await this.systemLoggingService.logAction({
+        action: 'ACADEMIC_CALENDAR_CREATED',
+        module: 'SETTINGS',
+        level: 'info',
+        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+        entityId: savedCalendar.id,
+        entityType: 'AcademicCalendar',
+        newValues: response as any,
+        metadata: { description: 'Academic calendar created' }
+      });
+      return response;
     } catch (error) {
       await queryRunner.rollbackTransaction();
       this.logger.error('Failed to create academic calendar', error.stack);
@@ -187,7 +212,17 @@ export class SettingsController {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can create terms');
     }
-    return this.settingsService.createTerm(dto);
+    const created = await this.settingsService.createTerm(dto);
+    await this.systemLoggingService.logAction({
+      action: 'TERM_CREATED',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityId: created.id,
+      entityType: 'Term',
+      newValues: created as any
+    });
+    return created;
   }
 
   @UseGuards(JwtAuthGuard)
@@ -212,7 +247,19 @@ export class SettingsController {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can update terms');
     }
-    return this.settingsService.updateTerm(id, dto);
+    const before = await this.termRepository.findOne({ where: { id } });
+    const updated = await this.settingsService.updateTerm(id, dto);
+    await this.systemLoggingService.logAction({
+      action: 'TERM_UPDATED',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityId: id,
+      entityType: 'Term',
+      oldValues: before as any,
+      newValues: updated as any
+    });
+    return updated;
   }
 
   @UseGuards(JwtAuthGuard)
@@ -283,13 +330,23 @@ export class SettingsController {
 
       await queryRunner.commitTransaction();
 
-      return {
+      const response = {
         id: updatedCalendar.id,
         academicYear: updatedCalendar.academicYear,
         startDate: updatedCalendar.startDate?.toISOString(),
         endDate: updatedCalendar.endDate?.toISOString(),
         isActive: updatedCalendar.isActive,
       };
+      await this.systemLoggingService.logAction({
+        action: 'ACADEMIC_CALENDAR_ACTIVATED',
+        module: 'SETTINGS',
+        level: 'info',
+        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+        entityId: updatedCalendar.id,
+        entityType: 'AcademicCalendar',
+        newValues: response as any
+      });
+      return response;
     } catch (error) {
       await queryRunner.rollbackTransaction();
       this.logger.error('Failed to activate academic calendar', error.stack);
@@ -317,7 +374,17 @@ async createAcademicYearTerm(
   if (req.user.role !== 'ADMIN') {
     throw new UnauthorizedException('Only admins can create academic year terms');
   }
-  return this.settingsService.createAcademicYearTerm(dto);
+  const created = await this.settingsService.createAcademicYearTerm(dto);
+  await this.systemLoggingService.logAction({
+    action: 'ACADEMIC_YEAR_TERM_CREATED',
+    module: 'SETTINGS',
+    level: 'info',
+    performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+    entityId: created.id,
+    entityType: 'AcademicYearTerm',
+    newValues: created as any
+  });
+  return created;
 }
 
   @UseGuards(JwtAuthGuard)
@@ -341,7 +408,17 @@ async createAcademicYearTerm(
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can activate academic year terms');
     }
-    return this.settingsService.activateAcademicYearTerm(id);
+    const updated = await this.settingsService.activateAcademicYearTerm(id);
+    await this.systemLoggingService.logAction({
+      action: 'ACADEMIC_YEAR_TERM_ACTIVATED',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityId: updated.id,
+      entityType: 'AcademicYearTerm',
+      newValues: updated as any
+    });
+    return updated;
   }
 
 }

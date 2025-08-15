@@ -4,7 +4,6 @@ import { StudentsService } from '../student/student.service';
 import { TeachersService } from '../teacher/teacher.service';
 import { CourseService } from '../course/course.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
-import { FinanceService } from '../finance/finance.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Course } from '../course/entities/course.entity';
 import { Enrollment } from '../enrollment/entities/enrollment.entity';
@@ -18,15 +17,13 @@ import { Schedule } from 'src/schedule/entity/schedule.entity';
 import { Parent } from 'src/user/entities/parent.entity';
 import { Class } from 'src/classes/entity/class.entity';
 import { Attendance } from 'src/attendance/entity/attendance.entity';
-import { Finance } from 'src/user/entities/finance.entity';
-import { FeePayment } from 'src/finance/entities/fee-payment.entity';
-import { Budget } from 'src/finance/entities/budget.entity';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
 import { SettingsModule } from 'src/settings/settings.module';
 import { ExamService } from 'src/exams/exam.service';
 import { Exam } from 'src/exams/entities/exam.entity';
 import { Grade } from 'src/grades/entity/grade.entity';
 import { TeachersModule } from 'src/teacher/teacher.module';
+import { FinanceModule } from 'src/finance/finance.module';
 
 @Module({
   imports: [
@@ -40,16 +37,14 @@ import { TeachersModule } from 'src/teacher/teacher.module';
       Parent,
       User,
       Attendance,
-      Finance,
-      FeePayment,
-      Budget,
       Schedule,
       Classroom,
       Exam,
       Grade
     ]),
     SettingsModule,
-    TeachersModule
+    TeachersModule,
+    FinanceModule
   ],
   controllers: [ReportsController],
   providers: [
@@ -57,7 +52,6 @@ import { TeachersModule } from 'src/teacher/teacher.module';
     TeachersService,
     CourseService,
     EnrollmentService,
-    FinanceService,
     UsersService,
     ScheduleService,
     ParentsService,

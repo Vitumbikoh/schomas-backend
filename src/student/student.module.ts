@@ -17,13 +17,13 @@ import { ClassService } from 'src/classes/class.service';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
 import { ClassroomService } from 'src/classroom/classroom.service';
 import { LearningMaterial } from 'src/learning-materials/entities/learning-material.entity';
-import { LearningMaterialsService } from 'src/learning-materials/learning-materials.service';
 import { LearningMaterialsModule } from 'src/learning-materials/learning-materials.module';
 import { EnrollmentModule } from 'src/enrollment/enrollment.module';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { Log } from 'src/logs/logs.entity';
 import { LogsService } from 'src/logs/logs.service';
 import { SettingsModule } from 'src/settings/settings.module';
+import { LogsModule } from 'src/logs/logs.module';
 
 @Module({
   imports: [
@@ -33,9 +33,10 @@ import { SettingsModule } from 'src/settings/settings.module';
     ConfigModule,
     LearningMaterialsModule,
     EnrollmentModule,
-    SettingsModule,    
+    SettingsModule,
+    LogsModule,    
   ],
-  providers: [StudentsService, ScheduleService, CourseService, ClassService, ClassroomService, LearningMaterialsService, LogsService],
+  providers: [StudentsService, ScheduleService, CourseService, ClassService, ClassroomService],
   controllers: [StudentController],
   exports: [StudentsService],
 })

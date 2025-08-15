@@ -23,13 +23,17 @@ import { ProcessPaymentDto } from './dtos/process-payment.dto';
 import { ApproveBudgetDto } from './dtos/approve-budget.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CreateFinanceDto } from 'src/user/dtos/create-finance.dto';
+import { SystemLoggingService } from 'src/logs/system-logging.service';
 
 @ApiTags('Finance')
 @ApiBearerAuth()
 @Controller('finance')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 export class FinanceController {
-  constructor(private readonly financeService: FinanceService) {}
+  constructor(
+    private readonly financeService: FinanceService,
+    private readonly systemLoggingService: SystemLoggingService,
+  ) {}
 
   @Get('dashboard')
   @Roles(Role.FINANCE, Role.ADMIN)
@@ -72,7 +76,31 @@ export class FinanceController {
     @Request() req,
     @Body() processPaymentDto: ProcessPaymentDto,
   ) {
-    return this.financeService.processPayment(req.user, processPaymentDto);
+    try {
+  const paymentResult = await this.financeService.processPayment(req.user, processPaymentDto);
+  const payment = paymentResult.payment; // unwrap
+      await this.systemLoggingService.logAction({
+        action: 'FEE_PAYMENT_CREATED_CONTROLLER',
+        module: 'FINANCE',
+        level: 'info',
+        performedBy: req?.user ? { id: req.user.sub, email: req.user.email, role: req.user.role } : undefined,
+        entityId: payment.id,
+        entityType: 'FeePayment',
+        newValues: {
+          id: payment.id,
+      amount: payment.amount,
+      paymentDate: payment.paymentDate ? new Date(payment.paymentDate).toISOString() : undefined,
+      paymentMethod: payment.paymentMethod,
+      status: payment.status,
+      studentName: payment.studentName,
+        },
+        metadata: { description: 'Fee payment processed via FinanceController' }
+      });
+    return paymentResult;
+    } catch (error) {
+      await this.systemLoggingService.logSystemError(error, 'FINANCE', 'FEE_PAYMENT_PROCESS_ERROR', { dto: processPaymentDto });
+      throw error;
+    }
   }
 
   @Post()
@@ -83,8 +111,32 @@ export class FinanceController {
     description: 'Finance user created successfully',
   })
   @ApiResponse({ status: 403, description: 'Forbidden' })
-  async createFinanceUser(@Body() createFinanceDto: CreateFinanceDto) {
-    return this.financeService.createFinanceUser(createFinanceDto);
+  async createFinanceUser(@Request() req, @Body() createFinanceDto: CreateFinanceDto) {
+    try {
+      const financeUserResult = await this.financeService.createFinanceUser(createFinanceDto);
+      const financeUser = financeUserResult.financeProfile; // unwrap profile
+      await this.systemLoggingService.logAction({
+        action: 'FINANCE_USER_CREATED',
+        module: 'FINANCE',
+        level: 'info',
+        performedBy: req?.user ? { id: req.user.sub, email: req.user.email, role: req.user.role } : undefined,
+        entityId: financeUserResult.id,
+        entityType: 'FinanceUser',
+        newValues: {
+          id: financeUserResult.id,
+          firstName: financeUser.firstName,
+          lastName: financeUser.lastName,
+          department: financeUser.department,
+          canApproveBudgets: financeUser.canApproveBudgets,
+          canProcessPayments: financeUser.canProcessPayments
+        },
+        metadata: { description: 'Finance user created' }
+      });
+      return financeUserResult;
+    } catch (error) {
+      await this.systemLoggingService.logSystemError(error, 'FINANCE', 'FINANCE_USER_CREATE_ERROR', { dto: createFinanceDto });
+      throw error;
+    }
   }
 
   @Get()
@@ -141,11 +193,28 @@ export class FinanceController {
     @Param('id') budgetId: string,
     @Body() approveBudgetDto: ApproveBudgetDto,
   ) {
-    return this.financeService.approveBudget(
-      req.user.id,
-      budgetId,
-      approveBudgetDto,
-    );
+    try {
+      const approvedResult = await this.financeService.approveBudget(
+        req.user.id,
+        budgetId,
+        approveBudgetDto,
+      );
+      const approved = approvedResult.budget;
+      await this.systemLoggingService.logAction({
+        action: 'BUDGET_APPROVED',
+        module: 'FINANCE',
+        level: 'info',
+        performedBy: req?.user ? { id: req.user.sub, email: req.user.email, role: req.user.role } : undefined,
+        entityId: approved?.id,
+        entityType: 'Budget',
+        newValues: approved ? { id: approved.id, status: approved.status, totalAmount: approved.totalAmount } : undefined,
+        metadata: { description: 'Budget approved' }
+      });
+      return approvedResult;
+    } catch (error) {
+      await this.systemLoggingService.logSystemError(error, 'FINANCE', 'BUDGET_APPROVE_ERROR', { budgetId, dto: approveBudgetDto });
+      throw error;
+    }
   }
 
   @Get('stats')

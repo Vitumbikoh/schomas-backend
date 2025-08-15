@@ -15,6 +15,8 @@ import { CreateLearningMaterialDto } from './dtos/create-learning-material.dto';
 import { StudentMaterialDto } from './dtos/student-material.dto';
 import * as fs from 'fs';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
+import { SettingsService } from 'src/settings/settings.service';
+import { SystemLoggingService } from 'src/logs/system-logging.service';
 
 @Injectable()
 export class LearningMaterialsService {
@@ -31,6 +33,8 @@ export class LearningMaterialsService {
     private teacherRepository: Repository<Teacher>,
     @InjectRepository(Enrollment)
     private enrollmentRepository: Repository<Enrollment>,
+    private settingsService: SettingsService,
+    private systemLoggingService: SystemLoggingService,
   ) {}
 
   static storageOptions = diskStorage({
@@ -89,6 +93,12 @@ export class LearningMaterialsService {
       throw new BadRequestException('Invalid course or teacher not assigned');
     }
 
+    // Get current academic year
+    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    if (!currentAcademicYear) {
+      throw new BadRequestException('No active academic year found. Please contact administration.');
+    }
+
     const learningMaterial = new LearningMaterial();
     learningMaterial.class = classEntity;
     learningMaterial.course = course;
@@ -96,32 +106,77 @@ export class LearningMaterialsService {
     learningMaterial.title = title;
     learningMaterial.description = description ?? '';
     learningMaterial.filePath = file.path;
+    learningMaterial.academicYearId = currentAcademicYear.id;
 
     try {
       const savedMaterial = await this.learningMaterialRepository.save(learningMaterial);
       console.log(`Learning material saved: ${savedMaterial.id}`);
+      
+      // Enhanced logging
+      await this.systemLoggingService.logLearningMaterialCreated(
+        savedMaterial.id,
+        teacher.id,
+        courseId,
+        {
+          id: user.id,
+          email: user.email,
+          name: `${teacher.firstName} ${teacher.lastName}`,
+          role: user.role
+        },
+        null // request object not available in service
+      );
+      
       return savedMaterial;
     } catch (error) {
       console.error('Database error:', error);
+      
+      // Log the error
+      await this.systemLoggingService.logSystemError(
+        error,
+        'LEARNING_MATERIALS',
+        'MATERIAL_CREATION_FAILED',
+        {
+          teacherId: teacher.id,
+          classId,
+          courseId,
+          title
+        }
+      );
+      
       throw new BadRequestException(`Failed to save learning material: ${error.message}`);
     }
   }
 
   async getStudentMaterials(studentId: string, courseId?: string): Promise<StudentMaterialDto[]> {
     try {
-      // Fetch student's enrolled courses
+      // Get current academic year
+      const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+      if (!currentAcademicYear) {
+        throw new BadRequestException('No active academic year found');
+      }
+
+      // Fetch student's enrolled courses for current academic year
       const enrollments = await this.enrollmentRepository.find({
-        where: { student: { userId: studentId } },
+        where: { 
+          student: { userId: studentId },
+          academicYearId: currentAcademicYear.id
+        },
         relations: ['course'],
       });
 
       const courseIds = enrollments.map(enrollment => enrollment.course.id);
 
-      // Fetch materials for enrolled courses
+      if (courseIds.length === 0) {
+        return []; // No enrollments for current academic year
+      }
+
+      // Fetch materials for enrolled courses in current academic year
       const query = this.learningMaterialRepository
         .createQueryBuilder('material')
         .leftJoinAndSelect('material.course', 'course')
-        .where('material.courseId IN (:...courseIds)', { courseIds });
+        .leftJoinAndSelect('material.academicYear', 'academicYear')
+        .where('material.courseId IN (:...courseIds)', { courseIds })
+        .andWhere('material.academicYearId = :academicYearId', { academicYearId: currentAcademicYear.id });
 
       if (courseId) {
         query.andWhere('material.courseId = :courseId', { courseId });

@@ -1,4 +1,3 @@
-// src/learning-materials/learning-materials.module.ts
 import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { LearningMaterialsService } from './learning-materials.service';
@@ -15,6 +14,8 @@ import { ConfigModule } from 'src/config/config.module';
 import { CourseModule } from 'src/course/course.module';
 import { StudentsModule } from 'src/student/student.module';
 import { EnrollmentModule } from 'src/enrollment/enrollment.module';
+import { SettingsModule } from 'src/settings/settings.module';
+import { LogsModule } from 'src/logs/logs.module';
 
 @Module({
   imports: [
@@ -28,6 +29,8 @@ import { EnrollmentModule } from 'src/enrollment/enrollment.module';
     ]),
     AuthModule,
     ConfigModule,
+    SettingsModule,
+    LogsModule,
     forwardRef(() => CourseModule),
     forwardRef(() => StudentsModule),
     forwardRef(() => EnrollmentModule), // This provides the EnrollmentRepository

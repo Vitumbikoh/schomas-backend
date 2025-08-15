@@ -10,6 +10,7 @@ import { DatabaseModule } from '../database/database.module';
 import { UsersService } from './user.service';
 import { ConfigModule } from 'src/config/config.module';
 import { AuthModule } from 'src/auth/auth.module';
+import { LogsModule } from 'src/logs/logs.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { AuthModule } from 'src/auth/auth.module';
     forwardRef(() => AuthModule), 
     DatabaseModule,
     ConfigModule,
+    LogsModule,
   ],
   providers: [UsersService],
   controllers: [UsersController],

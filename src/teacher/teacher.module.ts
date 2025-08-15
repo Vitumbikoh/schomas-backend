@@ -24,6 +24,7 @@ import { AcademicYear } from 'src/settings/entities/academic-year.entity';
 import { SettingsModule } from 'src/settings/settings.module';
 import { ExamModule } from 'src/exams/exam.module';
 import { Grade } from 'src/grades/entity/grade.entity';
+import { LogsModule } from 'src/logs/logs.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { Grade } from 'src/grades/entity/grade.entity';
     AuthModule,
     SettingsModule,
     ExamModule,
+    LogsModule,
   ],
   providers: [
     TeachersService,

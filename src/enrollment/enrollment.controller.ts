@@ -22,7 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { NotFoundException } from '@nestjs/common';
 import { isUUID } from 'class-validator';
-import { LogsService } from 'src/logs/logs.service';
+import { SystemLoggingService } from 'src/logs/system-logging.service';
 
 @ApiTags('Enrollments')
 @ApiBearerAuth()
@@ -30,8 +30,8 @@ import { LogsService } from 'src/logs/logs.service';
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 export class EnrollmentController {
   constructor(
-    private readonly enrollmentService: EnrollmentService,
-    private readonly logsService: LogsService,
+  private readonly enrollmentService: EnrollmentService,
+  private readonly systemLoggingService: SystemLoggingService,
   ) {}
 
   @Get()
@@ -117,19 +117,17 @@ export class EnrollmentController {
       );
 
       // ✅ Create log
-      await this.logsService.create({
-        action: 'ENROLL_STUDENT',
-        performedBy: {
-          id: req.user.id,
-          email: req.user.email,
-          role: req.user.role,
-        },
-        studentCreated: {
-          id: enrollment.student.id,
-          fullName: `${enrollment.student.firstName} ${enrollment.student.lastName}`,
-        },
+      await this.systemLoggingService.logAction({
+        action: 'STUDENT_ENROLLED_CONTROLLER',
+        module: 'ENROLLMENT',
+        level: 'info',
+        performedBy: { id: req.user.id, email: req.user.email, role: req.user.role },
+        entityId: enrollment.id,
+        entityType: 'Enrollment',
+        newValues: { studentId: enrollment.student.id, courseId: enrollment.course.id },
+        metadata: { description: 'Student enrolled via controller' },
         ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
+        userAgent: req.headers['user-agent']
       });
 
       return {
@@ -163,16 +161,16 @@ export class EnrollmentController {
     try {
       await this.enrollmentService.unenrollStudent(courseId, studentId);
 
-      await this.logsService.create({
-        action: 'UNENROLL_STUDENT',
-        performedBy: {
-          id: req.user.id,
-          email: req.user.email,
-          role: req.user.role,
-        },
-        studentCreated: { id: studentId }, // only ID since we don't have full object
+      await this.systemLoggingService.logAction({
+        action: 'STUDENT_UNENROLLED_CONTROLLER',
+        module: 'ENROLLMENT',
+        level: 'warn',
+        performedBy: { id: req.user.id, email: req.user.email, role: req.user.role },
+        entityType: 'Enrollment',
+        oldValues: { studentId, courseId },
+        metadata: { description: 'Student unenrolled via controller' },
         ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
+        userAgent: req.headers['user-agent']
       });
 
       return { success: true, message: 'Student unenrolled successfully' };

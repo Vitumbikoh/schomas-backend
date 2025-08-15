@@ -24,7 +24,7 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 import { Logger } from '@nestjs/common';
 import { LearningMaterialsService } from 'src/learning-materials/learning-materials.service';
 import { StudentMaterialDto } from 'src/learning-materials/dtos/student-material.dto';
-import { LogsService } from 'src/logs/logs.service';
+import { SystemLoggingService } from 'src/logs/system-logging.service';
 
 @ApiTags('Students')
 @ApiBearerAuth()
@@ -35,7 +35,7 @@ export class StudentController {
 
   constructor(
     private readonly studentService: StudentsService,
-     private readonly logsService: LogsService,
+    private readonly systemLoggingService: SystemLoggingService,
     private readonly learningMaterialsService: LearningMaterialsService,
   ) {}
 
@@ -105,25 +105,33 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
     // 1. Create student
     const newStudent = await this.studentService.create(createStudentDto);
 
-    // 2. Prepare log data
-    const logData = {
-      action: 'CREATE_STUDENT',
+    // 2. Log the student creation using SystemLoggingService
+    await this.systemLoggingService.logAction({
+      action: 'STUDENT_CREATED',
+      module: 'STUDENTS',
+      level: 'info',
       performedBy: {
         id: req.user?.sub,
         email: req.user?.email,
         role: req.user?.role,
+        name: req.user?.username || req.user?.email
       },
-      studentCreated: {
+      entityId: newStudent.id,
+      entityType: 'Student',
+      newValues: {
         id: newStudent.id,
-        fullName: `${newStudent.firstName} ${newStudent.lastName}`,
+        firstName: newStudent.firstName,
+        lastName: newStudent.lastName,
+        studentId: newStudent.studentId,
+        phoneNumber: newStudent.phoneNumber
       },
-      timestamp: new Date(),
+      metadata: {
+        description: `Student created: ${newStudent.firstName} ${newStudent.lastName}`,
+        studentId: newStudent.studentId
+      },
       ipAddress: req.ip,
-      userAgent: req.headers['user-agent'],
-    };
-
-    // 3. Save log to DB (assuming you have LogsService)
-    await this.logsService.create(logData); 
+      userAgent: req.headers['user-agent']
+    });
 
     return {
       success: true,
@@ -132,6 +140,19 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
     };
   } catch (error) {
     this.logger.error(`Failed to create student: ${error.message}`);
+    
+    // Log the error
+    await this.systemLoggingService.logSystemError(
+      error,
+      'STUDENTS',
+      'STUDENT_CREATION_FAILED',
+      {
+        firstName: createStudentDto.firstName,
+        lastName: createStudentDto.lastName,
+        email: createStudentDto.email
+      }
+    );
+    
     throw new Error('Failed to create student: ' + error.message);
   }
 }
@@ -355,13 +376,46 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
   async updateStudent(
     @Param('id') id: string,
     @Body() updateStudentDto: UpdateStudentDto,
+    @Request() req,
   ) {
     this.logger.log(`Updating student with id: ${id}`);
     try {
+      // Get the original student data first
+      const originalStudent = await this.studentService.findOne(id);
+      
       const updatedStudent = await this.studentService.update(
         id,
         updateStudentDto,
       );
+
+      // Log the update operation
+      await this.systemLoggingService.logAction({
+        action: 'STUDENT_UPDATED',
+        module: 'STUDENTS',
+        level: 'info',
+        performedBy: {
+          id: req.user?.sub,
+          email: req.user?.email,
+          role: req.user?.role,
+          name: req.user?.username || req.user?.email
+        },
+        entityId: id,
+        entityType: 'Student',
+        oldValues: {
+          firstName: originalStudent.firstName,
+          lastName: originalStudent.lastName,
+          phoneNumber: originalStudent.phoneNumber,
+          address: originalStudent.address
+        },
+        newValues: updateStudentDto,
+        metadata: {
+          description: `Student updated: ${updatedStudent.firstName} ${updatedStudent.lastName}`,
+          studentId: updatedStudent.studentId
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+
       return {
         success: true,
         student: updatedStudent,
@@ -369,6 +423,15 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
       };
     } catch (error) {
       this.logger.error(`Failed to update student: ${error.message}`);
+      
+      // Log the error
+      await this.systemLoggingService.logSystemError(
+        error,
+        'STUDENTS',
+        'STUDENT_UPDATE_FAILED',
+        { studentId: id, updateData: updateStudentDto }
+      );
+      
       if (error instanceof NotFoundException) {
         throw error;
       }
@@ -380,16 +443,56 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Delete a student' })
   @ApiResponse({ status: 200, description: 'Student deleted successfully' })
-  async deleteStudent(@Param('id') id: string) {
+  async deleteStudent(@Param('id') id: string, @Request() req) {
     this.logger.log(`Deleting student with id: ${id}`);
     try {
+      // Get student data before deletion for logging
+      const studentToDelete = await this.studentService.findOne(id);
+      
       await this.studentService.remove(id);
+
+      // Log the deletion
+      await this.systemLoggingService.logAction({
+        action: 'STUDENT_DELETED',
+        module: 'STUDENTS',
+        level: 'warn',
+        performedBy: {
+          id: req.user?.sub,
+          email: req.user?.email,
+          role: req.user?.role,
+          name: req.user?.username || req.user?.email
+        },
+        entityId: id,
+        entityType: 'Student',
+        oldValues: {
+          firstName: studentToDelete.firstName,
+          lastName: studentToDelete.lastName,
+          phoneNumber: studentToDelete.phoneNumber,
+          studentId: studentToDelete.studentId
+        },
+        metadata: {
+          description: `Student deleted: ${studentToDelete.firstName} ${studentToDelete.lastName}`,
+          studentId: studentToDelete.studentId
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+
       return {
         success: true,
         message: 'Student deleted successfully',
       };
     } catch (error) {
       this.logger.error(`Failed to delete student: ${error.message}`);
+      
+      // Log the error
+      await this.systemLoggingService.logSystemError(
+        error,
+        'STUDENTS',
+        'STUDENT_DELETE_FAILED',
+        { studentId: id }
+      );
+      
       if (error instanceof NotFoundException) {
         throw error;
       }

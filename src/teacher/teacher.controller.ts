@@ -24,6 +24,7 @@ import { UpdateTeacherDto } from './dto/update-teacher.dto';
 import { UsersService } from 'src/user/user.service';
 import { SubmitGradesDto } from 'src/exams/dto/submit-grades.dto';
 import { ExamService } from 'src/exams/exam.service';
+import { SystemLoggingService } from 'src/logs/system-logging.service';
 
 @Controller('teacher')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -32,6 +33,7 @@ export class TeacherController {
     private readonly teacherService: TeachersService,
     private readonly userService: UsersService,
     private readonly examService: ExamService,
+    private readonly systemLoggingService: SystemLoggingService,
   ) {}
 
   @Get('teacher-management')
@@ -86,15 +88,57 @@ export class TeacherController {
   }
 
   @Post('teachers')
-  async createTeacher(@Body() createTeacherDto: CreateTeacherDto) {
+  async createTeacher(@Body() createTeacherDto: CreateTeacherDto, @Request() req) {
     try {
       const newTeacher = await this.teacherService.create(createTeacherDto);
+
+      // Log teacher creation
+      await this.systemLoggingService.logAction({
+        action: 'TEACHER_CREATED',
+        module: 'TEACHERS',
+        level: 'info',
+        performedBy: {
+          id: req.user?.sub,
+          email: req.user?.email,
+          role: req.user?.role,
+          name: req.user?.username || req.user?.email
+        },
+        entityId: newTeacher.id,
+        entityType: 'Teacher',
+        newValues: {
+          id: newTeacher.id,
+          firstName: newTeacher.firstName,
+          lastName: newTeacher.lastName,
+          phoneNumber: newTeacher.phoneNumber,
+          qualification: newTeacher.qualification,
+          subjectSpecialization: newTeacher.subjectSpecialization
+        },
+        metadata: {
+          description: `Teacher created: ${newTeacher.firstName} ${newTeacher.lastName}`,
+          qualification: newTeacher.qualification
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+
       return {
         success: true,
         teacher: newTeacher,
         message: 'Teacher created successfully',
       };
     } catch (error) {
+      // Log the error
+      await this.systemLoggingService.logSystemError(
+        error,
+        'TEACHERS',
+        'TEACHER_CREATE_FAILED',
+        {
+          firstName: createTeacherDto.firstName,
+          lastName: createTeacherDto.lastName,
+          email: createTeacherDto.email
+        }
+      );
+      
       throw new Error('Failed to create teacher: ' + error.message);
     }
   }
@@ -692,18 +736,60 @@ export class TeacherController {
   async updateTeacher(
     @Param('id') id: string,
     @Body() updateTeacherDto: UpdateTeacherDto,
+    @Request() req,
   ) {
     try {
+      // Get original teacher data for logging
+      const originalTeacher = await this.teacherService.findOne(id);
+      
       const updatedTeacher = await this.teacherService.update(
         id,
         updateTeacherDto,
       );
+
+      // Log teacher update
+      await this.systemLoggingService.logAction({
+        action: 'TEACHER_UPDATED',
+        module: 'TEACHERS',
+        level: 'info',
+        performedBy: {
+          id: req.user?.sub,
+          email: req.user?.email,
+          role: req.user?.role,
+          name: req.user?.username || req.user?.email
+        },
+        entityId: id,
+        entityType: 'Teacher',
+        oldValues: {
+          firstName: originalTeacher.firstName,
+          lastName: originalTeacher.lastName,
+          phoneNumber: originalTeacher.phoneNumber,
+          qualification: originalTeacher.qualification,
+          subjectSpecialization: originalTeacher.subjectSpecialization
+        },
+        newValues: updateTeacherDto,
+        metadata: {
+          description: `Teacher updated: ${updatedTeacher.firstName} ${updatedTeacher.lastName}`,
+          qualification: updatedTeacher.qualification
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+
       return {
         success: true,
         teacher: updatedTeacher,
         message: 'Teacher updated successfully',
       };
     } catch (error) {
+      // Log the error
+      await this.systemLoggingService.logSystemError(
+        error,
+        'TEACHERS',
+        'TEACHER_UPDATE_FAILED',
+        { teacherId: id, updateData: updateTeacherDto }
+      );
+
       if (error instanceof NotFoundException) {
         throw error;
       }
@@ -714,12 +800,58 @@ export class TeacherController {
   @Delete('teachers/:id')
   async deleteTeacher(@Param('id') id: string) {
     try {
+      // Capture original teacher data before deletion for logging
+      const originalTeacher = await this.teacherService.findOne(id);
+      
       await this.teacherService.remove(id);
+      
+      // Log successful deletion
+      await this.systemLoggingService.logAction({
+        action: 'delete_teacher',
+        module: 'teacher',
+        level: 'info',
+        entityId: id,
+        entityType: 'Teacher',
+        oldValues: {
+          id: originalTeacher.id,
+          firstName: originalTeacher.firstName,
+          lastName: originalTeacher.lastName,
+          phoneNumber: originalTeacher.phoneNumber,
+          address: originalTeacher.address,
+          qualification: originalTeacher.qualification,
+          subjectSpecialization: originalTeacher.subjectSpecialization,
+          dateOfBirth: originalTeacher.dateOfBirth,
+          gender: originalTeacher.gender,
+          hireDate: originalTeacher.hireDate,
+          yearsOfExperience: originalTeacher.yearsOfExperience,
+          status: originalTeacher.status
+        },
+        metadata: {
+          deletedTeacherName: `${originalTeacher.firstName} ${originalTeacher.lastName}`,
+          action_timestamp: new Date().toISOString()
+        }
+      });
+      
       return {
         success: true,
         message: 'Teacher deleted successfully',
       };
     } catch (error) {
+      // Log deletion error
+      await this.systemLoggingService.logAction({
+        action: 'delete_teacher_error',
+        module: 'teacher',
+        level: 'error',
+        entityId: id,
+        entityType: 'Teacher',
+        errorMessage: error.message,
+        stackTrace: error.stack,
+        metadata: {
+          attempted_action: 'delete_teacher',
+          error_timestamp: new Date().toISOString()
+        }
+      });
+      
       if (error instanceof NotFoundException) {
         throw error;
       }
@@ -865,12 +997,59 @@ export class TeacherController {
         submitGradesDto,
       );
 
+      // Log successful grade submission
+      await this.systemLoggingService.logAction({
+        action: 'submit_grades',
+        module: 'teacher',
+        level: 'info',
+        performedBy: {
+          id: userId,
+          email: req.user?.email || 'unknown',
+          role: 'teacher',
+          name: `${teacher.firstName} ${teacher.lastName}`
+        },
+        entityId: submitGradesDto.examId,
+        entityType: 'Exam',
+        newValues: {
+          examId: submitGradesDto.examId,
+          gradedStudents: submitGradesDto.grades?.length || 0,
+          teacherId: teacher.id,
+          submissionDate: new Date()
+        },
+        metadata: {
+          grades_count: submitGradesDto.grades?.length || 0,
+          exam_title: exam.title || 'Unknown',
+          submission_timestamp: new Date().toISOString()
+        }
+      });
+
       return {
         success: true,
         data: result,
         message: 'Grades submitted successfully',
       };
     } catch (error) {
+      // Log grade submission error
+      await this.systemLoggingService.logAction({
+        action: 'submit_grades_error',
+        module: 'teacher',
+        level: 'error',
+        performedBy: req.user ? {
+          id: req.user.sub,
+          email: req.user.email || 'unknown',
+          role: 'teacher'
+        } : undefined,
+        entityId: submitGradesDto.examId,
+        entityType: 'Exam',
+        errorMessage: error.message,
+        stackTrace: error.stack,
+        metadata: {
+          attempted_action: 'submit_grades',
+          grades_count: submitGradesDto.grades?.length || 0,
+          error_timestamp: new Date().toISOString()
+        }
+      });
+
       console.error('Error in submitGrades:', error);
       if (
         error instanceof NotFoundException ||

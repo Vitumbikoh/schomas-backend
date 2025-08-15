@@ -16,6 +16,7 @@ import {
 
   import { ApiBearerAuth, ApiTags, ApiResponse } from '@nestjs/swagger';
 import { ClassroomService } from './classroom.service';
+import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { ClassroomResponseDto, CreateClassroomDto, UpdateClassroomDto } from './dtos/classroom.dto';
 import { Roles } from 'src/user/decorators/roles.decorator';
 import { Role } from 'src/user/enums/role.enum';
@@ -25,13 +26,25 @@ import { Role } from 'src/user/enums/role.enum';
   @Controller('classrooms')
   @UseGuards(JwtAuthGuard, RolesGuard)
   export class ClassroomController {
-    constructor(private readonly classroomService: ClassroomService) {}
+    constructor(
+      private readonly classroomService: ClassroomService,
+      private readonly systemLoggingService: SystemLoggingService,
+    ) {}
   
     @Post()
     @Roles(Role.ADMIN)
     @ApiResponse({ status: 201, description: 'Classroom created', type: ClassroomResponseDto })
     async create(@Body() createClassroomDto: CreateClassroomDto): Promise<ClassroomResponseDto> {
-      return this.classroomService.create(createClassroomDto);
+      const created = await this.classroomService.create(createClassroomDto);
+      await this.systemLoggingService.logAction({
+        action: 'CLASSROOM_CREATED',
+        module: 'CLASSROOM',
+        level: 'info',
+        entityId: created.id,
+        entityType: 'Classroom',
+        newValues: created as any
+      });
+      return created;
     }
   
     @Get()
@@ -58,14 +71,35 @@ import { Role } from 'src/user/enums/role.enum';
       @Param('id', ParseUUIDPipe) id: string,
       @Body() updateClassroomDto: UpdateClassroomDto,
     ): Promise<ClassroomResponseDto> {
-      return this.classroomService.update(id, updateClassroomDto);
+      const before = await this.classroomService.findOne(id);
+      const updated = await this.classroomService.update(id, updateClassroomDto);
+      await this.systemLoggingService.logAction({
+        action: 'CLASSROOM_UPDATED',
+        module: 'CLASSROOM',
+        level: 'info',
+        entityId: id,
+        entityType: 'Classroom',
+        oldValues: before as any,
+        newValues: updated as any
+      });
+      return updated;
     }
   
     @Delete(':id')
     @Roles(Role.ADMIN)
     @ApiResponse({ status: 200, description: 'Classroom deleted' })
     async remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
-      return this.classroomService.remove(id);
+      const before = await this.classroomService.findOne(id);
+      await this.classroomService.remove(id);
+      await this.systemLoggingService.logAction({
+        action: 'CLASSROOM_DELETED',
+        module: 'CLASSROOM',
+        level: 'info',
+        entityId: id,
+        entityType: 'Classroom',
+        oldValues: before as any
+      });
+      return;
     }
   
     @Get('building/:buildingName')

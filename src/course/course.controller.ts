@@ -30,6 +30,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { isUUID } from 'class-validator';
+import { SystemLoggingService } from 'src/logs/system-logging.service';
 
 @ApiTags('Courses')
 @ApiBearerAuth()
@@ -41,6 +42,7 @@ export class CourseController {
     private readonly teacherService: TeachersService,
     @InjectRepository(Teacher)
     private readonly teacherRepository: Repository<Teacher>,
+    private readonly systemLoggingService: SystemLoggingService,
   ) {}
 
   @Get('course-management')
@@ -258,7 +260,7 @@ async getAllCourses(
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Create a new course' })
   @ApiResponse({ status: 201, description: 'Course created successfully' })
-  async createCourse(@Body() createCourseDto: CreateCourseDto) {
+  async createCourse(@Request() req, @Body() createCourseDto: CreateCourseDto) {
     if (createCourseDto.teacherId) {
       if (!isUUID(createCourseDto.teacherId)) {
         throw new NotFoundException('Teacher ID must be a valid UUID');
@@ -272,7 +274,33 @@ async getAllCourses(
         throw new NotFoundException('Teacher not found');
       }
     }
-    return this.courseService.create(createCourseDto);
+    try {
+      const created = await this.courseService.create(createCourseDto);
+      await this.systemLoggingService.logAction({
+        action: 'COURSE_CREATED',
+        module: 'COURSE',
+        level: 'info',
+        performedBy: req?.user ? {
+          id: req.user.sub,
+          email: req.user.email,
+          role: req.user.role
+        } : undefined,
+        entityId: created.id,
+        entityType: 'Course',
+        newValues: {
+          id: created.id,
+          name: created.name,
+          code: created.code,
+          teacherId: created.teacherId,
+          classId: created.classId
+        },
+        metadata: { description: 'Course created via CourseController' }
+      });
+      return created;
+    } catch (error) {
+      await this.systemLoggingService.logSystemError(error, 'COURSE', 'COURSE_CREATE_ERROR', { payload: createCourseDto });
+      throw error;
+    }
   }
 
   @Post(':courseId/assign-teacher')
@@ -280,6 +308,7 @@ async getAllCourses(
   @ApiOperation({ summary: 'Assign a teacher to a course' })
   @ApiResponse({ status: 200, description: 'Teacher assigned successfully' })
   async assignTeacherToCourse(
+    @Request() req,
     @Param('courseId') courseId: string,
     @Body() body: { teacherId: string },
   ) {
@@ -291,11 +320,28 @@ async getAllCourses(
     }
 
     try {
+      const existing = await this.courseService.findOne(courseId, []);
       const teacher = await this.teacherService.findOneById(body.teacherId);
       const updatedCourse = await this.courseService.assignTeacher(
         courseId,
         teacher.id,
       );
+
+      await this.systemLoggingService.logAction({
+        action: 'COURSE_TEACHER_ASSIGNED',
+        module: 'COURSE',
+        level: 'info',
+        performedBy: req?.user ? {
+          id: req.user.sub,
+          email: req.user.email,
+          role: req.user.role
+        } : undefined,
+        entityId: updatedCourse.id,
+        entityType: 'Course',
+        oldValues: { teacherId: existing?.teacherId },
+        newValues: { teacherId: teacher.id },
+        metadata: { description: 'Teacher assigned to course' }
+      });
 
       return {
         success: true,
@@ -314,6 +360,7 @@ async getAllCourses(
       if (error instanceof NotFoundException) {
         throw error;
       }
+      await this.systemLoggingService.logSystemError(error, 'COURSE', 'COURSE_TEACHER_ASSIGN_ERROR', { courseId, teacherId: body.teacherId });
       throw new Error('Failed to assign teacher: ' + error.message);
     }
   }
@@ -383,10 +430,33 @@ async getCourse(@Request() req, @Param('id') id: string) {
         updateCourseDto.teacherId = teacher.id;
       }
 
-      const updatedCourse = await this.courseService.update(
-        id,
-        updateCourseDto,
-      );
+      const before = await this.courseService.findOne(id, []);
+      const updatedCourse = await this.courseService.update(id, updateCourseDto);
+      await this.systemLoggingService.logAction({
+        action: 'COURSE_UPDATED',
+        module: 'COURSE',
+        level: 'info',
+        performedBy: req?.user ? {
+          id: req.user.sub,
+          email: req.user.email,
+          role: req.user.role
+        } : undefined,
+        entityId: id,
+        entityType: 'Course',
+        oldValues: {
+          name: before?.name,
+          code: before?.code,
+          teacherId: before?.teacherId,
+          classId: before?.classId
+        },
+        newValues: {
+          name: updatedCourse.name,
+          code: updatedCourse.code,
+          teacherId: updatedCourse.teacherId,
+          classId: updatedCourse.classId
+        },
+        metadata: { description: 'Course updated' }
+      });
       return {
         success: true,
         course: updatedCourse,
@@ -396,6 +466,7 @@ async getCourse(@Request() req, @Param('id') id: string) {
       if (error instanceof NotFoundException) {
         throw error;
       }
+      await this.systemLoggingService.logSystemError(error, 'COURSE', 'COURSE_UPDATE_ERROR', { id, payload: updateCourseDto });
       throw new Error('Failed to update course: ' + error.message);
     }
   }
@@ -410,7 +481,27 @@ async getCourse(@Request() req, @Param('id') id: string) {
     }
 
     try {
+      const existing = await this.courseService.findOne(id, []);
       await this.courseService.remove(id);
+      await this.systemLoggingService.logAction({
+        action: 'COURSE_DELETED',
+        module: 'COURSE',
+        level: 'info',
+        performedBy: req?.user ? {
+          id: req.user.sub,
+          email: req.user.email,
+          role: req.user.role
+        } : undefined,
+        entityId: id,
+        entityType: 'Course',
+        oldValues: existing ? {
+          name: existing.name,
+          code: existing.code,
+          teacherId: existing.teacherId,
+          classId: existing.classId
+        } : undefined,
+        metadata: { description: 'Course deleted' }
+      });
       return {
         success: true,
         message: 'Course deleted successfully',
@@ -419,6 +510,7 @@ async getCourse(@Request() req, @Param('id') id: string) {
       if (error instanceof NotFoundException) {
         throw error;
       }
+      await this.systemLoggingService.logSystemError(error, 'COURSE', 'COURSE_DELETE_ERROR', { id });
       throw new Error('Failed to delete course: ' + error.message);
     }
   }

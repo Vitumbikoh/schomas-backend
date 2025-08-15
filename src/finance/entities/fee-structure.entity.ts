@@ -1,0 +1,47 @@
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { AcademicYear } from '../../settings/entities/academic-year.entity';
+import { Class } from '../../classes/entity/class.entity';
+
+@Entity('fee_structure')
+export class FeeStructure {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column({ type: 'varchar', length: 100 })
+  feeType: string; // tuition, library, transport, exam, etc.
+
+  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  amount: number;
+
+  @Column({ type: 'text', nullable: true })
+  description: string;
+
+  @Column({ type: 'boolean', default: true })
+  isActive: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  isOptional: boolean; // Some fees might be optional
+
+  @Column({ type: 'varchar', length: 50, default: 'per_term' })
+  frequency: 'per_term' | 'per_year' | 'one_time'; // How often the fee is charged
+
+  @Column({ type: 'uuid' })
+  academicYearId: string;
+
+  @ManyToOne(() => AcademicYear)
+  @JoinColumn({ name: 'academicYearId' })
+  academicYear: AcademicYear;
+
+  @Column({ type: 'uuid', nullable: true })
+  classId: string; // Optional: specific to a class
+
+  @ManyToOne(() => Class, { nullable: true })
+  @JoinColumn({ name: 'classId' })
+  class: Class;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+}

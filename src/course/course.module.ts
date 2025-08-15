@@ -11,13 +11,15 @@ import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { StudentsModule } from 'src/student/student.module';
 import { Student } from 'src/user/entities/student.entity';
 import { Class } from 'src/classes/entity/class.entity';
+import { LogsModule } from 'src/logs/logs.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Course, Teacher, Enrollment, Student, Class]), 
     UsersModule,
     TeachersModule,
-    EnrollmentModule,
+  EnrollmentModule,
+  LogsModule,
     forwardRef(() => StudentsModule),
   ],
   controllers: [CourseController], 

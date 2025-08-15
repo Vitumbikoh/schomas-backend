@@ -18,6 +18,8 @@ import * as PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import { CreateFinanceDto } from 'src/user/dtos/create-finance.dto';
 import * as bcrypt from 'bcrypt';
+import { SettingsService } from 'src/settings/settings.service';
+import { SystemLoggingService } from 'src/logs/system-logging.service';
 
 @Injectable()
 export class FinanceService {
@@ -32,18 +34,24 @@ export class FinanceService {
     private readonly studentRepository: Repository<Student>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private settingsService: SettingsService,
+    private systemLoggingService: SystemLoggingService,
   ) {}
 
   async getDashboardData(userId: string) {
     const financeUser = await this.getFinanceUser(userId);
 
+    // Get current academic year for filtering
+    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    const academicYearFilter = currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {};
+
     const [pendingPayments, pendingBudgets, recentTransactions] =
       await Promise.all([
         this.paymentRepository.find({
-          where: { status: 'pending' },
+          where: { status: 'pending', ...academicYearFilter },
           take: 5,
           order: { createdAt: 'DESC' },
-          relations: ['student'],
+          relations: ['student', 'academicYear'],
         }),
         this.budgetRepository.find({
           where: { status: 'pending' },
@@ -51,21 +59,23 @@ export class FinanceService {
           order: { createdAt: 'DESC' },
         }),
         this.paymentRepository.find({
-          where: { status: 'completed' },
+          where: { status: 'completed', ...academicYearFilter },
           take: 5,
           order: { paymentDate: 'DESC' },
-          relations: ['student'],
+          relations: ['student', 'academicYear'],
         }),
       ]);
 
     const totalProcessedPayments = await this.paymentRepository.count({
-      where: { status: 'completed' },
+      where: { status: 'completed', ...academicYearFilter },
     });
 
     const totalRevenueResult = await this.paymentRepository
       .createQueryBuilder('payment')
       .select('SUM(payment.amount)', 'sum')
       .where('payment.status = :status', { status: 'completed' })
+      .andWhere(currentAcademicYear ? 'payment.academicYearId = :academicYearId' : '1=1', 
+        currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {})
       .getRawOne();
 
     const totalRevenue = parseFloat(totalRevenueResult?.sum || '0');
@@ -92,77 +102,117 @@ export class FinanceService {
     };
   }
 
-  async processPayment(user: { id: string; role: Role }, processPaymentDto: ProcessPaymentDto) {
-    const processingUser = await this.userRepository.findOne({
-      where: { id: user.id, role: In([Role.ADMIN, Role.FINANCE]) },
-    });
-
-    if (!processingUser) {
-      throw new NotFoundException('Processing user not found or not authorized');
-    }
-
-    const student = await this.studentRepository.findOne({
-      where: { id: processPaymentDto.studentId },
-    });
-
-    if (!student) {
-      throw new NotFoundException('Student not found');
-    }
-
-    let financeUser: Finance | null = null;
-    if (processingUser.role === Role.FINANCE) {
-      financeUser = await this.financeRepository.findOne({
-        where: { user: { id: processingUser.id } },
-        relations: ['user'],
-      });
-      if (!financeUser) {
-        throw new NotFoundException('Finance user record not found');
-      }
-    }
-
-    const validPaymentTypes = [
-      'tuition',
-      'exam',
-      'transport',
-      'library',
-      'hostel',
-      'uniform',
-      'other',
-    ];
-    if (!validPaymentTypes.includes(processPaymentDto.paymentType)) {
-      throw new BadRequestException('Invalid payment type');
-    }
-
-    const payment = this.paymentRepository.create({
-      amount: processPaymentDto.amount,
-      receiptNumber: processPaymentDto.receiptNumber,
-      paymentType: processPaymentDto.paymentType,
-      paymentMethod: processPaymentDto.paymentMethod,
-      notes: processPaymentDto.notes,
-      status: 'completed',
-      paymentDate: new Date(processPaymentDto.paymentDate),
-      student: { id: student.id },
-      ...(financeUser
-        ? { processedBy: { id: financeUser.id } }
-        : { processedByAdmin: { id: processingUser.id } }),
-    });
-
+  async processPayment(user: { id: string; role: Role }, processPaymentDto: ProcessPaymentDto, request?: any) {
+    const startTime = Date.now();
+    
     try {
-      await this.paymentRepository.save(payment);
+      const processingUser = await this.userRepository.findOne({
+        where: { id: user.id, role: In([Role.ADMIN, Role.FINANCE]) },
+      });
+
+      if (!processingUser) {
+        throw new NotFoundException('Processing user not found or not authorized');
+      }
+
+      const student = await this.studentRepository.findOne({
+        where: { id: processPaymentDto.studentId },
+      });
+
+      if (!student) {
+        throw new NotFoundException('Student not found');
+      }
+
+      let financeUser: Finance | null = null;
+      if (processingUser.role === Role.FINANCE) {
+        financeUser = await this.financeRepository.findOne({
+          where: { user: { id: processingUser.id } },
+          relations: ['user'],
+        });
+        if (!financeUser) {
+          throw new NotFoundException('Finance user record not found');
+        }
+      }
+
+      const validPaymentTypes = [
+        'tuition',
+        'exam',
+        'transport',
+        'library',
+        'hostel',
+        'uniform',
+        'other',
+      ];
+      if (!validPaymentTypes.includes(processPaymentDto.paymentType)) {
+        throw new BadRequestException('Invalid payment type');
+      }
+
+      // Get current academic year
+      const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+      if (!currentAcademicYear) {
+        throw new BadRequestException('No active academic year found. Please contact administration.');
+      }
+
+      const payment = this.paymentRepository.create({
+        amount: processPaymentDto.amount,
+        receiptNumber: processPaymentDto.receiptNumber,
+        paymentType: processPaymentDto.paymentType,
+        paymentMethod: processPaymentDto.paymentMethod,
+        notes: processPaymentDto.notes,
+        status: 'completed',
+        paymentDate: new Date(processPaymentDto.paymentDate),
+        student: { id: student.id },
+        academicYearId: currentAcademicYear.id,
+        ...(financeUser
+          ? { processedBy: { id: financeUser.id } }
+          : { processedByAdmin: { id: processingUser.id } }),
+      });
+
+      const savedPayment = await this.paymentRepository.save(payment);
+      
+      // Enhanced logging
+      await this.systemLoggingService.logFeePaymentProcessed(
+        savedPayment.id,
+        student.id,
+        processPaymentDto.amount,
+        {
+          id: processingUser.id,
+          email: processingUser.email,
+          role: processingUser.role,
+          name: financeUser ? `${financeUser.firstName} ${financeUser.lastName}` : processingUser.username
+        },
+        request
+      );
+
+      const duration = Date.now() - startTime;
+      console.log(`Payment processed successfully in ${duration}ms for student ${student.id}`);
+      
       return {
         success: true,
         payment: {
-          ...payment,
+          ...savedPayment,
           studentName: `${student.firstName} ${student.lastName}`,
           processedByName: processingUser.username,
         },
         message: 'Payment processed successfully',
       };
     } catch (error) {
+      const duration = Date.now() - startTime;
+      
+      await this.systemLoggingService.logSystemError(
+        error,
+        'FINANCE',
+        'PROCESS_PAYMENT_FAILED',
+        {
+          studentId: processPaymentDto.studentId,
+          amount: processPaymentDto.amount,
+          duration
+        }
+      );
+      
       if (error.code === '23503') {
         throw new BadRequestException('Invalid reference in payment processing');
       }
-      throw error;
+      throw new BadRequestException(`Failed to process payment: ${error.message}`);
     }
   }
 
@@ -239,13 +289,17 @@ export class FinanceService {
     pendingPayments: FeePayment[];
     pendingBudgets: Budget[];
   }> {
+    // Get current academic year for filtering
+    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    const academicYearFilter = currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {};
+
     const [pendingPayments, pendingBudgets, recentTransactions] =
       await Promise.all([
         this.paymentRepository.find({
-          where: { status: 'pending' },
+          where: { status: 'pending', ...academicYearFilter },
           take: 5,
           order: { createdAt: 'DESC' },
-          relations: ['student'],
+          relations: ['student', 'academicYear'],
         }),
         this.budgetRepository.find({
           where: { status: 'pending' },
@@ -253,10 +307,10 @@ export class FinanceService {
           order: { createdAt: 'DESC' },
         }),
         this.paymentRepository.find({
-          where: { status: 'completed' },
+          where: { status: 'completed', ...academicYearFilter },
           take: 5,
           order: { paymentDate: 'DESC' },
-          relations: ['student'],
+          relations: ['student', 'academicYear'],
         }),
       ]);
 
@@ -279,8 +333,16 @@ export class FinanceService {
     totalRevenue: number;
     pendingApprovals: number;
   }> {
+    // Get current academic year for filtering
+    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    
     const paymentWhere: any = { status: 'completed' };
     const budgetWhere: any = { status: 'approved' };
+    
+    // Add academic year filter if available
+    if (currentAcademicYear) {
+      paymentWhere.academicYearId = currentAcademicYear.id;
+    }
 
     if (dateRange?.startDate && dateRange?.endDate) {
       paymentWhere.paymentDate = Between(
@@ -306,6 +368,8 @@ export class FinanceService {
         .createQueryBuilder('payment')
         .select('SUM(payment.amount)', 'sum')
         .where('payment.status = :status', { status: 'completed' })
+        .andWhere(currentAcademicYear ? 'payment.academicYearId = :academicYearId' : '1=1', 
+          currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {})
         .andWhere(
           dateRange?.startDate && dateRange?.endDate
             ? 'payment.paymentDate BETWEEN :startDate AND :endDate'
@@ -316,7 +380,12 @@ export class FinanceService {
           },
         )
         .getRawOne(),
-      this.paymentRepository.count({ where: { status: 'pending' } }),
+      this.paymentRepository.count({ 
+        where: { 
+          status: 'pending', 
+          ...(currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {})
+        } 
+      }),
       this.budgetRepository.count({ where: { status: 'pending' } }),
     ]);
 
@@ -334,7 +403,15 @@ export class FinanceService {
     search: string,
     dateRange?: { startDate?: Date; endDate?: Date },
   ) {
+    // Get current academic year for filtering
+    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    
     const where: any = {};
+
+    // Add academic year filter if available
+    if (currentAcademicYear) {
+      where.academicYearId = currentAcademicYear.id;
+    }
 
     if (search) {
       where.receiptNumber = Like(`%${search}%`);
@@ -346,7 +423,7 @@ export class FinanceService {
 
     const [transactions, total] = await this.paymentRepository.findAndCount({
       where,
-      relations: ['student', 'processedBy', 'processedByAdmin'],
+      relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
       skip: (page - 1) * limit,
       take: limit,
       order: { paymentDate: 'DESC' },
@@ -358,6 +435,7 @@ export class FinanceService {
         studentName: t.student ? `${t.student.firstName} ${t.student.lastName}` : 'Unknown',
         paymentDate: t.paymentDate?.toISOString(),
         processedByName: t.processedBy?.user?.username || t.processedByAdmin?.username || 'Unknown',
+        academicYear: t.academicYear ? `${t.academicYear.academicCalendar.academicYear} - ${t.academicYear.term.name}` : 'N/A',
       })),
       pagination: {
         totalItems: total,
@@ -385,9 +463,17 @@ async getParentPayments(
 
   const studentIds = parent.parent.children.map((child) => child.id);
 
+  // Get current academic year for filtering
+  const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+
   const where: any = {
     student: { id: In(studentIds) },
   };
+
+  // Add academic year filter if available
+  if (currentAcademicYear) {
+    where.academicYearId = currentAcademicYear.id;
+  }
 
   if (search) {
     where.receiptNumber = Like(`%${search}%`);
@@ -395,7 +481,7 @@ async getParentPayments(
 
   const [payments, total] = await this.paymentRepository.findAndCount({
     where,
-    relations: ['student', 'processedBy', 'processedByAdmin'],
+    relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
     skip: (page - 1) * limit,
     take: limit,
     order: { paymentDate: 'DESC' },
@@ -414,6 +500,7 @@ async getParentPayments(
       receiptNumber: payment.receiptNumber,
       status: payment.status,
       notes: payment.notes,
+      academicYear: payment.academicYear ? `${payment.academicYear.academicCalendar.academicYear} - ${payment.academicYear.term.name}` : 'N/A',
     })),
     pagination: {
       totalItems: total,
@@ -526,7 +613,7 @@ async getParentPayments(
   async generateReceipt(transactionId: string): Promise<string> {
     const payment = await this.paymentRepository.findOne({
       where: { id: transactionId },
-      relations: ['student', 'processedBy', 'processedByAdmin'],
+      relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
     });
 
     if (!payment) {
@@ -555,6 +642,9 @@ async getParentPayments(
     doc.text(`Payment Type: ${payment.paymentType}`);
     doc.text(`Payment Method: ${payment.paymentMethod}`);
     doc.text(
+      `Academic Year: ${payment.academicYear ? `${payment.academicYear.academicCalendar.academicYear} - ${payment.academicYear.term.name}` : 'N/A'}`,
+    );
+    doc.text(
       `Processed By: ${payment.processedBy?.user?.username || payment.processedByAdmin?.username || 'System'}`,
     );
     doc.moveDown();
@@ -569,7 +659,15 @@ async getParentPayments(
   }
 
   async getAllPayments(page: number = 1, limit: number = 10, search: string = '') {
+    // Get current academic year for filtering
+    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    
     const where: any = {};
+
+    // Add academic year filter if available
+    if (currentAcademicYear) {
+      where.academicYearId = currentAcademicYear.id;
+    }
 
     if (search) {
       where.receiptNumber = Like(`%${search}%`);
@@ -577,7 +675,7 @@ async getParentPayments(
 
     const [payments, total] = await this.paymentRepository.findAndCount({
       where,
-      relations: ['student', 'processedBy', 'processedByAdmin'],
+      relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
       skip: (page - 1) * limit,
       take: limit,
       order: { paymentDate: 'DESC' },
@@ -589,16 +687,22 @@ async getParentPayments(
   async getPaymentById(id: string) {
     return this.paymentRepository.findOne({
       where: { id },
-      relations: ['student', 'processedBy', 'processedByAdmin'],
+      relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
     });
   }
 
   async getRecentPayments(limit: number): Promise<any[]> {
+    // Get current academic year for filtering
+    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    
     return this.paymentRepository.find({
-      where: { status: 'completed' },
+      where: { 
+        status: 'completed',
+        ...(currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {})
+      },
       take: limit,
       order: { paymentDate: 'DESC' },
-      relations: ['student', 'processedBy', 'processedByAdmin'],
+      relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
     });
   }
 }
