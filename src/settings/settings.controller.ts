@@ -421,4 +421,17 @@ async createAcademicYearTerm(
     return updated;
   }
 
+  // List academic years (term instances) for a calendar (or active calendar if none provided)
+  @UseGuards(JwtAuthGuard)
+  @Get('academic-years')
+  async listAcademicYears(
+    @Request() req,
+    @Query('academicCalendarId') academicCalendarId?: string,
+  ) {
+    if (!['ADMIN','FINANCE'].includes(req.user.role)) {
+      throw new UnauthorizedException('Only admins or finance can access academic years');
+    }
+    return this.settingsService.getAcademicYears(academicCalendarId);
+  }
+
 }

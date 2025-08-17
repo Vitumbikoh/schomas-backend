@@ -30,7 +30,7 @@ import { AnalyticsService } from './analytics.service';
       FeeStructure,
     ]),
     SettingsModule,
-    FinanceModule,
+    FinanceModule, // This imports all exported providers from FinanceModule
   ],
   controllers: [AnalyticsController],
   providers: [AnalyticsService],

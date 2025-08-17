@@ -952,4 +952,24 @@ async getCurrentAcademicYear(): Promise<{ id: string } | null> {
         throw new InternalServerErrorException('Failed to get academic year');
     }
 }
+
+  async getAcademicYears(academicCalendarId?: string) {
+    // If no calendar id provided, try active calendar
+    let calendarId = academicCalendarId;
+    if (!calendarId) {
+      const active = await this.academicCalendarRepository.findOne({ where: { isActive: true }, select: ['id'] });
+      calendarId = active?.id;
+    }
+    const where = calendarId ? { academicCalendar: { id: calendarId } } : {};
+    const years = await this.academicYearRepository.find({ where, relations: ['term', 'academicCalendar'], order: { startDate: 'ASC' } });
+    return years.map(y => ({
+      id: y.id,
+      academicCalendarId: y.academicCalendar?.id,
+      termId: y.term?.id,
+      termName: y.term?.name,
+      startDate: y.startDate?.toISOString(),
+      endDate: y.endDate?.toISOString(),
+      isCurrent: y.isCurrent,
+    }));
+  }
 }

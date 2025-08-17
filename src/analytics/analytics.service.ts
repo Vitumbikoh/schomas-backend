@@ -10,7 +10,7 @@ import { Student } from '../user/entities/student.entity';
 import { Teacher } from '../user/entities/teacher.entity';
 import { AcademicYear } from '../settings/entities/academic-year.entity';
 import { SettingsService } from '../settings/settings.service';
-import { FeeAnalyticsService } from '../finance/fee-analytics.service';
+import { FeeAnalyticsService } from '../finance/services/fee-analytics.service';
 
 @Injectable()
 export class AnalyticsService {

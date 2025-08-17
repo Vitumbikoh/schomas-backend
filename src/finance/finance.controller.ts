@@ -23,7 +23,9 @@ import { ProcessPaymentDto } from './dtos/process-payment.dto';
 import { ApproveBudgetDto } from './dtos/approve-budget.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CreateFinanceDto } from 'src/user/dtos/create-finance.dto';
+import { StudentFeeExpectationService } from './student-fee-expectation.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
+import { CreateFeeStructureDto } from './dtos/fees-structure.dto';
 
 @ApiTags('Finance')
 @ApiBearerAuth()
@@ -33,6 +35,7 @@ export class FinanceController {
   constructor(
     private readonly financeService: FinanceService,
     private readonly systemLoggingService: SystemLoggingService,
+    private readonly studentFeeExpectationService: StudentFeeExpectationService,
   ) {}
 
   @Get('dashboard')
@@ -77,13 +80,12 @@ export class FinanceController {
     @Body() processPaymentDto: ProcessPaymentDto,
   ) {
     try {
-  // Ensure the shape matches FinanceService expectation (id, role)
-  const paymentResult = await this.financeService.processPayment(
-    { id: req.user.sub || req.user.id, role: req.user.role },
-    processPaymentDto,
-    req,
-  );
-  const payment = paymentResult.payment; // unwrap
+      const paymentResult = await this.financeService.processPayment(
+        { id: req.user.sub || req.user.id, role: req.user.role },
+        processPaymentDto,
+        req,
+      );
+      const payment = paymentResult.payment;
       await this.systemLoggingService.logAction({
         action: 'FEE_PAYMENT_CREATED_CONTROLLER',
         module: 'FINANCE',
@@ -93,20 +95,71 @@ export class FinanceController {
         entityType: 'FeePayment',
         newValues: {
           id: payment.id,
-      amount: payment.amount,
-      paymentDate: payment.paymentDate ? new Date(payment.paymentDate).toISOString() : undefined,
-      paymentMethod: payment.paymentMethod,
-      status: payment.status,
-      studentName: payment.studentName,
+          amount: payment.amount,
+          paymentDate: payment.paymentDate ? new Date(payment.paymentDate).toISOString() : undefined,
+          paymentMethod: payment.paymentMethod,
+          status: payment.status,
+          studentName: payment.studentName,
         },
         metadata: { description: 'Fee payment processed via FinanceController' }
       });
-    return paymentResult;
+      return paymentResult;
     } catch (error) {
       await this.systemLoggingService.logSystemError(error, 'FINANCE', 'FEE_PAYMENT_PROCESS_ERROR', { dto: processPaymentDto });
       throw error;
     }
   }
+
+  // ---------------- Fee Structure Management ----------------
+
+  @Post('fee-structure')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Create a new fee structure item' })
+  async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
+    return this.studentFeeExpectationService.createFeeStructureItem(dto);
+  }
+
+  @Get('fee-structure')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Get fee structure for academic year' })
+  async getFeeStructure(@Query('academicYearId') academicYearId: string) {
+    return this.studentFeeExpectationService.getFeeStructureForAcademicYear(academicYearId);
+  }
+
+  // ---------------- Fee Status and Summary ----------------
+
+  @Get('fee-summary')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Summary of fee payment status for an academic year' })
+  async feeSummary(@Query('academicYearId') academicYearId: string) {
+    return this.studentFeeExpectationService.getFeeSummaryForAcademicYear(academicYearId);
+  }
+
+  @Get('fee-statuses')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'List per-student payment status for an academic year' })
+  async feeStatuses(@Query('academicYearId') academicYearId: string) {
+    return this.studentFeeExpectationService.listStudentFeeStatuses(academicYearId);
+  }
+
+  @Get('fee-status/:studentId')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Get detailed fee status for a single student' })
+  async studentFeeStatus(
+    @Param('studentId') studentId: string, 
+    @Query('academicYearId') academicYearId: string
+  ) {
+    return this.studentFeeExpectationService.getStudentFeeStatus(studentId, academicYearId);
+  }
+
+  @Get('fee-metrics')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Aggregated fee metrics (expected, paid, pending, overdue) for dashboard cards' })
+  async feeMetrics(@Query('academicYearId') academicYearId: string) {
+    return this.studentFeeExpectationService.getFeeSummaryForAcademicYear(academicYearId);
+  }
+
+  // ---------------- Finance User Management ----------------
 
   @Post()
   @Roles(Role.ADMIN)
@@ -119,7 +172,7 @@ export class FinanceController {
   async createFinanceUser(@Request() req, @Body() createFinanceDto: CreateFinanceDto) {
     try {
       const financeUserResult = await this.financeService.createFinanceUser(createFinanceDto);
-      const financeUser = financeUserResult.financeProfile; // unwrap profile
+      const financeUser = financeUserResult.financeProfile;
       await this.systemLoggingService.logAction({
         action: 'FINANCE_USER_CREATED',
         module: 'FINANCE',
@@ -189,6 +242,8 @@ export class FinanceController {
     };
   }
 
+  // ---------------- Budget Approval ----------------
+
   @Post('budgets/:id/approve')
   @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Approve a budget proposal' })
@@ -221,6 +276,8 @@ export class FinanceController {
       throw error;
     }
   }
+
+  // ---------------- Financial Reports and Stats ----------------
 
   @Get('stats')
   @Roles(Role.FINANCE, Role.ADMIN)
@@ -347,19 +404,19 @@ export class FinanceController {
 
   @Get('parent-payments')
   @Roles(Role.PARENT)
-  @ApiOperation({ summary: 'Get fee payments for parent’s children' })
+  @ApiOperation({ summary: "Get fee payments for parent's children" })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'search', required: false, type: String })
   @ApiResponse({
     status: 200,
-    description: 'List of fee payments for parent’s children retrieved successfully',
+    description: "List of fee payments for parent's children retrieved successfully",
   })
   async getParentPayments(
-    @Request() req,
-    @Query('page') page = 1,
-    @Query('limit') limit = 10,
-    @Query('search') search = '',
+    @Request() req: any,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+    @Query('search') search: string = '',
   ) {
     return this.financeService.getParentPayments(
       req.user.id,
@@ -372,6 +429,8 @@ export class FinanceController {
   @Get('reports/summary')
   @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Generate financial summary report' })
+  @ApiQuery({ name: 'startDate', required: true, type: String })
+  @ApiQuery({ name: 'endDate', required: true, type: String })
   @ApiResponse({ status: 200, description: 'Report generated successfully' })
   async generateFinancialReport(
     @Query('startDate') startDate: string,

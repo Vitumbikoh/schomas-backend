@@ -2,8 +2,6 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { FinanceController } from './finance.controller';
 import { FinanceService } from './finance.service';
-import { FeeAnalyticsController } from './fee-analytics.controller';
-import { FeeAnalyticsService } from './fee-analytics.service';
 import { Finance } from '../user/entities/finance.entity';
 import { FeePayment } from './entities/fee-payment.entity';
 import { FeeStructure } from './entities/fee-structure.entity';
@@ -19,6 +17,8 @@ import { SettingsModule } from '../settings/settings.module';
 import { LogsModule } from 'src/logs/logs.module';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
+import { FeeAnalyticsService } from './services/fee-analytics.service';
+import { StudentFeeExpectationService } from './student-fee-expectation.service';
 
 @Module({
   imports: [
@@ -39,8 +39,16 @@ import { ConfigModule } from '../config/config.module';
     AuthModule,
     ConfigModule,
   ],
-  controllers: [FinanceController, FeeAnalyticsController, ReceiptController],
-  providers: [FinanceService, FeeAnalyticsService],
-  exports: [FinanceService, FeeAnalyticsService],
+  controllers: [FinanceController, ReceiptController],
+  providers: [
+    FinanceService, 
+    StudentFeeExpectationService, 
+    FeeAnalyticsService
+  ],
+  exports: [
+    FinanceService,
+    FeeAnalyticsService, // Add this to export the service
+    StudentFeeExpectationService, // Also export if needed by other modules
+  ],
 })
 export class FinanceModule {}
