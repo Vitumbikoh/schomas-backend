@@ -77,7 +77,12 @@ export class FinanceController {
     @Body() processPaymentDto: ProcessPaymentDto,
   ) {
     try {
-  const paymentResult = await this.financeService.processPayment(req.user, processPaymentDto);
+  // Ensure the shape matches FinanceService expectation (id, role)
+  const paymentResult = await this.financeService.processPayment(
+    { id: req.user.sub || req.user.id, role: req.user.role },
+    processPaymentDto,
+    req,
+  );
   const payment = paymentResult.payment; // unwrap
       await this.systemLoggingService.logAction({
         action: 'FEE_PAYMENT_CREATED_CONTROLLER',

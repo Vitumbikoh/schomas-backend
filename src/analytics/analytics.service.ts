@@ -38,21 +38,68 @@ export class AnalyticsService {
       }
     }
     if (!academicYearEntity) return null;
-    return { start: new Date(academicYearEntity.startDate), end: new Date(academicYearEntity.endDate), entity: academicYearEntity };
+    const start = new Date(academicYearEntity.startDate);
+    const end = new Date(academicYearEntity.endDate);
+    // Normalize range: ensure end covers entire day (23:59:59.999) to avoid excluding same-day timestamps
+    end.setHours(23,59,59,999);
+    return { start, end, entity: academicYearEntity };
   }
 
   async getClassPerformance(classId: string, academicYearId?: string) {
     const range = await this.resolveAcademicYearRange(academicYearId);
-    const qb = this.gradeRepo.createQueryBuilder('g')
+    const qbBase = this.gradeRepo.createQueryBuilder('g')
       .leftJoin('g.class', 'c')
       .leftJoin('g.student', 's')
       .leftJoin('g.course', 'course')
       .where('c.id = :classId', { classId });
-    if (range) qb.andWhere('g.date BETWEEN :start AND :end', { start: range.start, end: range.end });
-    const grades = await qb.getMany();
+    if (range) qbBase.andWhere('g.date BETWEEN :start AND :end', { start: range.start, end: range.end });
+  let grades = await qbBase.getMany();
+  let filteredBy: { academicYearApplied: boolean; viaStudentClassFallback?: boolean } = { academicYearApplied: !!range };
+    // Fallback 1: If no grades found WITH date filter, try without date filter (maybe range mismatch)
+    if (grades.length === 0 && range) {
+      const qbNoDate = this.gradeRepo.createQueryBuilder('g')
+        .leftJoin('g.class', 'c')
+        .leftJoin('g.student', 's')
+        .leftJoin('g.course', 'course')
+        .where('c.id = :classId', { classId });
+      const gradesNoDate = await qbNoDate.getMany();
+      if (gradesNoDate.length > 0) {
+        grades = gradesNoDate;
+        filteredBy.academicYearApplied = false; // date filter caused exclusion
+      }
+    }
+    // Fallback 2: If still none, attempt match via students' class (older grades might have null classId)
+    if (grades.length === 0) {
+      const studentIds = await this.studentRepo.createQueryBuilder('st')
+        .select('st.id', 'id')
+        .where('st.classId = :classId', { classId })
+        .getRawMany();
+      if (studentIds.length > 0) {
+        const ids = studentIds.map(r => r.id);
+        const qbStudent = this.gradeRepo.createQueryBuilder('g')
+          .leftJoin('g.student', 's')
+          .leftJoin('g.course', 'course')
+          .where('s.id IN (:...ids)', { ids });
+        const maybeRange = range ? qbStudent.andWhere('g.date BETWEEN :start AND :end', { start: range.start, end: range.end }) : qbStudent;
+        let studentGrades = await maybeRange.getMany();
+        if (studentGrades.length === 0 && range) {
+          // Retry without date
+            studentGrades = await this.gradeRepo.createQueryBuilder('g')
+              .leftJoin('g.student', 's')
+              .leftJoin('g.course', 'course')
+              .where('s.id IN (:...ids)', { ids })
+              .getMany();
+            if (studentGrades.length > 0) filteredBy.academicYearApplied = false;
+        }
+        if (studentGrades.length > 0) {
+          grades = studentGrades;
+          filteredBy = { ...filteredBy, viaStudentClassFallback: true };
+        }
+      }
+    }
     const cls = await this.classRepo.findOne({ where: { id: classId } });
     if (grades.length === 0) {
-      return { class: cls ? { id: cls.id, name: cls.name } : { id: classId }, average: 0, studentStats: [], gradeDistribution: {}, topPerformers: [] };
+      return { class: cls ? { id: cls.id, name: cls.name } : { id: classId }, average: 0, studentStats: [], gradeDistribution: {}, topPerformers: [], meta: { reason: 'NO_GRADES_FOUND', filteredBy } };
     }
     const distribution: Record<string, number> = { A:0,B:0,C:0,D:0,F:0 };
     interface StudentAgg { total: number; count: number; firstName?: string; lastName?: string; }
@@ -79,6 +126,7 @@ export class AnalyticsService {
       studentStats,
       gradeDistribution: distribution,
       topPerformers: studentStats.slice(0,5),
+  meta: { filteredBy }
     };
   }
 

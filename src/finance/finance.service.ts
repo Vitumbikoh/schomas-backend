@@ -122,6 +122,7 @@ export class FinanceService {
         throw new NotFoundException('Student not found');
       }
 
+      // Attempt to load finance profile when role is FINANCE; fall back gracefully if missing
       let financeUser: Finance | null = null;
       if (processingUser.role === Role.FINANCE) {
         financeUser = await this.financeRepository.findOne({
@@ -129,7 +130,14 @@ export class FinanceService {
           relations: ['user'],
         });
         if (!financeUser) {
-          throw new NotFoundException('Finance user record not found');
+          // Instead of aborting, proceed treating the user like an admin processor
+          await this.systemLoggingService.logAction({
+            action: 'FINANCE_PROFILE_MISSING_FALLBACK',
+            module: 'FINANCE',
+            level: 'warn',
+            performedBy: { id: processingUser.id, role: processingUser.role, email: processingUser.email },
+            metadata: { description: 'Finance user has FINANCE role but no finance profile; using admin processing fallback.' },
+          });
         }
       }
 
