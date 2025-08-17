@@ -7,11 +7,12 @@ import { ClassroomController } from './classroom.controller';
 import { ScheduleModule } from '../schedule/schedule.module'; 
 import { AuthModule } from 'src/auth/auth.module';
 import { ConfigModule } from 'src/config/config.module';
+import { LogsModule } from 'src/logs/logs.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Classroom]),
-    ScheduleModule, AuthModule, ConfigModule
+    ScheduleModule, AuthModule, ConfigModule, LogsModule
   ],
   controllers: [ClassroomController],
   providers: [ClassroomService],

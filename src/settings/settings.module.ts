@@ -7,6 +7,7 @@ import { User } from '../user/entities/user.entity';
 import { SchoolSettings } from './entities/school-settings.entity';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
+import { LogsModule } from '../logs/logs.module';
 import { Finance } from '../user/entities/finance.entity';
 import { Parent } from '../user/entities/parent.entity';
 import { Student } from '../user/entities/student.entity';
@@ -31,6 +32,7 @@ import { AcademicYear } from './entities/academic-year.entity';
     ]),
     AuthModule,
     ConfigModule,
+    LogsModule,
   ],
   providers: [SettingsService],
   controllers: [SettingsController],

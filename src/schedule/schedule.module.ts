@@ -12,6 +12,7 @@ import { AuthModule } from 'src/auth/auth.module';
 import { ConfigModule } from 'src/config/config.module';
 import { ClassModule } from 'src/classes/class.module'; // Add this import
 import { Class } from 'src/classes/entity/class.entity';
+import { LogsModule } from 'src/logs/logs.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { Class } from 'src/classes/entity/class.entity';
     AuthModule,
     ConfigModule,
     ClassModule, // Add this line to import the ClassModule
+    LogsModule,
   ],
   providers: [ScheduleService],
   controllers: [ScheduleController],
