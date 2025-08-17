@@ -26,13 +26,28 @@ export class StudentFeeExpectationService {
   }
 
   async createFeeStructureItem(dto: CreateFeeStructureDto) {
-    // Cast frequency to the correct enum type
-    const entity = this.feeStructureRepo.create({
-      ...dto,
-      frequency: dto.frequency as 'per_term' | 'per_year' | 'one_time' | undefined
-    });
-    return this.feeStructureRepo.save(entity);
+  // Validate academic year exists
+  const academicYear = await this.academicYearRepo.findOne({ 
+    where: { id: dto.academicYearId } 
+  });
+  
+  if (!academicYear) {
+    throw new NotFoundException('Academic year not found');
   }
+
+  // Create and save the fee structure item
+  const feeStructure = this.feeStructureRepo.create({
+    amount: dto.amount,
+    academicYearId: dto.academicYearId,
+    feeType: dto.feeType,
+    isActive: dto.isActive,
+    isOptional: dto.isOptional,
+    frequency: dto.frequency as 'per_term' | 'per_year' | 'one_time' | undefined,
+    classId: dto.classId
+  });
+
+  return this.feeStructureRepo.save(feeStructure);
+}
 
   async updateFeeStructureItem(id: string, dto: Partial<CreateFeeStructureDto>) {
     // Ensure frequency is cast to the correct enum type if present

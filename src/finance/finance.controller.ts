@@ -112,12 +112,29 @@ export class FinanceController {
 
   // ---------------- Fee Structure Management ----------------
 
-  @Post('fee-structure')
-  @Roles(Role.ADMIN, Role.FINANCE)
-  @ApiOperation({ summary: 'Create a new fee structure item' })
-  async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
-    return this.studentFeeExpectationService.createFeeStructureItem(dto);
-  }
+ @Post('fee-structure')
+@Roles(Role.ADMIN, Role.FINANCE)
+@ApiOperation({ summary: 'Create a new fee structure item' })
+@ApiResponse({ 
+  status: 201, 
+  description: 'Fee structure item created successfully' 
+})
+@ApiResponse({ 
+  status: 400, 
+  description: 'Bad Request - Validation failed' 
+})
+async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
+  // Set defaults if not provided
+  const feeStructureData = {
+    ...dto,
+    feeType: dto.feeType || 'Tuition',
+    isActive: dto.isActive !== undefined ? dto.isActive : true,
+    isOptional: dto.isOptional || false,
+    frequency: dto.frequency || 'per_term'
+  };
+
+  return this.studentFeeExpectationService.createFeeStructureItem(feeStructureData);
+}
 
   @Get('fee-structure')
   @Roles(Role.ADMIN, Role.FINANCE)
