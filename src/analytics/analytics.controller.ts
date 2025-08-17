@@ -17,8 +17,11 @@ export class AnalyticsController {
   }
 
   @Get('course-averages')
-  async courseAverages(@Query('academicYearId') academicYearId?: string) {
-    return this.analyticsService.getCourseAverages(academicYearId);
+  async courseAverages(
+    @Query('academicYearId') academicYearId?: string,
+    @Query('scope') scope: 'current-year' | 'all' = 'current-year',
+  ) {
+    return this.analyticsService.getCourseAverages(academicYearId, scope);
   }
 
   @Get('attendance-overview')

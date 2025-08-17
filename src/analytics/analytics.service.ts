@@ -38,68 +38,21 @@ export class AnalyticsService {
       }
     }
     if (!academicYearEntity) return null;
-    const start = new Date(academicYearEntity.startDate);
-    const end = new Date(academicYearEntity.endDate);
-    // Normalize range: ensure end covers entire day (23:59:59.999) to avoid excluding same-day timestamps
-    end.setHours(23,59,59,999);
-    return { start, end, entity: academicYearEntity };
+    return { start: new Date(academicYearEntity.startDate), end: new Date(academicYearEntity.endDate), entity: academicYearEntity };
   }
 
   async getClassPerformance(classId: string, academicYearId?: string) {
     const range = await this.resolveAcademicYearRange(academicYearId);
-    const qbBase = this.gradeRepo.createQueryBuilder('g')
+    const qb = this.gradeRepo.createQueryBuilder('g')
       .leftJoin('g.class', 'c')
       .leftJoin('g.student', 's')
       .leftJoin('g.course', 'course')
       .where('c.id = :classId', { classId });
-    if (range) qbBase.andWhere('g.date BETWEEN :start AND :end', { start: range.start, end: range.end });
-  let grades = await qbBase.getMany();
-  let filteredBy: { academicYearApplied: boolean; viaStudentClassFallback?: boolean } = { academicYearApplied: !!range };
-    // Fallback 1: If no grades found WITH date filter, try without date filter (maybe range mismatch)
-    if (grades.length === 0 && range) {
-      const qbNoDate = this.gradeRepo.createQueryBuilder('g')
-        .leftJoin('g.class', 'c')
-        .leftJoin('g.student', 's')
-        .leftJoin('g.course', 'course')
-        .where('c.id = :classId', { classId });
-      const gradesNoDate = await qbNoDate.getMany();
-      if (gradesNoDate.length > 0) {
-        grades = gradesNoDate;
-        filteredBy.academicYearApplied = false; // date filter caused exclusion
-      }
-    }
-    // Fallback 2: If still none, attempt match via students' class (older grades might have null classId)
-    if (grades.length === 0) {
-      const studentIds = await this.studentRepo.createQueryBuilder('st')
-        .select('st.id', 'id')
-        .where('st.classId = :classId', { classId })
-        .getRawMany();
-      if (studentIds.length > 0) {
-        const ids = studentIds.map(r => r.id);
-        const qbStudent = this.gradeRepo.createQueryBuilder('g')
-          .leftJoin('g.student', 's')
-          .leftJoin('g.course', 'course')
-          .where('s.id IN (:...ids)', { ids });
-        const maybeRange = range ? qbStudent.andWhere('g.date BETWEEN :start AND :end', { start: range.start, end: range.end }) : qbStudent;
-        let studentGrades = await maybeRange.getMany();
-        if (studentGrades.length === 0 && range) {
-          // Retry without date
-            studentGrades = await this.gradeRepo.createQueryBuilder('g')
-              .leftJoin('g.student', 's')
-              .leftJoin('g.course', 'course')
-              .where('s.id IN (:...ids)', { ids })
-              .getMany();
-            if (studentGrades.length > 0) filteredBy.academicYearApplied = false;
-        }
-        if (studentGrades.length > 0) {
-          grades = studentGrades;
-          filteredBy = { ...filteredBy, viaStudentClassFallback: true };
-        }
-      }
-    }
+    if (range) qb.andWhere('g.date BETWEEN :start AND :end', { start: range.start, end: range.end });
+    const grades = await qb.getMany();
     const cls = await this.classRepo.findOne({ where: { id: classId } });
     if (grades.length === 0) {
-      return { class: cls ? { id: cls.id, name: cls.name } : { id: classId }, average: 0, studentStats: [], gradeDistribution: {}, topPerformers: [], meta: { reason: 'NO_GRADES_FOUND', filteredBy } };
+      return { class: cls ? { id: cls.id, name: cls.name } : { id: classId }, average: 0, studentStats: [], gradeDistribution: {}, topPerformers: [] };
     }
     const distribution: Record<string, number> = { A:0,B:0,C:0,D:0,F:0 };
     interface StudentAgg { total: number; count: number; firstName?: string; lastName?: string; }
@@ -126,22 +79,75 @@ export class AnalyticsService {
       studentStats,
       gradeDistribution: distribution,
       topPerformers: studentStats.slice(0,5),
-  meta: { filteredBy }
     };
   }
 
-  async getCourseAverages(academicYearId?: string) {
-    const range = await this.resolveAcademicYearRange(academicYearId);
+  async getCourseAverages(academicYearId?: string, scope: 'current-year' | 'all' = 'current-year') {
+    // If scope is all we ignore academic year filtering
+    const range = scope === 'current-year' ? await this.resolveAcademicYearRange(academicYearId) : null;
+
+    // Fetch grades with optional range
+    const where: any = {};
+    if (range) {
+      where.date = { $between: [range.start, range.end] }; // will be translated manually
+    }
+
+    // Use QueryBuilder for flexible filtering
     const qb = this.gradeRepo.createQueryBuilder('g')
-      .leftJoin('g.course', 'course')
-      .select('course.id', 'courseId')
-      .addSelect('course.name', 'courseName')
-      .addSelect('AVG(CAST(g.grade as float))', 'average')
-      .groupBy('course.id')
-      .addGroupBy('course.name');
-    if (range) qb.where('g.date BETWEEN :start AND :end', { start: range.start, end: range.end });
-    const raw = await qb.getRawMany();
-    return raw.map(r => ({ courseId: r.courseId, courseName: r.courseName, average: parseFloat(parseFloat(r.average||'0').toFixed(2)) }));
+      .leftJoinAndSelect('g.course', 'course');
+    if (range) {
+      qb.where('g.date BETWEEN :start AND :end', { start: range.start, end: range.end });
+    }
+    const grades = await qb.getMany();
+
+    // If no grades found under current-year scope, fallback to all time automatically
+    if (grades.length === 0 && scope === 'current-year') {
+      const allGrades = await this.gradeRepo.createQueryBuilder('g')
+        .leftJoinAndSelect('g.course', 'course')
+        .getMany();
+      return this.aggregateCourseAverages(allGrades, true);
+    }
+    return this.aggregateCourseAverages(grades, false);
+  }
+
+  private aggregateCourseAverages(grades: Grade[], isFallback: boolean) {
+    const courseMap = new Map<string, { name: string; total: number; count: number; numericSamples: number[] }>();
+    for (const g of grades) {
+      if (!g.course) continue;
+      const cid = g.course.id;
+      if (!courseMap.has(cid)) {
+        courseMap.set(cid, { name: g.course.name, total: 0, count: 0, numericSamples: [] });
+      }
+      const entry = courseMap.get(cid)!;
+      entry.count += 1;
+      const val = parseFloat(g.grade);
+      if (!isNaN(val)) {
+        entry.total += val;
+        entry.numericSamples.push(val);
+      }
+    }
+    const result = Array.from(courseMap.entries()).map(([courseId, v]) => {
+      const avg = v.numericSamples.length ? v.total / v.numericSamples.length : 0;
+      // Distribution
+      const dist = { A:0,B:0,C:0,D:0,F:0 } as Record<string, number>;
+      v.numericSamples.forEach(n => {
+        if (n >= 90) dist.A++; else if (n>=80) dist.B++; else if (n>=70) dist.C++; else if (n>=60) dist.D++; else dist.F++;
+      });
+      const best = Math.max(...v.numericSamples, 0);
+      const worst = Math.min(...v.numericSamples, 0);
+      return {
+        courseId,
+        courseName: v.name,
+        average: parseFloat(avg.toFixed(2)),
+        gradeCount: v.count,
+        numericGradeCount: v.numericSamples.length,
+        distribution: dist,
+        highest: isFinite(best) ? best : 0,
+        lowest: isFinite(worst) ? worst : 0,
+        fallbackAllTime: isFallback,
+      };
+    }).sort((a,b)=> b.average - a.average);
+    return result;
   }
 
   async getAttendanceOverview(academicYearId?: string) {
@@ -159,17 +165,44 @@ export class AnalyticsService {
 
   async getAttendanceByClass(academicYearId?: string) {
     const range = await this.resolveAcademicYearRange(academicYearId);
-    const qb = this.attendanceRepo.createQueryBuilder('a')
-      .leftJoin('a.class', 'c')
-      .select('c.id', 'classId')
-      .addSelect('c.name', 'className')
-      .addSelect('COUNT(*)', 'totalRecords')
-      .addSelect("SUM(CASE WHEN a.isPresent THEN 1 ELSE 0 END)", 'presentCount')
-      .groupBy('c.id')
-      .addGroupBy('c.name');
-    if (range) qb.where('a.date BETWEEN :start AND :end', { start: range.start, end: range.end });
-    const rows = await qb.getRawMany();
-    return rows.map(r => ({ classId: r.classId, className: r.className, totalRecords: parseInt(r.totalRecords,10), present: parseInt(r.presentCount,10), attendanceRate: parseFloat(((parseInt(r.presentCount,10)/(parseInt(r.totalRecords,10)||1))*100).toFixed(2)) }));
+
+    const build = (applyRange: boolean) => {
+      const qb = this.attendanceRepo.createQueryBuilder('a')
+        .leftJoin('a.class', 'c')
+        .select('c.id', 'classId')
+        .addSelect('c.name', 'className')
+        .addSelect('COUNT(a.id)', 'totalRecords')
+        .addSelect("SUM(CASE WHEN a.isPresent THEN 1 ELSE 0 END)", 'presentCount')
+        .groupBy('c.id')
+        .addGroupBy('c.name');
+      if (applyRange && range) {
+        qb.where('a.date BETWEEN :start AND :end', { start: range.start, end: range.end });
+      }
+      return qb;
+    };
+
+    let rows = await build(true).getRawMany();
+    let fallbackAllTime = false;
+    if (rows.length === 0) {
+      rows = await build(false).getRawMany();
+      if (range) fallbackAllTime = true;
+    }
+
+    return rows.map(r => {
+      const total = parseInt(r.totalRecords, 10) || 0;
+      const present = parseInt(r.presentCount, 10) || 0;
+      const absent = total - present;
+      const rate = total ? parseFloat(((present / total) * 100).toFixed(2)) : 0;
+      return {
+        classId: r.classId,
+        className: r.className,
+        totalRecords: total,
+        present,
+        absent,
+        attendanceRate: rate,
+        fallbackAllTime,
+      };
+    });
   }
 
   async getFeeCollectionStatus(academicYearId?: string) {
