@@ -105,34 +105,81 @@ export class StudentFeeExpectationService {
   }
 
   async getFeeSummaryForAcademicYear(academicYearId: string) {
-    const enrollments = await this.enrollmentRepo.find({ 
-      where: { academicYearId },
-      relations: ['student']
-    });
+    const [enrollments, feeStructures, payments, academicYear] = await Promise.all([
+      this.enrollmentRepo.find({ 
+        where: { academicYearId },
+        relations: ['student']
+      }),
+      this.feeStructureRepo.find({ 
+        where: { academicYearId, isActive: true }
+      }),
+      this.paymentRepo.find({ 
+        where: { academicYearId, status: 'completed' }
+      }),
+      this.academicYearRepo.findOne({ where: { id: academicYearId } })
+    ]);
 
-    const feeStructures = await this.feeStructureRepo.find({ 
-      where: { academicYearId, isActive: true }
-    });
+    if (!academicYear) {
+      throw new NotFoundException('Academic year not found');
+    }
 
-    const payments = await this.paymentRepo.find({ 
-      where: { academicYearId, status: 'completed' }
-    });
+    const totalStudents = enrollments.length;
 
-    // Calculate total expected fees
-    const totalExpected = feeStructures
+    // Calculate expected fees (mandatory only * total students) per user request
+    const expectedFees = feeStructures
       .filter(item => !item.isOptional)
-      .reduce((sum, item) => sum + (Number(item.amount) * enrollments.length), 0);
+      .reduce((sum, item) => sum + (Number(item.amount) * totalStudents), 0);
 
-    // Calculate total paid
-    const totalPaid = payments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+    // Total paid fees
+    const totalFeesPaid = payments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+
+    // Remaining (expected - paid)
+    const remainingFees = Math.max(0, expectedFees - totalFeesPaid);
+
+    // Overdue logic: if today is past academicYear.endDate, any remaining becomes overdue
+    const now = new Date();
+    let overdueFees = 0;
+    let overdueStudents = 0;
+    if (now > new Date(academicYear.endDate)) {
+      // Count students with outstanding > 0
+      // For performance, approximate by using average outstanding per student if needed.
+      // Here we compute per student expected = mandatory fees sum
+      const perStudentExpected = feeStructures
+        .filter(f => !f.isOptional)
+        .reduce((s, f) => s + Number(f.amount), 0);
+      // Map studentId -> paid
+      const paidMap: Record<string, number> = {};
+      payments.forEach(p => {
+        const sid = (p.student as any)?.id; // relation may or may not be loaded
+        if (sid) {
+          paidMap[sid] = (paidMap[sid] || 0) + Number(p.amount);
+        }
+      });
+      overdueStudents = enrollments.reduce((count, enr) => {
+        const studentId = enr.student?.id;
+        const paid = studentId ? (paidMap[studentId] || 0) : 0;
+        const outstanding = Math.max(0, perStudentExpected - paid);
+        return count + (outstanding > 0 ? 1 : 0);
+      }, 0);
+      overdueFees = remainingFees; // All remaining after end date is overdue
+    }
 
     return {
       academicYearId,
-      totalStudents: enrollments.length,
-      totalExpectedFees: totalExpected,
-      totalPaidFees: totalPaid,
-      outstandingFees: Math.max(0, totalExpected - totalPaid),
-      paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0,
+      totalStudents,
+      // Original fields (backward compatibility)
+      totalExpectedFees: expectedFees,
+      totalPaidFees: totalFeesPaid,
+      outstandingFees: remainingFees,
+      paymentPercentage: expectedFees > 0 ? (totalFeesPaid / expectedFees) * 100 : 0,
+      // New explicit fields per user wording
+      expectedFees,
+      totalFeesPaid,
+      remainingFees,
+      overdueFees,
+      overdueStudents,
+      isPastAcademicYear: new Date() > new Date(academicYear.endDate),
+      academicYearEndDate: academicYear.endDate,
       feeStructures: feeStructures.map(f => ({
         feeType: f.feeType,
         amount: f.amount,
@@ -174,28 +221,40 @@ export class StudentFeeExpectationService {
   }
 
   async listStudentFeeStatuses(academicYearId: string) {
-    const enrollments = await this.enrollmentRepo.find({ 
-      where: { academicYearId },
-      relations: ['student']
+    const [enrollments, payments, feeStructures, academicYear] = await Promise.all([
+      this.enrollmentRepo.find({ 
+        where: { academicYearId },
+        relations: ['student']
+      }),
+      this.paymentRepo.find({ 
+        where: { academicYearId, status: 'completed' },
+        relations: ['student']
+      }),
+      this.feeStructureRepo.find({ 
+        where: { academicYearId, isActive: true }
+      }),
+      this.academicYearRepo.findOne({ where: { id: academicYearId } })
+    ]);
+
+    const pastEnd = academicYear ? new Date() > new Date(academicYear.endDate) : false;
+    const perStudentMandatoryTotal = feeStructures
+      .filter(f => !f.isOptional)
+      .reduce((sum, f) => sum + Number(f.amount), 0);
+
+    // Pre-aggregate payments per student for efficiency
+    const paidMap: Record<string, number> = {};
+    payments.forEach(p => {
+      if (p.student?.id) {
+        paidMap[p.student.id] = (paidMap[p.student.id] || 0) + Number(p.amount);
+      }
     });
 
-    const payments = await this.paymentRepo.find({ 
-      where: { academicYearId, status: 'completed' }
-    });
-
-    const feeStructures = await this.feeStructureRepo.find({ 
-      where: { academicYearId, isActive: true }
-    });
-
-    // Calculate expected fees per student
-    const statuses = await Promise.all(enrollments.map(async enrollment => {
+    const statuses = enrollments.map(enrollment => {
       const student = enrollment.student;
-      const { totalExpected } = await this.computeExpectedFeesForStudent(student.id, academicYearId);
-      
-      const studentPayments = payments.filter(p => p.student?.id === student.id);
-      const totalPaid = studentPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const totalExpected = perStudentMandatoryTotal; // computed once
+      const totalPaid = paidMap[student.id] || 0;
       const outstanding = Math.max(0, totalExpected - totalPaid);
-
+      const isOverdue = pastEnd && outstanding > 0;
       return {
         studentId: student.id,
         studentName: `${student.firstName} ${student.lastName}`,
@@ -204,9 +263,11 @@ export class StudentFeeExpectationService {
         totalPaid,
         outstanding,
         paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0,
-        status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid')
+        status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'),
+        isOverdue,
+        overdueAmount: isOverdue ? outstanding : 0
       };
-    }));
+    });
 
     return statuses.sort((a, b) => b.outstanding - a.outstanding);
   }
