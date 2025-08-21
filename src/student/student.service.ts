@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindManyOptions, Repository, Like } from 'typeorm';
 import { Student } from '../user/entities/student.entity';
@@ -229,6 +229,42 @@ export class StudentsService {
       ...options,
       relations: ['user', 'parent', 'class'],
     });
+  }
+
+  /**
+   * Scoped variant that applies schoolId filtering for non super admins and optional search.
+   */
+  async findAndCountScoped(
+    params: { skip: number; take: number; search?: string },
+    schoolId?: string,
+    superAdmin = false,
+  ): Promise<[Student[], number]> {
+    const { skip, take, search } = params;
+    const qb = this.studentRepository
+      .createQueryBuilder('student')
+      .leftJoinAndSelect('student.user', 'user')
+      .leftJoinAndSelect('student.parent', 'parent')
+      .leftJoinAndSelect('student.class', 'class');
+
+    if (!superAdmin) {
+      if (!schoolId) {
+        return [[], 0];
+      }
+      qb.where('student.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      // allow super admin to optionally filter by a provided schoolId
+      qb.where('student.schoolId = :schoolId', { schoolId });
+    }
+
+    if (search) {
+      qb.andWhere(
+        '(LOWER(student.firstName) LIKE :search OR LOWER(student.lastName) LIKE :search OR LOWER(user.email) LIKE :search)',
+        { search: `%${search.toLowerCase()}%` },
+      );
+    }
+
+    const [students, total] = await qb.skip(skip).take(take).getManyAndCount();
+    return [students, total];
   }
 
   async getTotalStudentsCount(activeOnly?: boolean): Promise<number> {

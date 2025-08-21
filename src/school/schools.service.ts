@@ -46,12 +46,21 @@ export class SchoolsService {
       });
       const school = await manager.save(schoolEntity);
 
-      // Always auto-provision an initial ADMIN account with generated credentials
+      // Always auto-provision an initial ADMIN account with predefined credentials
       const { username, email, password, displayPassword } = this.generateAdminCredentials(school.name, school.code);
+      
+      // Check if username already exists and add suffix if needed
       const adminRepo = manager.getRepository(User);
+      let finalUsername = username;
+      let counter = 1;
+      while (await adminRepo.findOne({ where: { username: finalUsername } })) {
+        finalUsername = `${username}${counter}`;
+        counter++;
+      }
+      
       const hashed = await bcrypt.hash(password, 10);
       const adminUser = adminRepo.create({
-        username,
+        username: finalUsername,
         email,
         password: hashed,
         role: Role.ADMIN,
@@ -69,7 +78,7 @@ export class SchoolsService {
         school,
         admin: {
           id: adminUser.id,
-          username: adminUser.username,
+          username: finalUsername,
           email: adminUser.email,
           tempPassword: displayPassword, // show only once to caller
           forcePasswordReset: true,
@@ -113,21 +122,20 @@ export class SchoolsService {
   }
 
   private generateAdminCredentials(name: string, code: string) {
-    const normalizedCode = code.toLowerCase();
-    const baseUsername = `${normalizedCode}-admin`;
-    const randomSuffix = Math.random().toString(36).slice(2, 8); // 6 chars
-    const username = `${baseUsername}-${randomSuffix}`;
-    const email = `${username}@schools.local`; // could be replaced by custom domain logic
-    const password = this.generateSecurePassword();
+    // Extract first word from school name and convert to lowercase
+    const firstWord = name.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+    
+    // Ensure we have at least a fallback if first word is empty after cleaning
+    const cleanFirstWord = firstWord || 'school';
+    const username = `${cleanFirstWord}admin`;
+    
+    // Email format: admin@schoolcode.com (clean code for valid domain)
+    const cleanCode = code.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const email = `admin@${cleanCode}.com`;
+    
+    // Default password (admin will change on first login)
+    const password = '12345678';
+    
     return { username, email, password, displayPassword: password };
-  }
-
-  private generateSecurePassword(length = 14) {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*()_-+=';
-    let pwd = '';
-    for (let i = 0; i < length; i++) {
-      pwd += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return pwd;
   }
 }

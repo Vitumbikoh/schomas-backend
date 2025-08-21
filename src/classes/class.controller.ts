@@ -8,6 +8,7 @@ import {
   UsePipes,
   ValidationPipe,
   Get,
+  Request,
 } from '@nestjs/common';
 import { ClassService } from './class.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
@@ -25,8 +26,9 @@ export class ClassController {
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(JwtAuthGuard)
   @UsePipes(new ValidationPipe({ transform: true })) // Add this decorator
-  async createClass(@Body() createClassDto: CreateClassDto) {
-    const created = await this.classService.createClass(createClassDto);
+  async createClass(@Body() createClassDto: CreateClassDto, @Request() req) {
+    const schoolId = req.user?.schoolId;
+    const created = await this.classService.createClass(createClassDto, schoolId);
     await this.systemLoggingService.logAction({
       action: 'CLASS_CREATED',
       module: 'CLASS',
@@ -39,7 +41,7 @@ export class ClassController {
   }
 
   @Get()
-  async getAllClasses(): Promise<ClassResponseDto[]> {
-    return this.classService.getAllClasses();
+  async getAllClasses(@Request() req): Promise<ClassResponseDto[]> {
+    return this.classService.getAllClasses(req.user?.schoolId);
   }
 }

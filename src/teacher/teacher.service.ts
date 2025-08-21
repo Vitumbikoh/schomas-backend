@@ -124,22 +124,29 @@ export class TeachersService {
     page: number,
     limit: number,
     search?: string,
+    schoolId?: string,
+    superAdmin = false,
   ): Promise<[Teacher[], number]> {
     const skip = (page - 1) * limit;
-    const where = search
-      ? [
-          { firstName: Like(`%${search}%`) },
-          { lastName: Like(`%${search}%`) },
-          { user: { email: Like(`%${search}%`) } },
-        ]
-      : {};
+    const qb = this.teacherRepository
+      .createQueryBuilder('teacher')
+      .leftJoinAndSelect('teacher.user', 'user');
 
-    const [teachers, total] = await this.teacherRepository.findAndCount({
-      where,
-      relations: ['user'],
-      skip,
-      take: limit,
-    });
+    if (!superAdmin) {
+      if (!schoolId) return [[], 0];
+      qb.where('teacher.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.where('teacher.schoolId = :schoolId', { schoolId });
+    }
+
+    if (search) {
+      qb.andWhere(
+        '(LOWER(teacher.firstName) LIKE :search OR LOWER(teacher.lastName) LIKE :search OR LOWER(user.email) LIKE :search)',
+        { search: `%${search.toLowerCase()}%` },
+      );
+    }
+
+    const [teachers, total] = await qb.skip(skip).take(limit).getManyAndCount();
 
     console.log(`Found ${teachers.length} teachers, total: ${total}`);
     return [teachers, total];

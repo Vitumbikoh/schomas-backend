@@ -90,6 +90,10 @@ export class TeacherController {
   @Post('teachers')
   async createTeacher(@Body() createTeacherDto: CreateTeacherDto, @Request() req) {
     try {
+      // Attach schoolId from requesting admin if not super admin override
+      if (req.user?.role !== 'SUPER_ADMIN') {
+        (createTeacherDto as any).schoolId = req.user?.schoolId;
+      }
       const newTeacher = await this.teacherService.create(createTeacherDto);
 
       // Log teacher creation
@@ -151,16 +155,20 @@ export class TeacherController {
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
     @Query('search') search?: string,
+    @Query('schoolId') schoolIdFilter?: string,
   ) {
     try {
       console.log('Authenticated user:', req.user); // Log user details
       const pageNum = parseInt(page, 10) || 1;
       const limitNum = parseInt(limit, 10) || 10;
-
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
       const [teachers, total] = await this.teacherService.findAllPaginated(
         pageNum,
         limitNum,
         search,
+        effectiveSchoolId,
+        isSuper,
       );
 
       return {
@@ -171,7 +179,8 @@ export class TeacherController {
           totalPages: Math.ceil(total / limitNum),
           totalItems: total,
           itemsPerPage: limitNum,
-        },
+  },
+  filters: { schoolId: effectiveSchoolId, search },
       };
     } catch (error) {
       console.error('Error fetching teachers:', error);

@@ -3,6 +3,7 @@ import { Student } from '../../user/entities/student.entity';
 import { Finance } from '../../user/entities/finance.entity';
 import { User } from '../../user/entities/user.entity';
 import { AcademicYear } from '../../settings/entities/academic-year.entity';
+import { School } from 'src/school/entities/school.entity';
 
 @Entity()
 export class FeePayment {
@@ -54,4 +55,11 @@ export class FeePayment {
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'processedByAdminId' })
   processedByAdmin?: User;
+
+  // Multi-tenant scope
+  @Column({ type: 'uuid', nullable: true })
+  schoolId: string;
+  @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'schoolId' })
+  school: School;
 }

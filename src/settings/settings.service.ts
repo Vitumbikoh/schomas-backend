@@ -125,32 +125,35 @@ export class SettingsService {
       }
 
       // Rest of your admin-specific settings...
-      if (user.role === Role.ADMIN) {
-        // School settings
-        const schoolSettings =
-          (await this.schoolSettingsRepository.findOne({
-            where: { id: 'default-school-settings' },
-          })) ||
-          (await this.schoolSettingsRepository.save({
-            id: 'default-school-settings',
+      if (user.role === Role.ADMIN && user.schoolId) {
+        // School settings - scoped by user's schoolId
+        let schoolSettings = await this.schoolSettingsRepository.findOne({
+          where: { schoolId: user.schoolId },
+        });
+
+        if (!schoolSettings) {
+          // Create default settings for this school
+          schoolSettings = await this.schoolSettingsRepository.save({
+            schoolId: user.schoolId,
             schoolName: '',
             schoolEmail: '',
             schoolPhone: '',
             schoolAddress: '',
             schoolAbout: '',
-          }));
+          } as Partial<SchoolSettings>);
+        }
 
         response.schoolSettings = {
-          schoolName: schoolSettings.schoolName,
-          schoolEmail: schoolSettings.schoolEmail,
-          schoolPhone: schoolSettings.schoolPhone,
-          schoolAddress: schoolSettings.schoolAddress,
-          schoolAbout: schoolSettings.schoolAbout,
+          schoolName: schoolSettings.schoolName || '',
+          schoolEmail: schoolSettings.schoolEmail || '',
+          schoolPhone: schoolSettings.schoolPhone || '',
+          schoolAddress: schoolSettings.schoolAddress || '',
+          schoolAbout: schoolSettings.schoolAbout || '',
         };
 
-        // Academic calendar - with proper date handling
+        // Academic calendar - with proper date handling (scoped to admin's school)
         const academicCalendar = await this.academicCalendarRepository.findOne({
-          where: { isActive: true },
+          where: { schoolId: user.schoolId, isActive: true },
         });
 
         // Update the academic calendar handling part
@@ -284,10 +287,11 @@ export class SettingsService {
       await queryRunner.manager.save(User, user);
 
       // Update admin-specific settings
-      if (user.role === Role.ADMIN) {
+      if (user.role === Role.ADMIN && user.schoolId) {
         if (updateDto.schoolSettings) {
           await this.updateSchoolSettings(
             updateDto.schoolSettings,
+            user.schoolId,
             queryRunner,
           );
         }
@@ -383,28 +387,29 @@ export class SettingsService {
     }));
   }
 
-  async activateAcademicCalendar(id: string): Promise<AcademicCalendarDto> {
+  async activateAcademicCalendar(id: string, schoolId: string): Promise<AcademicCalendarDto> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      // First deactivate all other calendars
+      // First check if the calendar belongs to the school
+      const calendar = await queryRunner.manager.findOne(AcademicCalendar, {
+        where: { id, schoolId },
+      });
+
+      if (!calendar) {
+        throw new NotFoundException('Academic calendar not found for your school');
+      }
+
+      // Deactivate all other calendars for this school only
       await queryRunner.manager.update(
         AcademicCalendar,
-        { isActive: true },
+        { schoolId, isActive: true },
         { isActive: false },
       );
 
       // Then activate the selected one
-      const calendar = await queryRunner.manager.findOne(AcademicCalendar, {
-        where: { id },
-      });
-
-      if (!calendar) {
-        throw new NotFoundException('Academic calendar not found');
-      }
-
       calendar.isActive = true;
       const updatedCalendar = await queryRunner.manager.save(
         AcademicCalendar,
@@ -877,17 +882,18 @@ export class SettingsService {
 
   private async updateSchoolSettings(
     schoolSettings: SchoolSettingsDto,
+    schoolId: string,
     queryRunner: QueryRunner,
   ) {
     const existingSettings = await queryRunner.manager.findOne(SchoolSettings, {
-      where: { id: 'default-school-settings' },
+      where: { schoolId },
     });
 
     if (!existingSettings) {
       await queryRunner.manager.save(SchoolSettings, {
-        id: 'default-school-settings',
+        schoolId,
         ...schoolSettings,
-      });
+      } as Partial<SchoolSettings>);
     } else {
       await queryRunner.manager.save(SchoolSettings, {
         ...existingSettings,

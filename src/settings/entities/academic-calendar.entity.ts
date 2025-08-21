@@ -1,14 +1,22 @@
 // src/settings/entities/academic-calendar.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, OneToMany, ManyToOne, JoinColumn } from 'typeorm';
 import { AcademicYear } from './academic-year.entity';
+import { School } from '../../school/entities/school.entity';
 
 @Entity()
 export class AcademicCalendar {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ unique: true })
+  @Column()
   academicYear: string;
+
+  @Column({ type: 'uuid' })
+  schoolId: string;
+
+  @ManyToOne(() => School, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'schoolId' })
+  school: School;
 
   @Column({ type: 'date', nullable: true })
   startDate?: Date;

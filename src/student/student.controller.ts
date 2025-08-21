@@ -183,30 +183,24 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
   @ApiOperation({ summary: 'Get all students' })
   @ApiResponse({ status: 200, description: 'List of students retrieved successfully' })
   async getAllStudents(
+    @Request() req,
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
     @Query('search') search?: string,
+    @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
-    this.logger.log(`Fetching all students, page: ${page}, limit: ${limit}, search: ${search}`);
+    this.logger.log(`Fetching students page=${page} limit=${limit} search=${search}`);
     try {
       const pageNum = parseInt(page, 10) || 1;
       const limitNum = parseInt(limit, 10) || 10;
       const skip = (pageNum - 1) * limitNum;
-
-      const whereConditions = search
-        ? [
-            { firstName: Like(`%${search}%`) },
-            { lastName: Like(`%${search}%`) },
-          ]
-        : {};
-
-      const [students, total] = await this.studentService.findAndCount({
-        skip,
-        take: limitNum,
-        where: whereConditions,
-        relations: ['user'],
-      });
-
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
+      const [students, total] = await this.studentService.findAndCountScoped(
+        { skip, take: limitNum, search },
+        effectiveSchoolId,
+        isSuper,
+      );
       return {
         students,
         pagination: {
@@ -215,6 +209,7 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
           totalItems: total,
           itemsPerPage: limitNum,
         },
+        filters: { schoolId: effectiveSchoolId, search }
       };
     } catch (error) {
       this.logger.error(`Failed to fetch students: ${error.message}`);
@@ -355,18 +350,19 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Get a specific student' })
   @ApiResponse({ status: 200, description: 'Student retrieved successfully' })
-  async getStudent(@Param('id') id: string) {
+  async getStudent(@Param('id') id: string, @Request() req) {
     this.logger.log(`Fetching student with id: ${id}`);
     try {
       const student = await this.studentService.findOne(id);
-      if (!student) {
-        this.logger.error(`Student not found for id: ${id}`);
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      if (!isSuper && student.schoolId && student.schoolId !== req.user?.schoolId) {
         throw new NotFoundException('Student not found');
       }
       return student;
     } catch (error) {
       this.logger.error(`Failed to fetch student: ${error.message}`);
-      throw new NotFoundException(error.message);
+      if (error instanceof NotFoundException) throw error;
+      throw new NotFoundException('Student not found');
     }
   }
 
@@ -383,6 +379,10 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
     try {
       // Get the original student data first
       const originalStudent = await this.studentService.findOne(id);
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      if (!isSuper && originalStudent.schoolId && originalStudent.schoolId !== req.user?.schoolId) {
+        throw new NotFoundException('Student not found');
+      }
       
       const updatedStudent = await this.studentService.update(
         id,
@@ -449,6 +449,10 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
     try {
       // Get student data before deletion for logging
       const studentToDelete = await this.studentService.findOne(id);
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      if (!isSuper && studentToDelete.schoolId && studentToDelete.schoolId !== req.user?.schoolId) {
+        throw new NotFoundException('Student not found');
+      }
       
       await this.studentService.remove(id);
 

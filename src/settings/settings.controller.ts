@@ -95,6 +95,17 @@ export class SettingsController {
     if (!req.user || !req.user.sub) {
       throw new UnauthorizedException('Invalid user credentials');
     }
+
+    // Check if user is trying to update school settings
+    if (updateDto.schoolSettings) {
+      if (req.user.role !== 'ADMIN') {
+        throw new UnauthorizedException('Only school administrators can update school settings');
+      }
+      if (!req.user.schoolId) {
+        throw new UnauthorizedException('Administrator must be associated with a school to update school settings');
+      }
+    }
+
     const before = await this.settingsService.getSettings(req.user.sub);
     const updated = await this.settingsService.updateSettings(req.user.sub, updateDto);
     await this.systemLoggingService.logAction({
@@ -122,22 +133,29 @@ export class SettingsController {
       );
     }
 
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException(
+        'Administrator must be associated with a school to create academic calendars',
+      );
+    }
+
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      // First deactivate all other calendars if this one should be active
+      // First deactivate all other calendars for this school if this one should be active
       if (dto.isActive) {
         await queryRunner.manager.update(
           AcademicCalendar,
-          { isActive: true },
+          { schoolId: req.user.schoolId, isActive: true },
           { isActive: false },
         );
       }
 
       const calendarData = {
         academicYear: dto.academicYear,
+        schoolId: req.user.schoolId,
         startDate: dto.startDate ? new Date(dto.startDate) : undefined,
         endDate: dto.endDate ? new Date(dto.endDate) : undefined,
         isActive: dto.isActive ?? false,
@@ -273,7 +291,14 @@ export class SettingsController {
       );
     }
 
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException(
+        'Administrator must be associated with a school to access academic calendars',
+      );
+    }
+
     const calendars = await this.academicCalendarRepository.find({
+      where: { schoolId: req.user.schoolId },
       order: { createdAt: 'DESC' },
     });
 
@@ -301,27 +326,34 @@ export class SettingsController {
       );
     }
 
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException(
+        'Administrator must be associated with a school to manage academic calendars',
+      );
+    }
+
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      // First deactivate all other calendars
+      // First check if the calendar belongs to the admin's school
+      const calendar = await queryRunner.manager.findOne(AcademicCalendar, {
+        where: { id, schoolId: req.user.schoolId },
+      });
+
+      if (!calendar) {
+        throw new NotFoundException('Academic calendar not found for your school');
+      }
+
+      // Deactivate all other calendars for this school only
       await queryRunner.manager.update(
         AcademicCalendar,
-        { isActive: true },
+        { schoolId: req.user.schoolId, isActive: true },
         { isActive: false },
       );
 
       // Then activate the selected one
-      const calendar = await queryRunner.manager.findOneBy(AcademicCalendar, {
-        id,
-      });
-
-      if (!calendar) {
-        throw new NotFoundException('Academic calendar not found');
-      }
-
       calendar.isActive = true;
       const updatedCalendar = await queryRunner.manager.save(
         AcademicCalendar,
@@ -432,6 +464,122 @@ async createAcademicYearTerm(
       throw new UnauthorizedException('Only admins or finance can access academic years');
     }
     return this.settingsService.getAcademicYears(academicCalendarId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('active-academic-calendar')
+  async getActiveAcademicCalendar(
+    @Request() req,
+  ): Promise<AcademicCalendarDto | null> {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only school administrators can access academic calendar');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
+    const activeCalendar = await this.academicCalendarRepository.findOne({
+      where: { schoolId: req.user.schoolId, isActive: true },
+    });
+
+    if (!activeCalendar) {
+      return null;
+    }
+
+    return {
+      id: activeCalendar.id,
+      academicYear: activeCalendar.academicYear,
+      startDate: activeCalendar.startDate ? new Date(activeCalendar.startDate).toISOString() : undefined,
+      endDate: activeCalendar.endDate ? new Date(activeCalendar.endDate).toISOString() : undefined,
+      isActive: activeCalendar.isActive,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('set-active-academic-calendar/:id')
+  async setActiveAcademicCalendar(
+    @Request() req,
+    @Param('id') id: string,
+  ): Promise<{ success: boolean; message: string; activeCalendar?: AcademicCalendarDto }> {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only school administrators can set active academic calendar');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
+    try {
+      const queryRunner = this.dataSource.createQueryRunner();
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+
+      try {
+        // Verify the calendar belongs to the admin's school
+        const calendar = await queryRunner.manager.findOne(AcademicCalendar, {
+          where: { id, schoolId: req.user.schoolId },
+        });
+
+        if (!calendar) {
+          throw new NotFoundException('Academic calendar not found for your school');
+        }
+
+        // Deactivate all other calendars for this school
+        await queryRunner.manager.update(
+          AcademicCalendar,
+          { schoolId: req.user.schoolId, isActive: true },
+          { isActive: false },
+        );
+
+        // Activate the selected calendar
+        calendar.isActive = true;
+        const updatedCalendar = await queryRunner.manager.save(AcademicCalendar, calendar);
+
+        await queryRunner.commitTransaction();
+
+        // Log the action
+        await this.systemLoggingService.logAction({
+          action: 'ACADEMIC_CALENDAR_ACTIVATED',
+          module: 'SETTINGS',
+          level: 'info',
+          performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+          entityId: updatedCalendar.id,
+          entityType: 'AcademicCalendar',
+          metadata: { 
+            description: `Academic calendar ${updatedCalendar.academicYear} set as active`,
+            schoolId: req.user.schoolId 
+          }
+        });
+
+        return {
+          success: true,
+          message: `Academic calendar for ${updatedCalendar.academicYear} is now active`,
+          activeCalendar: {
+            id: updatedCalendar.id,
+            academicYear: updatedCalendar.academicYear,
+            startDate: updatedCalendar.startDate ? new Date(updatedCalendar.startDate).toISOString() : undefined,
+            endDate: updatedCalendar.endDate ? new Date(updatedCalendar.endDate).toISOString() : undefined,
+            isActive: updatedCalendar.isActive,
+          }
+        };
+      } catch (error) {
+        if (queryRunner.isTransactionActive) {
+          await queryRunner.rollbackTransaction();
+        }
+        throw error;
+      } finally {
+        await queryRunner.release();
+      }
+    } catch (error) {
+      this.logger.error(`Error setting active academic calendar: ${error.message}`, error.stack);
+      
+      if (error instanceof NotFoundException || error instanceof UnauthorizedException) {
+        throw error;
+      }
+      
+      throw new InternalServerErrorException('Failed to set active academic calendar');
+    }
   }
 
 }

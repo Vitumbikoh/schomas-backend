@@ -11,7 +11,7 @@ export class ClassService {
     private classRepository: Repository<Class>,
   ) {}
 
-  async createClass(createClassDto: CreateClassDto): Promise<ClassResponseDto> {
+  async createClass(createClassDto: CreateClassDto, schoolId?: string): Promise<ClassResponseDto> {
     const { name, numericalName, description } = createClassDto;
   
     // Enhanced validation
@@ -38,9 +38,10 @@ export class ClassService {
       name: name.trim(),
       numericalName,
       description: description?.trim(),
-    });
+      schoolId: schoolId || undefined,
+    } as Partial<Class>);
   
-    const savedClass = await this.classRepository.save(newClass);
+  const savedClass = await this.classRepository.save(newClass as Class);
     
     return {
       id: savedClass.id,
@@ -52,8 +53,12 @@ export class ClassService {
     };
   }
 
-  async getAllClasses(): Promise<ClassResponseDto[]> {
-    const classes = await this.classRepository.find();
+  async getAllClasses(schoolId?: string): Promise<ClassResponseDto[]> {
+    const qb = this.classRepository.createQueryBuilder('class');
+    if (schoolId) {
+      qb.where('class.schoolId = :schoolId', { schoolId });
+    }
+    const classes = await qb.getMany();
     return classes.map(classItem => ({
       id: classItem.id,
       name: classItem.name,

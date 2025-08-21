@@ -1,9 +1,17 @@
-import { Entity, Column, PrimaryColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { School } from '../../school/entities/school.entity';
 
 @Entity()
 export class SchoolSettings {
-  @PrimaryColumn({ type: 'varchar', default: 'default-school-settings' })
+  @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @Column({ type: 'uuid' })
+  schoolId: string;
+
+  @ManyToOne(() => School, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'schoolId' })
+  school: School;
 
   @Column({ nullable: true })
   schoolName: string;

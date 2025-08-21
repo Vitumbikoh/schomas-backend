@@ -38,44 +38,45 @@ export class FinanceService {
     private systemLoggingService: SystemLoggingService,
   ) {}
 
-  async getDashboardData(userId: string) {
+  async getDashboardData(userId: string, schoolId?: string, superAdmin = false) {
     const financeUser = await this.getFinanceUser(userId);
 
     // Get current academic year for filtering
     const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
     const academicYearFilter = currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {};
 
-    const [pendingPayments, pendingBudgets, recentTransactions] =
-      await Promise.all([
-        this.paymentRepository.find({
-          where: { status: 'pending', ...academicYearFilter },
-          take: 5,
-          order: { createdAt: 'DESC' },
-          relations: ['student', 'academicYear'],
-        }),
-        this.budgetRepository.find({
-          where: { status: 'pending' },
-          take: 5,
-          order: { createdAt: 'DESC' },
-        }),
-        this.paymentRepository.find({
-          where: { status: 'completed', ...academicYearFilter },
-          take: 5,
-          order: { paymentDate: 'DESC' },
-          relations: ['student', 'academicYear'],
-        }),
-      ]);
+    const schoolScope = !superAdmin && schoolId ? { schoolId } : superAdmin && schoolId ? { schoolId } : {};
+
+    const [pendingPayments, pendingBudgets, recentTransactions] = await Promise.all([
+      this.paymentRepository.find({
+        where: { status: 'pending', ...academicYearFilter, ...schoolScope },
+        take: 5,
+        order: { createdAt: 'DESC' },
+        relations: ['student', 'academicYear'],
+      }),
+      this.budgetRepository.find({
+        where: { status: 'pending', ...(schoolScope || {}) },
+        take: 5,
+        order: { createdAt: 'DESC' },
+      }),
+      this.paymentRepository.find({
+        where: { status: 'completed', ...academicYearFilter, ...schoolScope },
+        take: 5,
+        order: { paymentDate: 'DESC' },
+        relations: ['student', 'academicYear'],
+      }),
+    ]);
 
     const totalProcessedPayments = await this.paymentRepository.count({
-      where: { status: 'completed', ...academicYearFilter },
+      where: { status: 'completed', ...academicYearFilter, ...schoolScope },
     });
 
     const totalRevenueResult = await this.paymentRepository
       .createQueryBuilder('payment')
       .select('SUM(payment.amount)', 'sum')
-      .where('payment.status = :status', { status: 'completed' })
-      .andWhere(currentAcademicYear ? 'payment.academicYearId = :academicYearId' : '1=1', 
-        currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {})
+  .where('payment.status = :status', { status: 'completed' })
+  .andWhere(currentAcademicYear ? 'payment.academicYearId = :academicYearId' : '1=1', currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {})
+  .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
       .getRawOne();
 
     const totalRevenue = parseFloat(totalRevenueResult?.sum || '0');
@@ -102,7 +103,7 @@ export class FinanceService {
     };
   }
 
-  async processPayment(user: { id: string; role: Role }, processPaymentDto: ProcessPaymentDto, request?: any) {
+  async processPayment(user: { id: string; role: Role; schoolId?: string }, processPaymentDto: ProcessPaymentDto, request?: any, superAdmin = false) {
     const startTime = Date.now();
     
     try {
@@ -170,6 +171,7 @@ export class FinanceService {
         paymentDate: new Date(processPaymentDto.paymentDate),
         student: { id: student.id },
         academicYearId: currentAcademicYear.id,
+        schoolId: user.schoolId || undefined,
         ...(financeUser
           ? { processedBy: { id: financeUser.id } }
           : { processedByAdmin: { id: processingUser.id } }),

@@ -5,11 +5,13 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   ManyToOne,
+  JoinColumn,
 } from 'typeorm';
 import { Course } from 'src/course/entities/course.entity';
 import { Teacher } from 'src/user/entities/teacher.entity';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
 import { Class } from 'src/classes/entity/class.entity';
+import { School } from 'src/school/entities/school.entity';
 
 @Entity('schedules')
 export class Schedule {
@@ -55,4 +57,11 @@ export class Schedule {
 
   @ManyToOne(() => Class, (classEntity) => classEntity.schedules)
   class: Class;
+
+  // Multi-tenant scope
+  @Column({ type: 'uuid', nullable: true })
+  schoolId: string;
+  @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'schoolId' })
+  school: School;
 }
