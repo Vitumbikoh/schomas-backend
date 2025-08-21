@@ -668,29 +668,45 @@ async getParentPayments(
     });
   }
 
-  async getAllPayments(page: number = 1, limit: number = 10, search: string = '') {
+  async getAllPayments(
+    page: number = 1,
+    limit: number = 10,
+    search: string = '',
+    schoolId?: string,
+    superAdmin = false,
+  ) {
     // Get current academic year for filtering
     const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
-    
-    const where: any = {};
 
-    // Add academic year filter if available
+    const qb = this.paymentRepository
+      .createQueryBuilder('payment')
+      .leftJoinAndSelect('payment.student', 'student')
+      .leftJoinAndSelect('payment.processedBy', 'processedBy')
+      .leftJoinAndSelect('payment.processedByAdmin', 'processedByAdmin')
+      .leftJoinAndSelect('payment.academicYear', 'academicYear')
+      .orderBy('payment.paymentDate', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
     if (currentAcademicYear) {
-      where.academicYearId = currentAcademicYear.id;
+      qb.andWhere('payment.academicYearId = :ayId', { ayId: currentAcademicYear.id });
+    }
+
+    if (!superAdmin) {
+      if (!schoolId) {
+        return { payments: [], total: 0 };
+      }
+      qb.andWhere('payment.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      // Allow super admin optional narrowing
+      qb.andWhere('payment.schoolId = :schoolId', { schoolId });
     }
 
     if (search) {
-      where.receiptNumber = Like(`%${search}%`);
+      qb.andWhere('LOWER(payment.receiptNumber) LIKE :search', { search: `%${search.toLowerCase()}%` });
     }
 
-    const [payments, total] = await this.paymentRepository.findAndCount({
-      where,
-      relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { paymentDate: 'DESC' },
-    });
-
+    const [payments, total] = await qb.getManyAndCount();
     return { payments, total };
   }
 
@@ -701,18 +717,31 @@ async getParentPayments(
     });
   }
 
-  async getRecentPayments(limit: number): Promise<any[]> {
+  async getRecentPayments(limit: number, schoolId?: string, superAdmin = false): Promise<any[]> {
     // Get current academic year for filtering
     const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
-    
-    return this.paymentRepository.find({
-      where: { 
-        status: 'completed',
-        ...(currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {})
-      },
-      take: limit,
-      order: { paymentDate: 'DESC' },
-      relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
-    });
+
+    const qb = this.paymentRepository
+      .createQueryBuilder('payment')
+      .leftJoinAndSelect('payment.student', 'student')
+      .leftJoinAndSelect('payment.processedBy', 'processedBy')
+      .leftJoinAndSelect('payment.processedByAdmin', 'processedByAdmin')
+      .leftJoinAndSelect('payment.academicYear', 'academicYear')
+      .where('payment.status = :status', { status: 'completed' })
+      .orderBy('payment.paymentDate', 'DESC')
+      .take(limit);
+
+    if (currentAcademicYear) {
+      qb.andWhere('payment.academicYearId = :ayId', { ayId: currentAcademicYear.id });
+    }
+
+    if (!superAdmin) {
+      if (!schoolId) return [];
+      qb.andWhere('payment.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.andWhere('payment.schoolId = :schoolId', { schoolId });
+    }
+
+    return qb.getMany();
   }
 }

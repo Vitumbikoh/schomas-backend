@@ -216,11 +216,19 @@ export class EnrollmentService {
     return { enrollments, total };
   }
 
-  async findRecent(limit: number): Promise<any[]> {
-    return this.enrollmentRepository.find({
-      take: limit,
-      order: { createdAt: 'DESC' },
-      relations: ['student', 'course'],
-    });
+  async findRecent(limit: number, schoolId?: string, superAdmin = false): Promise<any[]> {
+    const qb = this.enrollmentRepository
+      .createQueryBuilder('enrollment')
+      .leftJoinAndSelect('enrollment.student', 'student')
+      .leftJoinAndSelect('enrollment.course', 'course')
+      .orderBy('enrollment.createdAt', 'DESC')
+      .take(limit);
+    if (!superAdmin) {
+      if (!schoolId) return [];
+      qb.where('enrollment.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.where('enrollment.schoolId = :schoolId', { schoolId });
+    }
+    return qb.getMany();
   }
 }

@@ -23,7 +23,7 @@ import { FeePayment } from '../finance/entities/fee-payment.entity';
 @ApiBearerAuth()
 @Controller('admin/reports')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles(Role.ADMIN)
+@Roles(Role.ADMIN, Role.SUPER_ADMIN)
 export class ReportsController {
   constructor(
     private readonly studentsService: StudentsService,
@@ -84,12 +84,18 @@ export class ReportsController {
         teacherWhere.gender = teacherGender;
       }
 
+      const user = req.user;
+      const superAdmin = user.role === Role.SUPER_ADMIN;
+      // Allow SUPER_ADMIN to optionally query a specific school via ?schoolId
+      const targetSchoolId = superAdmin ? (req.query.schoolId as string) : user.schoolId;
+
       const [students, teachers, courses, enrollments, feePayments] = await Promise.all([
-        this.studentsService.findAll(studentWhere),
-        this.teachersService.findAll(teacherWhere),
-        this.courseService.findAll(),
-        this.enrollmentService.findAll(),
-        this.financeService.getAllPayments(1, 1000, ''),
+        this.studentsService.findAll(studentWhere, targetSchoolId, superAdmin),
+        // Teacher service currently lacks a generic findAll with scoping; use paginated with large limit
+        this.teachersService.findAllPaginated(1, 5000, undefined, targetSchoolId, superAdmin).then(r => r[0]),
+        this.courseService.findAll({ schoolId: targetSchoolId, superAdmin }),
+        this.enrollmentService.findAll(targetSchoolId, superAdmin),
+        this.financeService.getAllPayments(1, 1000, '', targetSchoolId, superAdmin),
       ]);
 
       const totalStudents = students.length;
@@ -106,7 +112,7 @@ export class ReportsController {
       const enrollmentsByMonth = await this.getEnrollmentsByMonth(enrollments);
       const paymentsByMonth = await this.getPaymentsByMonth(feePayments.payments); // Fix: Use feePayments.payments
       const coursePopularity = await this.getCoursePopularity(courses, enrollments);
-      const recentActivities = await this.getRecentActivities();
+  const recentActivities = await this.getRecentActivities(targetSchoolId, superAdmin);
 
       return {
         totalStudents,
@@ -191,23 +197,23 @@ export class ReportsController {
       .sort((a, b) => b.enrollments - a.enrollments);
   }
 
-  private async getRecentActivities(): Promise<Array<{ id: string; type: string; description: string; date: string }>> {
+  private async getRecentActivities(schoolId?: string, superAdmin = false): Promise<Array<{ id: string; type: string; description: string; date: string }>> {
     const [recentEnrollments, recentPayments] = await Promise.all([
-      this.enrollmentService.findRecent(5),
-      this.financeService.getRecentPayments(5),
+      this.enrollmentService.findRecent(5, schoolId, superAdmin),
+      this.financeService.getRecentPayments(5, schoolId, superAdmin),
     ]);
 
     const activities = [
       ...recentEnrollments.map((enrollment) => ({
         id: enrollment.id,
         type: 'Enrollment',
-        description: `Student ${enrollment.studentName} enrolled in ${enrollment.courseName}`,
-        date: enrollment.createdAt || enrollment.enrollmentDate,
+        description: `Student ${enrollment.student?.firstName || ''} ${enrollment.student?.lastName || ''} enrolled in ${enrollment.course?.name || 'Unknown Course'}`.trim(),
+        date: (enrollment as any).createdAt || enrollment.enrollmentDate,
       })),
       ...recentPayments.map((payment) => ({
         id: payment.id,
         type: 'Payment',
-        description: `Payment of $${payment.amount} received from ${payment.studentName}`,
+        description: `Payment of $${payment.amount} received from ${(payment.student?.firstName || '') + ' ' + (payment.student?.lastName || '')}`.trim(),
         date: payment.paymentDate,
       })),
     ];
