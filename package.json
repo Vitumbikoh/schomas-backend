@@ -7,12 +7,12 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format": "prettier --write 'src/**/*.ts' 'test/**/*.ts'",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "lint": "eslint '{src,apps,libs,test}/**/*.ts' --fix",
     "test": "jest",
     "typeorm": "ts-node ./node_modules/typeorm/cli",
     "migration:generate": "npm run build && npm run typeorm migration:generate -- src/migrations/$npm_config_name -d src/data-source.ts",
@@ -22,8 +22,11 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "seed:admin": "ts-node src/seed-admin.ts"
-  ,"seed:superadmin": "ts-node src/scripts/create-super-admin.ts"
+    "seed:admin": "ts-node src/seed-admin.ts",
+    "seed:superadmin": "ts-node -r tsconfig-paths/register src/scripts/create-super-admin.ts",
+    "backfill:user-settings": "ts-node -r tsconfig-paths/register src/scripts/backfill-user-settings.ts",
+    "fix:user-settings": "ts-node -r tsconfig-paths/register src/scripts/fix-user-settings-orphans.ts",
+    "repair:user-settings": "ts-node src/scripts/repair-user-settings.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.12",
