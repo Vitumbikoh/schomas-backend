@@ -19,9 +19,59 @@ export class EnrollmentService {
     private readonly settingsService: SettingsService,
   ) {}
 
+  /**
+   * Return students (same school) not yet enrolled in the given course for the current academic year.
+   */
+  async getEligibleStudents(
+    courseId: string,
+    schoolId?: string,
+    superAdmin = false,
+    search?: string,
+    limit = 50,
+  ): Promise<Student[]> {
+    const course = await this.courseRepository.findOne({ where: { id: courseId } });
+    if (!course) throw new NotFoundException('Course not found');
+    if (!superAdmin) {
+      if (!schoolId || course.schoolId !== schoolId) {
+        throw new NotFoundException('Course not found');
+      }
+    }
+
+    // Current academic year (optional filter so we don't consider historical enrollments)
+    const academicYear = await this.settingsService.getCurrentAcademicYear();
+
+    const qb = this.studentRepository
+      .createQueryBuilder('student')
+      .leftJoin('student.enrollments', 'enrollment', 'enrollment.courseId = :courseId' + (academicYear ? ' AND enrollment.academicYearId = :ayId' : ''), {
+        courseId,
+        ayId: academicYear?.id,
+      })
+      .leftJoinAndSelect('student.user', 'user');
+
+    if (!superAdmin) {
+      qb.where('student.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.where('student.schoolId = :schoolId', { schoolId });
+    }
+
+    qb.andWhere('enrollment.id IS NULL');
+
+    if (search) {
+      qb.andWhere(
+        '(LOWER(student.firstName) LIKE :search OR LOWER(student.lastName) LIKE :search OR LOWER(user.email) LIKE :search)',
+        { search: `%${search.toLowerCase()}%` },
+      );
+    }
+
+    qb.orderBy('student.lastName', 'ASC').addOrderBy('student.firstName', 'ASC').take(limit);
+    return qb.getMany();
+  }
+
   async enrollStudent(
     courseId: string,
     studentId: string,
+    schoolId?: string,
+    superAdmin = false,
   ): Promise<Enrollment> {
     const [course, student] = await Promise.all([
       this.courseRepository.findOne({ where: { id: courseId } }),
@@ -55,12 +105,20 @@ export class EnrollmentService {
       );
     }
 
+    // Enforce same school unless super admin
+    if (!superAdmin) {
+      if (!schoolId || course.schoolId !== schoolId || student.schoolId !== schoolId) {
+        throw new NotFoundException('Course or student not found');
+      }
+    }
+
     const enrollment = this.enrollmentRepository.create({
       course,
       student,
-      academicYearId: academicYear.id, // Add academic year
+      academicYearId: academicYear.id,
       enrollmentDate: new Date(),
       status: 'active',
+      schoolId: schoolId || undefined,
     });
 
     // Update course enrollment count
@@ -70,12 +128,15 @@ export class EnrollmentService {
     return this.enrollmentRepository.save(enrollment);
   }
 
-  async unenrollStudent(courseId: string, studentId: string): Promise<void> {
+  async unenrollStudent(courseId: string, studentId: string, schoolId?: string, superAdmin = false): Promise<void> {
     const enrollment = await this.enrollmentRepository.findOne({
       where: { courseId, studentId },
     });
 
     if (!enrollment) {
+      throw new NotFoundException('Enrollment not found');
+    }
+    if (!superAdmin && schoolId && enrollment.schoolId && enrollment.schoolId !== schoolId) {
       throw new NotFoundException('Enrollment not found');
     }
 
@@ -91,41 +152,66 @@ export class EnrollmentService {
     await this.enrollmentRepository.remove(enrollment);
   }
 
-  async getStudentEnrollments(studentId: string): Promise<Enrollment[]> {
-    return this.enrollmentRepository.find({
-      where: { studentId },
-      relations: ['course', 'course.teacher'],
-    });
+  async getStudentEnrollments(studentId: string, schoolId?: string, superAdmin = false): Promise<Enrollment[]> {
+    const qb = this.enrollmentRepository
+      .createQueryBuilder('enrollment')
+      .leftJoinAndSelect('enrollment.course', 'course')
+      .leftJoinAndSelect('course.teacher', 'teacher')
+      .where('enrollment.studentId = :studentId', { studentId });
+    if (!superAdmin) {
+      qb.andWhere('enrollment.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.andWhere('enrollment.schoolId = :schoolId', { schoolId });
+    }
+    return qb.getMany();
   }
 
-  async getCourseEnrollments(courseId: string): Promise<Enrollment[]> {
-    return this.enrollmentRepository.find({
-      where: { courseId },
-      relations: ['student'],
-    });
+  async getCourseEnrollments(courseId: string, schoolId?: string, superAdmin = false): Promise<Enrollment[]> {
+    const qb = this.enrollmentRepository
+      .createQueryBuilder('enrollment')
+      .leftJoinAndSelect('enrollment.student', 'student')
+      .where('enrollment.courseId = :courseId', { courseId });
+    if (!superAdmin) {
+      qb.andWhere('enrollment.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.andWhere('enrollment.schoolId = :schoolId', { schoolId });
+    }
+    return qb.getMany();
   }
-  async findAll(): Promise<any[]> {
-    return this.enrollmentRepository.find({ relations: ['student', 'course'] });
+  async findAll(schoolId?: string, superAdmin = false): Promise<any[]> {
+    const qb = this.enrollmentRepository
+      .createQueryBuilder('enrollment')
+      .leftJoinAndSelect('enrollment.student', 'student')
+      .leftJoinAndSelect('enrollment.course', 'course');
+    if (!superAdmin) {
+      qb.where('enrollment.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.where('enrollment.schoolId = :schoolId', { schoolId });
+    }
+    return qb.getMany();
   }
 
   // Update getAllEnrollments to include academic year
-  async getAllEnrollments(page: number, limit: number, search: string) {
+  async getAllEnrollments(page: number, limit: number, search: string, schoolId?: string, superAdmin = false) {
     const skip = (page - 1) * limit;
-    const where = search
-      ? [
-          { student: { firstName: Like(`%${search}%`) } },
-          { student: { lastName: Like(`%${search}%`) } },
-          { course: { name: Like(`%${search}%`) } },
-        ]
-      : {};
-
-    const [enrollments, total] = await this.enrollmentRepository.findAndCount({
-      where,
-      relations: ['student', 'course', 'academicYear'],
-      skip,
-      take: limit,
-      order: { createdAt: 'DESC' },
-    });
+    const qb = this.enrollmentRepository
+      .createQueryBuilder('enrollment')
+      .leftJoinAndSelect('enrollment.student', 'student')
+      .leftJoinAndSelect('enrollment.course', 'course')
+      .leftJoinAndSelect('enrollment.academicYear', 'academicYear')
+      .orderBy('enrollment.createdAt', 'DESC');
+    if (!superAdmin) {
+      qb.where('enrollment.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.where('enrollment.schoolId = :schoolId', { schoolId });
+    }
+    if (search) {
+      qb.andWhere(
+        '(LOWER(student.firstName) LIKE :search OR LOWER(student.lastName) LIKE :search OR LOWER(course.name) LIKE :search)',
+        { search: `%${search.toLowerCase()}%` },
+      );
+    }
+    const [enrollments, total] = await qb.skip(skip).take(limit).getManyAndCount();
 
     return { enrollments, total };
   }

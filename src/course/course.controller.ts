@@ -283,7 +283,7 @@ async getAllCourses(
       }
     }
     try {
-      const created = await this.courseService.create(createCourseDto);
+      const created = await this.courseService.create(createCourseDto, req.user?.schoolId, req.user?.role === 'SUPER_ADMIN');
       await this.systemLoggingService.logAction({
         action: 'COURSE_CREATED',
         module: 'COURSE',

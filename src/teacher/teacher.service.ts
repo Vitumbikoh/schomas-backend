@@ -865,7 +865,7 @@ export class TeachersService {
     };
   }
 
-  async create(createTeacherDto: CreateTeacherDto): Promise<Teacher> {
+  async create(createTeacherDto: CreateTeacherDto & { schoolId?: string }): Promise<Teacher> {
     const validatedDto = plainToClass(CreateTeacherDto, createTeacherDto);
 
     const hashedPassword = await bcrypt.hash(validatedDto.password, 10);
@@ -875,6 +875,7 @@ export class TeachersService {
       email: validatedDto.email,
       password: hashedPassword,
       role: Role.TEACHER,
+      schoolId: createTeacherDto.schoolId || undefined,
     });
     await this.userRepository.save(user);
 
@@ -891,6 +892,7 @@ export class TeachersService {
       yearsOfExperience: validatedDto.yearsOfExperience,
       status: validatedDto.status || 'active',
       user: user,
+      schoolId: createTeacherDto.schoolId || undefined,
     });
 
     return await this.teacherRepository.save(teacher);

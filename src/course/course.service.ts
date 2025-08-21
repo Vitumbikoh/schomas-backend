@@ -89,7 +89,7 @@ export class CourseService {
     return classEntity.students || [];
   }
   
-  async create(createCourseDto: CreateCourseDto, schoolId?: string): Promise<Course> {
+  async create(createCourseDto: CreateCourseDto, schoolId?: string, superAdmin = false): Promise<Course> {
     const course = new Course();
     Object.assign(course, createCourseDto);
     if (schoolId) course.schoolId = schoolId;
@@ -100,6 +100,10 @@ export class CourseService {
       });
 
       if (!teacher) {
+        throw new NotFoundException('Teacher not found');
+      }
+      // Ensure teacher is in same school unless super admin
+      if (!superAdmin && schoolId && teacher.schoolId && teacher.schoolId !== schoolId) {
         throw new NotFoundException('Teacher not found');
       }
       course.teacher = teacher;

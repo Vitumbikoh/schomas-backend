@@ -3,6 +3,7 @@ import { Entity, PrimaryGeneratedColumn, ManyToOne, JoinColumn, Column, CreateDa
 import { Course } from 'src/course/entities/course.entity';
 import { Student } from 'src/user/entities/student.entity';
 import { AcademicYear } from 'src/settings/entities/academic-year.entity';
+import { School } from 'src/school/entities/school.entity';
 
 @Entity()
 export class Enrollment {
@@ -36,4 +37,11 @@ student: Student;
   @ManyToOne(() => AcademicYear)
   @JoinColumn({ name: 'academicYearId' })
   academicYear: AcademicYear; // Add this relationship
+
+  // Multi-tenant scope
+  @Column({ type: 'uuid', nullable: true })
+  schoolId: string;
+  @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'schoolId' })
+  school: School;
 }
