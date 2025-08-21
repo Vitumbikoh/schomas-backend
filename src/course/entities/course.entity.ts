@@ -15,6 +15,7 @@ import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { Exam } from 'src/exams/entities/exam.entity';
 import { Class } from 'src/classes/entity/class.entity';
 import { Student } from 'src/user/entities/student.entity';
+import { School } from 'src/school/entities/school.entity';
 
 @Entity()
 export class Course {
@@ -87,5 +88,12 @@ exams: Exam[];
 
   @OneToMany(() => Enrollment, enrollment => enrollment.course)
 enrollments: Enrollment[];
+
+  // Multi-tenant scope
+  @Column({ type: 'uuid', nullable: true })
+  schoolId: string;
+  @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'schoolId' })
+  school: School;
 
 }

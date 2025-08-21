@@ -29,7 +29,7 @@ export class StudentsService {
     
   ) {}
 
-  async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
+  async createStudent(createStudentDto: CreateStudentDto, schoolId?: string): Promise<Student> {
     this.logger.log(`Creating student with email: ${createStudentDto.email}`);
     const validatedDto = plainToClass(CreateStudentDto, createStudentDto);
     const hashedPassword = await bcrypt.hash(validatedDto.password, 10);
@@ -45,7 +45,8 @@ export class StudentsService {
       username: validatedDto.username,
       email: validatedDto.email,
       password: hashedPassword,
-      role: Role.STUDENT,
+      role: Role.STUDENT, 
+  schoolId: schoolId ?? undefined,
     });
     await this.userRepository.save(user);
     this.logger.log(`Created user with ID: ${user.id}`);
@@ -57,7 +58,7 @@ export class StudentsService {
       ? new Date(validatedDto.dateOfBirth)
       : null;
 
-    const studentData: Partial<Student> = {
+  const studentData: Partial<Student> = {
       studentId,
       firstName: validatedDto.firstName,
       lastName: validatedDto.lastName,
@@ -69,6 +70,7 @@ export class StudentsService {
       user: user,
       userId: user.id,
       academicYearId: academicYear.id, 
+  schoolId: schoolId ?? undefined,
     };
 
     if (validatedDto.classId) {
@@ -279,11 +281,19 @@ export class StudentsService {
     return savedStudent;
   }
 
-  async findAll(options?: FindManyOptions<Student>): Promise<Student[]> {
-    return this.studentRepository.find({
-      ...options,
-      relations: ['user', 'parent'],
-    });
+  async findAll(options?: FindManyOptions<Student>, schoolId?: string, superAdmin = false): Promise<Student[]> {
+    if (superAdmin && !schoolId) {
+      return this.studentRepository.find({
+        ...options,
+        relations: ['user', 'parent'],
+      });
+    }
+    if (!schoolId) return [];
+    return this.studentRepository.createQueryBuilder('student')
+      .leftJoinAndSelect('student.user', 'user')
+      .leftJoinAndSelect('student.parent', 'parent')
+      .where('student.schoolId = :schoolId', { schoolId })
+      .getMany();
   }
 
   async remove(id: string): Promise<void> {

@@ -46,7 +46,8 @@ export class StudentController {
   async getStudentManagementDashboard(@Request() req) {
     this.logger.log('Fetching student management dashboard');
     try {
-      const students = await this.studentService.findAll();
+  const isSuper = req.user?.role === 'SUPER_ADMIN';
+  const students = await this.studentService.findAll(undefined, req.user?.schoolId, isSuper);
       const stats = await this.getStudentManagementStats(students);
 
       return {
@@ -103,7 +104,7 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
     }
 
     // 1. Create student
-    const newStudent = await this.studentService.create(createStudentDto);
+  const newStudent = await this.studentService.createStudent(createStudentDto, req.user?.schoolId);
 
     // 2. Log the student creation using SystemLoggingService
     await this.systemLoggingService.logAction({

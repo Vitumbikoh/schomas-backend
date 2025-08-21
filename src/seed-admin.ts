@@ -13,23 +13,24 @@ async function seedAdmin() {
     const userRepository = AppDataSource.getRepository(User);
 
     // Check if admin exists
-    const adminExists = await userRepository.findOneBy({ username: 'admin' });
+    const adminExists = await userRepository.findOneBy({ username: 'superadmin' });
     if (adminExists) {
-      console.log('Admin user already exists');
+      console.log('Super admin user already exists');
       return;
     }
 
     // Create admin
     const admin = userRepository.create({
-      username: 'admin',
-      email: 'admin@school.com',
-      password: await bcrypt.hash('admin123', 10),
-      role: Role.ADMIN,
-      isActive: true
+      username: 'superadmin',
+      email: 'superadmin@platform.com',
+      password: await bcrypt.hash('superadmin123', 10),
+      role: Role.SUPER_ADMIN,
+      isActive: true,
+      schoolId: null,
     });
 
     await userRepository.save(admin);
-    console.log('✅ Admin user created successfully');
+  console.log('✅ Super Admin user created successfully');
   } catch (error) {
     console.error('❌ Error seeding admin:', error);
   } finally {

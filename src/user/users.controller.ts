@@ -7,6 +7,7 @@ import {
     Param,
     ParseUUIDPipe,
     Request,
+    Patch,
   } from '@nestjs/common';
   import { CreateTeacherDto } from './dtos/create-teacher.dto';
   import { CreateStudentDto } from './dtos/create-student.dto';
@@ -29,9 +30,9 @@ import { SystemLoggingService } from '../logs/system-logging.service';
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Post('teachers')
-    async createTeacher(@Body() createTeacherDto: CreateTeacherDto, @Request() req) {
+  async createTeacher(@Body() createTeacherDto: CreateTeacherDto, @Request() req) {
       try {
-        const result = await this.usersService.createTeacher(createTeacherDto);
+    const result = await this.usersService.createTeacher(createTeacherDto, req.user?.schoolId);
         
         // Log successful teacher creation
         await this.systemLoggingService.logAction({
@@ -87,13 +88,23 @@ import { SystemLoggingService } from '../logs/system-logging.service';
         throw error;
       }
     }
+
+    @UseGuards(JwtAuthGuard)
+    @Patch('me/change-password')
+    async changeMyPassword(
+      @Request() req,
+      @Body() body: { newPassword: string; oldPassword?: string },
+    ) {
+      const userId = req.user?.sub;
+      return this.usersService.changePassword(userId, body.newPassword, body.oldPassword);
+    }
   
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Post('students')
-    async createStudent(@Body() createStudentDto: CreateStudentDto, @Request() req) {
+  async createStudent(@Body() createStudentDto: CreateStudentDto, @Request() req) {
       try {
-        const result = await this.usersService.createStudent(createStudentDto);
+    const result = await this.usersService.createStudent(createStudentDto, req.user?.schoolId);
         
         // Log successful student creation
         await this.systemLoggingService.logAction({
@@ -156,9 +167,9 @@ import { SystemLoggingService } from '../logs/system-logging.service';
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Post('parents')
-    async createParent(@Body() createParentDto: CreateParentDto, @Request() req) {
+  async createParent(@Body() createParentDto: CreateParentDto, @Request() req) {
       try {
-        const result = await this.usersService.createParent(createParentDto);
+    const result = await this.usersService.createParent(createParentDto, req.user?.schoolId);
         
         // Log successful parent creation
         await this.systemLoggingService.logAction({
@@ -218,9 +229,9 @@ import { SystemLoggingService } from '../logs/system-logging.service';
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Post('finance')
-    async createFinance(@Body() createFinanceDto: CreateFinanceDto, @Request() req) {
+  async createFinance(@Body() createFinanceDto: CreateFinanceDto, @Request() req) {
       try {
-        const result = await this.usersService.createFinance(createFinanceDto);
+    const result = await this.usersService.createFinance(createFinanceDto, req.user?.schoolId);
         
         // Log successful finance user creation
         await this.systemLoggingService.logAction({
@@ -281,29 +292,33 @@ import { SystemLoggingService } from '../logs/system-logging.service';
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Get('teachers')
-    findAllTeachers() {
-      return this.usersService.findAllTeachers();
+    findAllTeachers(@Request() req) {
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      return this.usersService.findAllTeachers(req.user?.schoolId, isSuper);
     }
   
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Get('students')
-    findAllStudents() {
-      return this.usersService.findAllStudents();
+    findAllStudents(@Request() req) {
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      return this.usersService.findAllStudents(req.user?.schoolId, isSuper);
     }
   
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Get('parents')
-    findAllParents() {
-      return this.usersService.findAllParents();
+    findAllParents(@Request() req) {
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      return this.usersService.findAllParents(req.user?.schoolId, isSuper);
     }
   
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Get('finance')
-    findAllFinance() {
-      return this.usersService.findAllFinance();
+    findAllFinance(@Request() req) {
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      return this.usersService.findAllFinance(req.user?.schoolId, isSuper);
     }
   
     @UseGuards(JwtAuthGuard, RolesGuard)

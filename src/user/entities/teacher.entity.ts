@@ -6,9 +6,11 @@ import {
   BaseEntity,
   PrimaryGeneratedColumn,
   OneToMany,
+  ManyToOne,
 } from 'typeorm';
 import { User } from './user.entity';
 import { Course } from '../../course/entities/course.entity';
+import { School } from '../../school/entities/school.entity';
 import { Exam } from 'src/exams/entities/exam.entity';
 import { Schedule } from 'src/schedule/entity/schedule.entity';
 
@@ -66,5 +68,11 @@ export class Teacher extends BaseEntity {
   @OneToMany(() => Schedule, (schedule) => schedule.teacher)
   schedules: Schedule[];
 
+  // Multi-tenant scope
+  @Column({ type: 'uuid', nullable: true })
+  schoolId: string;
+  @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'schoolId' })
+  school: School;
   
 }

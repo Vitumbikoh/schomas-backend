@@ -1,6 +1,7 @@
-import { Entity, Column, OneToOne, JoinColumn, OneToMany, BaseEntity, PrimaryGeneratedColumn } from 'typeorm';
+import { Entity, Column, OneToOne, JoinColumn, OneToMany, BaseEntity, PrimaryGeneratedColumn, ManyToOne } from 'typeorm';
 import { User } from './user.entity';
 import { Student } from './student.entity';
+import { School } from '../../school/entities/school.entity';
 
 @Entity()
 export class Parent extends BaseEntity {
@@ -37,4 +38,11 @@ export class Parent extends BaseEntity {
 
   @OneToMany(() => Student, (student) => student.parent, { nullable: true })
   student: Student[];
+
+  // Multi-tenant scope
+  @Column({ type: 'uuid', nullable: true })
+  schoolId: string;
+  @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'schoolId' })
+  school: School;
 }

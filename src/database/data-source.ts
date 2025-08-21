@@ -1,9 +1,10 @@
 // src/database/data-source.ts
-import { Course } from 'src/course/entities/course.entity';
-import { Student } from 'src/user/entities/student.entity';
-import { Teacher } from 'src/user/entities/teacher.entity';
-import { User } from 'src/user/entities/user.entity';
+import { Course } from '../course/entities/course.entity';
+import { Student } from '../user/entities/student.entity';
+import { Teacher } from '../user/entities/teacher.entity';
+import { User } from '../user/entities/user.entity';
 import { DataSource } from 'typeorm';
+import { School } from '../school/entities/school.entity';
 
 export const AppDataSource = new DataSource({
   type: 'postgres',
@@ -12,7 +13,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME || 'postgres',
   password: process.env.DB_PASSWORD || 'g1Bird fly',
   database: process.env.DB_DATABASE || 'schomas',
-  entities: [User, Teacher, Course, Student],
+  entities: [User, Teacher, Course, Student, School],
   synchronize: process.env.NODE_ENV !== 'production',
   // synchronize: false,
   logging: process.env.NODE_ENV === 'development',

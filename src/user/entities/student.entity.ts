@@ -19,6 +19,7 @@ import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { Class } from 'src/classes/entity/class.entity';
 import { Course } from 'src/course/entities/course.entity';
 import { Grade } from 'src/grades/entity/grade.entity';
+import { School } from '../../school/entities/school.entity';
 @Entity()
 export class Student extends BaseEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -86,6 +87,13 @@ export class Student extends BaseEntity {
 
    @Column({ nullable: true })
   academicYearId: string;
+
+  // Multi-tenant scope
+  @Column({ type: 'uuid', nullable: true })
+  schoolId: string;
+  @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'schoolId' })
+  school: School;
 
   
 }

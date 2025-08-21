@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, IsEnum } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, IsEnum, IsOptional, IsUUID } from 'class-validator';
 import { Role } from '../enums/role.enum';
 
 export class CreateUserDto {
@@ -16,4 +16,9 @@ export class CreateUserDto {
 
   @IsEnum(Role)
   role: Role;
+
+  // Provided only when creating a user under a specific school (ignored for SUPER_ADMIN creation)
+  @IsOptional()
+  @IsUUID()
+  schoolId?: string;
 }

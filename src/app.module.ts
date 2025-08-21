@@ -20,6 +20,8 @@ import { LearningMaterialsModule } from './learning-materials/learning-materials
 import { GradeModule } from './grades/grade.module';
 import { ActivitiesModule } from './activity/activity.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { SuperAdminsModule } from './super-admins/super-admins.module';
+import { SchoolModule } from './school/school.module';
 
 @Module({
   imports: [
@@ -45,6 +47,8 @@ import { AnalyticsModule } from './analytics/analytics.module';
     GradeModule, 
     ActivitiesModule,
   AnalyticsModule,
+  SuperAdminsModule,
+  SchoolModule,
   ],
 })
 export class AppModule {}

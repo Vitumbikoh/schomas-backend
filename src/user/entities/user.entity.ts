@@ -5,12 +5,14 @@ import {
   OneToOne,
   JoinColumn,
   OneToMany,
+  ManyToOne,
 } from 'typeorm';
 import { Teacher } from './teacher.entity';
 import { Student } from './student.entity';
 import { Parent } from './parent.entity';
 import { Finance } from './finance.entity';
 import { Role } from '../enums/role.enum';
+import { School } from '../../school/entities/school.entity';
 import { Course } from 'src/course/entities/course.entity';
 import { UserSettings } from 'src/settings/entities/user-settings.entity';
 
@@ -41,9 +43,17 @@ export class User {
   @Column({ nullable: true })
   image?: string;
 
-  @OneToOne(() => UserSettings, (settings) => settings.user, { cascade: true })
+  // Multi-tenancy: nullable for SUPER_ADMIN only
+  @Column({ type: 'uuid', nullable: true })
+  schoolId?: string | null;
+
+  @ManyToOne(() => School, (school) => school.users, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'schoolId' })
+  school?: School | null;
+
+  @OneToOne(() => UserSettings, (settings) => settings.user, { cascade: true, nullable: true, onDelete: 'SET NULL' })
   @JoinColumn()
-  settings: UserSettings;
+  settings?: UserSettings | null;
   
   @OneToOne(() => Teacher, (teacher) => teacher.user, { nullable: true })
   @JoinColumn()
@@ -63,6 +73,10 @@ export class User {
 
   @Column({ default: true })
   isActive: boolean;
+
+  // Require user to change password on first login (for auto-provisioned accounts)
+  @Column({ default: false })
+  forcePasswordReset: boolean;
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;

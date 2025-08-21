@@ -30,6 +30,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         sub: user.id, // Changed from 'id' to 'sub' to match JWT payload and controller expectations
         email: user.email,
         role: user.role,
+  schoolId: user.schoolId || null,
       };
     } catch (error) {
       console.error('JWT validation error:', error);

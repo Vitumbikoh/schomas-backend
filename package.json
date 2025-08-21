@@ -23,6 +23,7 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed:admin": "ts-node src/seed-admin.ts"
+  ,"seed:superadmin": "ts-node src/scripts/create-super-admin.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.12",

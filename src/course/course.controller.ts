@@ -53,7 +53,8 @@ export class CourseController {
     description: 'Dashboard data retrieved successfully',
   })
   async getCourseManagementDashboard(@Request() req) {
-    const courses = await this.courseService.findAll();
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const courses = await this.courseService.findAll({ schoolId: req.user?.schoolId, superAdmin: isSuper });
     return {
       courses: await this.mapCoursesWithTeacherUUIDs(courses),
       stats: await this.getCourseManagementStats(courses),
@@ -156,14 +157,21 @@ async getAllCourses(
     whereConditions.push({ classId });
   }
 
+  const isSuper = req.user?.role === 'SUPER_ADMIN';
   const [courses, total] = await Promise.all([
     this.courseService.findAll({
       skip,
       take: limitNum,
       where: whereConditions.length > 0 ? whereConditions : {},
-      relations: ['teacher', 'class'], // Include class relation
+      schoolId: req.user?.schoolId,
+      superAdmin: isSuper,
     }),
-    this.courseService.count(whereConditions.length > 0 ? whereConditions : {}),
+    this.courseService.count(
+      isSuper ? (whereConditions.length > 0 ? whereConditions : {}) : {
+        ...(whereConditions.length === 0 ? {} : whereConditions[0]),
+        schoolId: req.user?.schoolId,
+      },
+    ),
   ]);
 
   const mappedCourses = await this.mapCoursesWithTeacherUUIDs(courses);

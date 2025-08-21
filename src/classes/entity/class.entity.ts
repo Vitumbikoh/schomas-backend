@@ -1,6 +1,7 @@
 import { Schedule } from 'src/schedule/entity/schedule.entity';
 import { Student } from 'src/user/entities/student.entity';
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, OneToMany, ManyToOne, JoinColumn } from 'typeorm';
+import { School } from 'src/school/entities/school.entity';
 
 @Entity('classes')
 export class Class {
@@ -27,5 +28,12 @@ export class Class {
 
   @OneToMany(() => Student, (student) => student.class)
   students: Student[];
+
+  // Multi-tenant scope
+  @Column({ type: 'uuid', nullable: true })
+  schoolId: string;
+  @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'schoolId' })
+  school: School;
 
 }

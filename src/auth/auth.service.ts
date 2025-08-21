@@ -42,7 +42,8 @@ export class AuthService {
     const payload = { 
       email: user.email, 
       sub: user.id,
-      role: user.role 
+      role: user.role,
+      schoolId: user.schoolId || null,
     };
     return {
       access_token: this.jwtService.sign(payload),
@@ -50,6 +51,8 @@ export class AuthService {
         id: user.id,
         email: user.email,
         role: user.role,
+        schoolId: user.schoolId || null,
+  forcePasswordReset: (user as any).forcePasswordReset ?? false,
       },
     };
   }

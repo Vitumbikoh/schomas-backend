@@ -31,15 +31,27 @@ export class CourseService {
       take?: number;
       where?: FindOptionsWhere<Course> | FindOptionsWhere<Course>[];
       relations?: string[];
+      schoolId?: string;
+      superAdmin?: boolean;
     } = {},
   ): Promise<Course[]> {
-    return await this.courseRepository.find({
-      skip: options.skip || 0,
-      take: options.take || 10,
-      where: options.where || {},
-      relations: options.relations || ['teacher', 'class'],
-      order: { createdAt: 'DESC' },
-    });
+    const qb = this.courseRepository.createQueryBuilder('course')
+      .leftJoinAndSelect('course.teacher', 'teacher')
+      .leftJoinAndSelect('course.class', 'class');
+
+    if (options.schoolId && !options.superAdmin) {
+      qb.andWhere('course.schoolId = :schoolId', { schoolId: options.schoolId });
+    }
+
+    if (options.where) {
+      // Basic handling for simple LIKE searches already prepared outside
+      // Complex OR conditions can be appended by caller via custom methods
+    }
+
+    if (options.skip) qb.skip(options.skip);
+    if (options.take) qb.take(options.take);
+    qb.orderBy('course.createdAt', 'DESC');
+    return qb.getMany();
   }
 
   async count(
@@ -77,9 +89,10 @@ export class CourseService {
     return classEntity.students || [];
   }
   
-  async create(createCourseDto: CreateCourseDto): Promise<Course> {
+  async create(createCourseDto: CreateCourseDto, schoolId?: string): Promise<Course> {
     const course = new Course();
     Object.assign(course, createCourseDto);
+    if (schoolId) course.schoolId = schoolId;
 
     if (createCourseDto.teacherId) {
       const teacher = await this.teacherRepository.findOne({
@@ -92,7 +105,7 @@ export class CourseService {
       course.teacher = teacher;
     }
 
-    return this.courseRepository.save(course); // This will generate a UUID
+  return this.courseRepository.save(course); // This will generate a UUID
   }
 
   async update(id: string, updateCourseDto: UpdateCourseDto): Promise<Course> {

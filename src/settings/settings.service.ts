@@ -229,6 +229,20 @@ export class SettingsService {
       if (updateDto.username) user.username = updateDto.username;
       if (updateDto.email) user.email = updateDto.email;
 
+      // Ensure settings object exists (relation is now nullable)
+      if (!user.settings) {
+        const newSettings = this.userSettingsRepository.create({
+          notifications: {
+            email: true,
+            sms: false,
+            browser: true,
+            weeklySummary: true,
+          },
+          security: { twoFactor: false },
+        });
+        user.settings = await queryRunner.manager.save(UserSettings, newSettings);
+      }
+
       // Update phone number
       if (updateDto.phone) {
         await this.updatePhoneNumber(user, updateDto.phone, queryRunner);
@@ -253,19 +267,20 @@ export class SettingsService {
 
       // Update settings
       if (updateDto.notifications) {
-        user.settings.notifications = {
-          ...user.settings.notifications,
+        user.settings!.notifications = {
+          ...user.settings!.notifications,
           ...updateDto.notifications,
-        };
+        } as any;
       }
       if (updateDto.security) {
-        user.settings.security = {
-          ...user.settings.security,
+        user.settings!.security = {
+          ...user.settings!.security,
           ...updateDto.security,
-        };
+        } as any;
       }
-
-      await queryRunner.manager.save(UserSettings, user.settings);
+      if (user.settings) {
+        await queryRunner.manager.save(UserSettings, user.settings);
+      }
       await queryRunner.manager.save(User, user);
 
       // Update admin-specific settings

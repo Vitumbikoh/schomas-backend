@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOneOptions, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
+import { UserSettings } from 'src/settings/entities/user-settings.entity';
 import { Teacher } from './entities/teacher.entity';
 import { Student } from './entities/student.entity';
 import { Parent } from './entities/parent.entity';
@@ -58,23 +59,27 @@ export class UsersService {
 
   async createUser(createUserDto: CreateUserDto): Promise<User> {
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+    const userSettings = new UserSettings();
     const user = this.userRepository.create({
       username: createUserDto.username,
       email: createUserDto.email,
       password: hashedPassword,
       role: createUserDto.role as Role,
       isActive: true,
+      schoolId: createUserDto.schoolId ?? null,
+      settings: userSettings,
     });
     return this.userRepository.save(user);
   }
 
-  async createTeacher(createTeacherDto: CreateTeacherDto): Promise<Teacher> {
+  async createTeacher(createTeacherDto: CreateTeacherDto, schoolId?: string): Promise<Teacher> {
     const userDto: CreateUserDto = {
       username: createTeacherDto.username,
       email: createTeacherDto.email,
       password: createTeacherDto.password,
       role: Role.TEACHER,
-    };
+      schoolId: schoolId ?? undefined,
+    } as any;
 
     const user = await this.createUser(userDto);
     const teacher = this.teacherRepository.create({
@@ -84,13 +89,14 @@ export class UsersService {
     return this.teacherRepository.save(teacher);
   }
 
-  async createStudent(createStudentDto: CreateStudentDto): Promise<Student> {
+  async createStudent(createStudentDto: CreateStudentDto, schoolId?: string): Promise<Student> {
     const userDto: CreateUserDto = {
       username: createStudentDto.username,
       email: createStudentDto.email,
       password: createStudentDto.password,
       role: Role.STUDENT,
-    };
+      schoolId: schoolId ?? undefined,
+    } as any;
 
     const user = await this.createUser(userDto);
     const student = this.studentRepository.create({
@@ -100,13 +106,14 @@ export class UsersService {
     return this.studentRepository.save(student);
   }
 
-  async createParent(createParentDto: CreateParentDto): Promise<Parent> {
+  async createParent(createParentDto: CreateParentDto, schoolId?: string): Promise<Parent> {
     const userDto: CreateUserDto = {
       username: createParentDto.username,
       email: createParentDto.email,
       password: createParentDto.password,
       role: Role.PARENT,
-    };
+      schoolId: schoolId ?? undefined,
+    } as any;
 
     const user = await this.createUser(userDto);
     const parent = this.parentRepository.create({
@@ -129,13 +136,14 @@ export class UsersService {
 
     return this.userRepository.save(user);
   }
-  async createFinance(createFinanceDto: CreateFinanceDto): Promise<Finance> {
+  async createFinance(createFinanceDto: CreateFinanceDto, schoolId?: string): Promise<Finance> {
     const userDto: CreateUserDto = {
       username: createFinanceDto.username,
       email: createFinanceDto.email,
       password: createFinanceDto.password,
       role: Role.FINANCE,
-    };
+      schoolId: schoolId ?? undefined,
+    } as any;
 
     const user = await this.createUser(userDto);
     const finance = this.financeRepository.create({
@@ -145,19 +153,74 @@ export class UsersService {
     return this.financeRepository.save(finance);
   }
 
-  async findAllTeachers(): Promise<Teacher[]> {
-    return this.teacherRepository.find({ relations: ['user'] });
+  // Change password (supports first-login force reset where old password may be skipped)
+  async changePassword(userId: string, newPassword: string, oldPassword?: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    if (!user.forcePasswordReset) {
+      if (!oldPassword) throw new NotFoundException('Current password required');
+      const valid = await bcrypt.compare(oldPassword, user.password);
+      if (!valid) throw new NotFoundException('Current password incorrect');
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.forcePasswordReset = false as any;
+    user.updatedAt = new Date();
+    await this.userRepository.save(user);
+    return { ok: true };
   }
 
-  async findAllStudents(): Promise<Student[]> {
-    return this.studentRepository.find({ relations: ['user'] });
+  async findAllTeachers(schoolId?: string, superAdmin = false): Promise<Teacher[]> {
+    if (superAdmin && !schoolId) {
+      return this.teacherRepository.find({ relations: ['user'] });
+    }
+    if (!schoolId) return [];
+    return this.teacherRepository
+      .createQueryBuilder('teacher')
+      .leftJoinAndSelect('teacher.user', 'user')
+      .where('user.schoolId = :schoolId', { schoolId })
+      .getMany();
   }
 
-  async findAllParents(): Promise<Parent[]> {
-    return this.parentRepository.find({ relations: ['user'] });
+  async findAllStudents(schoolId?: string, superAdmin = false): Promise<Student[]> {
+    if (superAdmin && !schoolId) {
+      return this.studentRepository.find({ relations: ['user'] });
+    }
+    if (!schoolId) return [];
+    return this.studentRepository
+      .createQueryBuilder('student')
+      .leftJoinAndSelect('student.user', 'user')
+      .where('user.schoolId = :schoolId', { schoolId })
+      .getMany();
   }
 
-  async findAllFinance(): Promise<Finance[]> {
-    return this.financeRepository.find({ relations: ['user'] });
+  async findAllParents(schoolId?: string, superAdmin = false): Promise<Parent[]> {
+    if (superAdmin && !schoolId) {
+      return this.parentRepository.find({ relations: ['user'] });
+    }
+    if (!schoolId) return [];
+    return this.parentRepository
+      .createQueryBuilder('parent')
+      .leftJoinAndSelect('parent.user', 'user')
+      .where('user.schoolId = :schoolId', { schoolId })
+      .getMany();
+  }
+
+  async findAllFinance(schoolId?: string, superAdmin = false): Promise<Finance[]> {
+    if (superAdmin && !schoolId) {
+      return this.financeRepository.find({ relations: ['user'] });
+    }
+    if (!schoolId) return [];
+    return this.financeRepository
+      .createQueryBuilder('finance')
+      .leftJoinAndSelect('finance.user', 'user')
+      .where('user.schoolId = :schoolId', { schoolId })
+      .getMany();
+  }
+
+  // Count users by SUPER_ADMIN role (bootstrap logic)
+  async countSuperAdmins(): Promise<number> {
+    return this.userRepository.count({ where: { role: Role.SUPER_ADMIN as any } });
   }
 }
