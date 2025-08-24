@@ -56,8 +56,28 @@ export class CourseService {
 
   async count(
     where?: FindOptionsWhere<Course> | FindOptionsWhere<Course>[],
+    schoolId?: string,
+    superAdmin = false,
   ): Promise<number> {
-    return await this.courseRepository.count({ where });
+    let combinedWhere = where || {};
+    
+    // Apply school filtering
+    if (!superAdmin) {
+      if (!schoolId) return 0;
+      if (Array.isArray(combinedWhere)) {
+        combinedWhere = combinedWhere.map(w => ({ ...w, schoolId }));
+      } else {
+        combinedWhere = { ...combinedWhere, schoolId };
+      }
+    } else if (schoolId) {
+      if (Array.isArray(combinedWhere)) {
+        combinedWhere = combinedWhere.map(w => ({ ...w, schoolId }));
+      } else {
+        combinedWhere = { ...combinedWhere, schoolId };
+      }
+    }
+    
+    return await this.courseRepository.count({ where: combinedWhere });
   }
 
   async findOne(

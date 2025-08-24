@@ -267,12 +267,23 @@ export class StudentsService {
     return [students, total];
   }
 
-  async getTotalStudentsCount(activeOnly?: boolean): Promise<number> {
-    const options: FindManyOptions<Student> = {};
-    if (activeOnly) {
-      // Assuming there's no 'isActive' field; adjust if needed
+  async getTotalStudentsCount(activeOnly?: boolean, schoolId?: string, superAdmin = false): Promise<number> {
+    const where: any = {};
+    
+    // Apply school filtering
+    if (!superAdmin) {
+      if (!schoolId) return 0; // Non-super admin without schoolId gets no results
+      where.schoolId = schoolId;
+    } else if (schoolId) {
+      where.schoolId = schoolId; // Super admin can optionally filter by schoolId
     }
-    return this.studentRepository.count(options);
+    
+    if (activeOnly) {
+      // Assuming there's no 'isActive' field; you can adjust based on your Student entity
+      // For now, just count all students with the school filter
+    }
+    
+    return this.studentRepository.count({ where });
   }
 
   async update(

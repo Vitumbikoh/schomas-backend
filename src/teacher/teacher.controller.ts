@@ -36,6 +36,18 @@ export class TeacherController {
     private readonly systemLoggingService: SystemLoggingService,
   ) {}
 
+  @Get('total-teachers')
+  async getTotalTeachers(@Request() req, @Query('schoolId') schoolIdOverride?: string) {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolScope = isSuper ? (schoolIdOverride || req.user?.schoolId) : req.user?.schoolId;
+    const where: any = {};
+    if (!schoolScope && !isSuper) return { total: 0 };
+    const total = schoolScope
+      ? await this.teacherService.countTeachersBySchool(schoolScope)
+      : await this.teacherService.count({});
+    return { total, filters: { schoolId: schoolScope } };
+  }
+
   @Get('teacher-management')
   async getTeacherManagementDashboard() {
     const teachers = await this.teacherService.findAll();
@@ -374,6 +386,7 @@ export class TeacherController {
   async getMyCoursesCount(@Request() req) {
     try {
       const userId = req.user?.sub;
+      const userSchoolId = req.user?.schoolId;
       console.log('Request user:', req.user);
       if (!userId) {
         console.error('No user ID found in request');
@@ -393,6 +406,8 @@ export class TeacherController {
 
       const totalCourses = await this.teacherService.getTotalCoursesCount(
         teacher.id,
+        userSchoolId,
+        false,
       );
       console.log(
         `Total courses count for teacher ${teacher.id}: ${totalCourses}`,

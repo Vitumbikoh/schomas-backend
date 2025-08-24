@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { AcademicYear } from '../../settings/entities/academic-year.entity';
 import { Class } from '../../classes/entity/class.entity';
+import { School } from 'src/school/entities/school.entity';
 
 @Entity('fee_structure')
 export class FeeStructure {
@@ -38,6 +39,14 @@ export class FeeStructure {
   @ManyToOne(() => Class, { nullable: true })
   @JoinColumn({ name: 'classId' })
   class: Class;
+
+  // Multi-tenant scope
+  @Column({ type: 'uuid', nullable: true })
+  schoolId?: string;
+
+  @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'schoolId' })
+  school?: School;
 
   @CreateDateColumn()
   createdAt: Date;

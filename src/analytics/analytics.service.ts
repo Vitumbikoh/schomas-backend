@@ -41,13 +41,22 @@ export class AnalyticsService {
     return { start: new Date(academicYearEntity.startDate), end: new Date(academicYearEntity.endDate), entity: academicYearEntity };
   }
 
-  async getClassPerformance(classId: string, academicYearId?: string) {
+  async getClassPerformance(classId: string, academicYearId?: string, schoolId?: string, superAdmin = false) {
     const range = await this.resolveAcademicYearRange(academicYearId);
     const qb = this.gradeRepo.createQueryBuilder('g')
       .leftJoin('g.class', 'c')
       .leftJoin('g.student', 's')
       .leftJoin('g.course', 'course')
       .where('c.id = :classId', { classId });
+      
+    // Apply school filtering
+    if (!superAdmin) {
+      if (!schoolId) return { class: { id: classId }, average: 0, studentStats: [], gradeDistribution: {}, topPerformers: [] };
+      qb.andWhere('s.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.andWhere('s.schoolId = :schoolId', { schoolId });
+    }
+      
     if (range) qb.andWhere('g.date BETWEEN :start AND :end', { start: range.start, end: range.end });
     const grades = await qb.getMany();
     const cls = await this.classRepo.findOne({ where: { id: classId } });
@@ -82,21 +91,25 @@ export class AnalyticsService {
     };
   }
 
-  async getCourseAverages(academicYearId?: string, scope: 'current-year' | 'all' = 'current-year') {
+  async getCourseAverages(academicYearId?: string, scope: 'current-year' | 'all' = 'current-year', schoolId?: string, superAdmin = false) {
     // If scope is all we ignore academic year filtering
     const range = scope === 'current-year' ? await this.resolveAcademicYearRange(academicYearId) : null;
 
-    // Fetch grades with optional range
-    const where: any = {};
-    if (range) {
-      where.date = { $between: [range.start, range.end] }; // will be translated manually
-    }
-
     // Use QueryBuilder for flexible filtering
     const qb = this.gradeRepo.createQueryBuilder('g')
-      .leftJoinAndSelect('g.course', 'course');
+      .leftJoinAndSelect('g.course', 'course')
+      .leftJoin('g.student', 's');
+      
+    // Apply school filtering
+    if (!superAdmin) {
+      if (!schoolId) return [];
+      qb.where('s.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.where('s.schoolId = :schoolId', { schoolId });
+    }
+      
     if (range) {
-      qb.where('g.date BETWEEN :start AND :end', { start: range.start, end: range.end });
+      qb.andWhere('g.date BETWEEN :start AND :end', { start: range.start, end: range.end });
     }
     const grades = await qb.getMany();
 
@@ -150,33 +163,55 @@ export class AnalyticsService {
     return result;
   }
 
-  async getAttendanceOverview(academicYearId?: string) {
+  async getAttendanceOverview(academicYearId?: string, schoolId?: string, superAdmin = false) {
     const range = await this.resolveAcademicYearRange(academicYearId);
     const qb = this.attendanceRepo.createQueryBuilder('a')
+      .leftJoin('a.student', 's')
       .select("TO_CHAR(a.date, 'YYYY-MM')", 'month')
       .addSelect('COUNT(*)', 'totalRecords')
       .addSelect("SUM(CASE WHEN a.isPresent THEN 1 ELSE 0 END)", 'presentCount')
       .groupBy('month')
       .orderBy('month', 'ASC');
-    if (range) qb.where('a.date BETWEEN :start AND :end', { start: range.start, end: range.end });
+      
+    // Apply school filtering
+    if (!superAdmin) {
+      if (!schoolId) return [];
+      qb.where('s.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.where('s.schoolId = :schoolId', { schoolId });
+    }
+      
+    if (range) {
+      qb.andWhere('a.date BETWEEN :start AND :end', { start: range.start, end: range.end });
+    }
     const rows = await qb.getRawMany();
     return rows.map(r => ({ month: r.month, totalRecords: parseInt(r.totalRecords,10), present: parseInt(r.presentCount,10), attendanceRate: parseFloat(((parseInt(r.presentCount,10)/(parseInt(r.totalRecords,10)||1))*100).toFixed(2)) }));
   }
 
-  async getAttendanceByClass(academicYearId?: string) {
+  async getAttendanceByClass(academicYearId?: string, schoolId?: string, superAdmin = false) {
     const range = await this.resolveAcademicYearRange(academicYearId);
 
     const build = (applyRange: boolean) => {
       const qb = this.attendanceRepo.createQueryBuilder('a')
         .leftJoin('a.class', 'c')
+        .leftJoin('a.student', 's')
         .select('c.id', 'classId')
         .addSelect('c.name', 'className')
         .addSelect('COUNT(a.id)', 'totalRecords')
         .addSelect("SUM(CASE WHEN a.isPresent THEN 1 ELSE 0 END)", 'presentCount')
         .groupBy('c.id')
         .addGroupBy('c.name');
+        
+      // Apply school filtering
+      if (!superAdmin) {
+        if (!schoolId) return qb.where('1=0'); // No results if no schoolId for non-super admin
+        qb.where('s.schoolId = :schoolId', { schoolId });
+      } else if (schoolId) {
+        qb.where('s.schoolId = :schoolId', { schoolId });
+      }
+        
       if (applyRange && range) {
-        qb.where('a.date BETWEEN :start AND :end', { start: range.start, end: range.end });
+        qb.andWhere('a.date BETWEEN :start AND :end', { start: range.start, end: range.end });
       }
       return qb;
     };
@@ -205,9 +240,10 @@ export class AnalyticsService {
     });
   }
 
-  async getFeeCollectionStatus(academicYearId?: string) {
-  // The underlying service expects a string | undefined but its signature is string (wrap safely)
-  return this.feeAnalyticsService.getFeeAnalytics(academicYearId || undefined as any);
+  async getFeeCollectionStatus(academicYearId?: string, schoolId?: string, superAdmin = false) {
+    // For now, we'll use the existing fee analytics service without school filtering
+    // TODO: Update FeeAnalyticsService to support school filtering
+    return this.feeAnalyticsService.getFeeAnalytics(academicYearId || undefined as any);
   }
 
   async getCurrentAcademicYearDetails() {
@@ -225,31 +261,74 @@ export class AnalyticsService {
     };
   }
 
-  async getDashboardSummary() {
+  async getDashboardSummary(schoolId?: string, superAdmin = false) {
+    // Apply school filtering for students and teachers count
+    const studentWhere: any = {};
+    const teacherWhere: any = {};
+    
+    if (!superAdmin) {
+      if (!schoolId) {
+        return {
+          totalStudents: 0,
+          totalTeachers: 0,
+          currentAcademicYear: null,
+          averageGrade: 0,
+          attendanceRate: 0,
+          feePaymentPercentage: 0,
+        };
+      }
+      studentWhere.schoolId = schoolId;
+      teacherWhere.schoolId = schoolId;
+    } else if (schoolId) {
+      studentWhere.schoolId = schoolId;
+      teacherWhere.schoolId = schoolId;
+    }
+    
     const [students, teachers] = await Promise.all([
-      this.studentRepo.count(),
-      this.teacherRepo.count(),
+      this.studentRepo.count({ where: studentWhere }),
+      this.teacherRepo.count({ where: teacherWhere }),
     ]);
+    
     const currentYear = await this.getCurrentAcademicYearDetails();
     let gradeAvg = 0;
     if (currentYear) {
-      const raw = await this.gradeRepo.createQueryBuilder('g')
+      const qb = this.gradeRepo.createQueryBuilder('g')
+        .leftJoin('g.student', 's')
         .select('AVG(CAST(g.grade as float))', 'avg')
-        .where('g.date BETWEEN :s AND :e', { s: currentYear.startDate, e: currentYear.endDate })
-        .getRawOne();
+        .where('g.date BETWEEN :s AND :e', { s: currentYear.startDate, e: currentYear.endDate });
+      
+      // Apply school filtering to grades
+      if (!superAdmin) {
+        if (schoolId) qb.andWhere('s.schoolId = :schoolId', { schoolId });
+      } else if (schoolId) {
+        qb.andWhere('s.schoolId = :schoolId', { schoolId });
+      }
+      
+      const raw = await qb.getRawOne();
       gradeAvg = parseFloat(parseFloat(raw?.avg || '0').toFixed(2));
     }
+    
     let attendanceRate = 0;
     if (currentYear) {
-      const raw = await this.attendanceRepo.createQueryBuilder('a')
+      const qb = this.attendanceRepo.createQueryBuilder('a')
+        .leftJoin('a.student', 's')
         .select("SUM(CASE WHEN a.isPresent THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*),0) * 100", 'rate')
-        .where('a.date BETWEEN :s AND :e', { s: currentYear.startDate, e: currentYear.endDate })
-        .getRawOne();
+        .where('a.date BETWEEN :s AND :e', { s: currentYear.startDate, e: currentYear.endDate });
+      
+      // Apply school filtering to attendance
+      if (!superAdmin) {
+        if (schoolId) qb.andWhere('s.schoolId = :schoolId', { schoolId });
+      } else if (schoolId) {
+        qb.andWhere('s.schoolId = :schoolId', { schoolId });
+      }
+      
+      const raw = await qb.getRawOne();
       attendanceRate = parseFloat(parseFloat(raw?.rate || '0').toFixed(2));
     }
+    
     let feePaymentPercentage = 0;
     try {
-      const feeStatus: any = await this.getFeeCollectionStatus(currentYear?.id);
+      const feeStatus: any = await this.getFeeCollectionStatus(currentYear?.id, schoolId, superAdmin);
       // Support either paymentSummary or summary shape
       if (feeStatus?.paymentSummary?.paymentPercentage !== undefined) {
         feePaymentPercentage = feeStatus.paymentSummary.paymentPercentage;
@@ -257,6 +336,7 @@ export class AnalyticsService {
         feePaymentPercentage = feeStatus.summary.paymentPercentage;
       }
     } catch { /* ignore */ }
+    
     return {
       totalStudents: students,
       totalTeachers: teachers,

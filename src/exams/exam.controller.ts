@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, UsePipes, ValidationPipe, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UsePipes, ValidationPipe, Param, Request } from '@nestjs/common';
 import { ExamService } from './exam.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { CreateExamDto } from './dto/create-exam.dto';
@@ -13,19 +13,83 @@ export class ExamController {
 
   @Get()
   async findAll(
+    @Request() req,
     @Query('searchTerm') searchTerm?: string,
     @Query('class') className?: string,
     @Query('teacherId') teacherId?: string,
     @Query('teacherName') teacherName?: string,
     @Query('academicYear') academicYear?: string,
+    @Query('schoolId') schoolIdOverride?: string,
   ): Promise<Exam[]> {
-    return this.examService.findByFilters(searchTerm, className, teacherId, teacherName, academicYear);
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolScope = isSuper ? (schoolIdOverride || req.user?.schoolId) : req.user?.schoolId;
+    
+    // Enhanced diagnostic logging
+    await this.systemLoggingService.logAction({
+      action: 'EXAMS_LIST_REQUEST',
+      module: 'EXAMS',
+      level: 'debug',
+      schoolId: schoolScope,
+      performedBy: req?.user ? { 
+        id: req.user.sub || req.user.id, 
+        role: req.user.role, 
+        email: req.user.email
+      } : undefined,
+      metadata: { 
+        searchTerm, 
+        className, 
+        teacherId, 
+        teacherName, 
+        academicYear, 
+        schoolIdOverride,
+        derivedSchoolScope: schoolScope,
+        isSuper,
+        hasUser: !!req.user,
+        userSchoolId: req.user?.schoolId
+      }
+    });
+    
+    const results = await this.examService.findByFilters(searchTerm, className, teacherId, teacherName, academicYear, schoolScope, isSuper);
+    
+    // Log results
+    await this.systemLoggingService.logAction({
+      action: 'EXAMS_LIST_RESPONSE',
+      module: 'EXAMS', 
+      level: 'debug',
+      schoolId: schoolScope,
+      metadata: { 
+        resultCount: results.length,
+        examIds: results.map(e => e.id),
+        schoolScope,
+        isSuper
+      }
+    });
+    
+    return results;
+  }
+
+  @Get('statistics')
+  async getStatistics(@Request() req, @Query('schoolId') schoolIdOverride?: string) {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolScope = isSuper ? (schoolIdOverride || req.user?.schoolId) : req.user?.schoolId;
+    const stats = await this.examService.getExamStatistics(schoolScope, isSuper);
+    await this.systemLoggingService.logAction({
+      action: 'EXAMS_STATS_QUERIED',
+      module: 'EXAMS',
+      level: 'debug',
+      schoolId: schoolScope,
+      performedBy: req?.user ? { id: req.user.sub || req.user.id, role: req.user.role, email: req.user.email } : undefined,
+      metadata: stats
+    });
+    return stats;
   }
 
   @Post()
   @UsePipes(new ValidationPipe({ transform: true }))
-  async create(@Body() createExamDto: CreateExamDto): Promise<Exam> {
-    const created = await this.examService.create(createExamDto);
+  async create(@Request() req, @Body() createExamDto: CreateExamDto, @Query('schoolId') schoolIdOverride?: string): Promise<Exam> {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolScope = isSuper ? (schoolIdOverride || req.user?.schoolId) : req.user?.schoolId;
+    const created = await this.examService.create(createExamDto, schoolScope, isSuper);
     await this.systemLoggingService.logAction({
       action: 'EXAM_CREATED',
       module: 'EXAMS',
@@ -33,14 +97,32 @@ export class ExamController {
       entityId: created.id,
       entityType: 'Exam',
       newValues: { id: created.id, title: created.title, courseId: created.course?.id, classId: created.class?.id, date: created.date, status: created.status },
-      metadata: { description: 'Exam created' }
+      metadata: { description: 'Exam created', schoolId: created.schoolId }
     });
     return created;
   }
 
 
   @Get(':id')
-  async findOne(@Param('id') id: string): Promise<Exam> {
-    return this.examService.findOne(id);
+  async findOne(@Request() req, @Param('id') id: string, @Query('schoolId') schoolIdOverride?: string): Promise<Exam> {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolScope = isSuper ? (schoolIdOverride || req.user?.schoolId) : req.user?.schoolId;
+    return this.examService.findOne(id, schoolScope, isSuper);
+  }
+
+  @Get('debug/data')
+  async debugExamData(@Request() req, @Query('schoolId') schoolIdOverride?: string) {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolScope = isSuper ? (schoolIdOverride || req.user?.schoolId) : req.user?.schoolId;
+    const debugData = await this.examService.debugExamData(schoolScope, isSuper);
+    await this.systemLoggingService.logAction({
+      action: 'EXAMS_DEBUG_DATA_ACCESSED',
+      module: 'EXAMS',
+      level: 'info',
+      schoolId: schoolScope,
+      performedBy: req?.user ? { id: req.user.sub || req.user.id, role: req.user.role, email: req.user.email } : undefined,
+      metadata: { examCount: debugData.examCount, schoolScope, isSuper }
+    });
+    return debugData;
   }
 }

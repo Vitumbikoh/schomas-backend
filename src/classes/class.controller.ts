@@ -9,11 +9,13 @@ import {
   ValidationPipe,
   Get,
   Request,
+  Query,
 } from '@nestjs/common';
 import { ClassService } from './class.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { ClassResponseDto, CreateClassDto } from './dtos/class.dto';
+import { Role } from 'src/user/enums/role.enum';
 
 @Controller('classes')
 export class ClassController {
@@ -41,7 +43,14 @@ export class ClassController {
   }
 
   @Get()
-  async getAllClasses(@Request() req): Promise<ClassResponseDto[]> {
-    return this.classService.getAllClasses(req.user?.schoolId);
+  async getAllClasses(@Request() req, @Query('schoolId') schoolIdOverride?: string): Promise<ClassResponseDto[]> {
+    const isSuper = req.user?.role === Role.SUPER_ADMIN;
+    const isAdmin = req.user?.role === Role.ADMIN;
+    const isElevated = isSuper || isAdmin;
+    
+    // For super admin, allow schoolId override; for regular admin, use their schoolId
+    const schoolScope = isSuper ? (schoolIdOverride || req.user?.schoolId) : req.user?.schoolId;
+    
+    return this.classService.getAllClasses(schoolScope, isElevated);
   }
 }

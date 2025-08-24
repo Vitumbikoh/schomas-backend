@@ -1,7 +1,8 @@
-import { Entity, Column, OneToOne, JoinColumn, BaseEntity, PrimaryGeneratedColumn, OneToMany } from 'typeorm';
+import { Entity, Column, OneToOne, JoinColumn, BaseEntity, PrimaryGeneratedColumn, OneToMany, ManyToOne } from 'typeorm';
 import { User } from './user.entity';
 import { FeePayment } from 'src/finance/entities/fee-payment.entity';
 import { Budget } from 'src/finance/entities/budget.entity';
+import { School } from 'src/school/entities/school.entity';
 
 @Entity()
 export class Finance extends BaseEntity {
@@ -44,4 +45,12 @@ export class Finance extends BaseEntity {
 
   @OneToMany(() => Budget, (budget) => budget.approvedBy)
   approvedBudgets: Budget[];
+
+  // Multi-tenant scope duplication for easier filtering and historical integrity
+  @Column({ type: 'uuid', nullable: true })
+  schoolId?: string | null;
+
+  @ManyToOne(() => School, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'schoolId' })
+  school?: School | null;
 }

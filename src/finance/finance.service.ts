@@ -45,7 +45,7 @@ export class FinanceService {
     const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
     const academicYearFilter = currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {};
 
-    const schoolScope = !superAdmin && schoolId ? { schoolId } : superAdmin && schoolId ? { schoolId } : {};
+  const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
 
     const [pendingPayments, pendingBudgets, recentTransactions] = await Promise.all([
       this.paymentRepository.find({
@@ -106,6 +106,13 @@ export class FinanceService {
   async processPayment(user: { id: string; role: Role; schoolId?: string }, processPaymentDto: ProcessPaymentDto, request?: any, superAdmin = false) {
     const startTime = Date.now();
     
+    console.log('Processing payment with user data:', { 
+      userId: user.id, 
+      role: user.role, 
+      schoolId: user.schoolId,
+      studentId: processPaymentDto.studentId 
+    });
+    
     try {
       const processingUser = await this.userRepository.findOne({
         where: { id: user.id, role: In([Role.ADMIN, Role.FINANCE]) },
@@ -116,11 +123,15 @@ export class FinanceService {
       }
 
       const student = await this.studentRepository.findOne({
-        where: { id: processPaymentDto.studentId },
+        where: { 
+          id: processPaymentDto.studentId,
+          // Ensure student belongs to same school as processing user (multi-tenant security)
+          ...(user.schoolId ? { schoolId: user.schoolId } : {})
+        },
       });
 
       if (!student) {
-        throw new NotFoundException('Student not found');
+        throw new NotFoundException('Student not found or not accessible in your school');
       }
 
       // Attempt to load finance profile when role is FINANCE; fall back gracefully if missing
@@ -177,6 +188,8 @@ export class FinanceService {
           : { processedByAdmin: { id: processingUser.id } }),
       });
 
+      console.log('Payment object created with schoolId:', payment.schoolId);
+
       const savedPayment = await this.paymentRepository.save(payment);
       
       // Enhanced logging
@@ -190,7 +203,8 @@ export class FinanceService {
           role: processingUser.role,
           name: financeUser ? `${financeUser.firstName} ${financeUser.lastName}` : processingUser.username
         },
-        request
+        request,
+        user.schoolId
       );
 
       const duration = Date.now() - startTime;
@@ -216,7 +230,8 @@ export class FinanceService {
           studentId: processPaymentDto.studentId,
           amount: processPaymentDto.amount,
           duration
-        }
+        },
+        user.schoolId
       );
       
       if (error.code === '23503') {
@@ -226,34 +241,34 @@ export class FinanceService {
     }
   }
 
-  async getAllFinanceUsers(page: number, limit: number, search: string) {
-    const financeUsers = await this.financeRepository.find({
-      relations: ['user'],
-      skip: (page - 1) * limit,
-      take: limit,
-      where: search
-        ? [
-            { firstName: ILike(`%${search}%`) },
-            { lastName: ILike(`%${search}%`) },
-            { department: ILike(`%${search}%`) },
-            { user: { username: ILike(`%${search}%`) } },
-            { user: { email: ILike(`%${search}%`) } },
-          ]
-        : undefined,
-    });
+  async getAllFinanceUsers(page: number, limit: number, search: string, schoolId?: string, superAdmin = false) {
+    if (!superAdmin && !schoolId) {
+      return { financeUsers: [], total: 0 };
+    }
 
-    const total = await this.financeRepository.count({
-      where: search
-        ? [
-            { firstName: ILike(`%${search}%`) },
-            { lastName: ILike(`%${search}%`) },
-            { department: ILike(`%${search}%`) },
-            { user: { username: ILike(`%${search}%`) } },
-            { user: { email: ILike(`%${search}%`) } },
-          ]
-        : undefined,
-    });
+    const qb = this.financeRepository.createQueryBuilder('finance')
+      .leftJoinAndSelect('finance.user', 'user')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .orderBy('finance.firstName', 'ASC');
 
+    if (!superAdmin) {
+      qb.andWhere('finance.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.andWhere('finance.schoolId = :schoolId', { schoolId });
+    }
+
+    if (search) {
+      qb.andWhere(new Brackets(qb2 => {
+        qb2.where('LOWER(finance.firstName) LIKE :s', { s: `%${search.toLowerCase()}%` })
+          .orWhere('LOWER(finance.lastName) LIKE :s', { s: `%${search.toLowerCase()}%` })
+          .orWhere('LOWER(finance.department) LIKE :s', { s: `%${search.toLowerCase()}%` })
+          .orWhere('LOWER(user.username) LIKE :s', { s: `%${search.toLowerCase()}%` })
+          .orWhere('LOWER(user.email) LIKE :s', { s: `%${search.toLowerCase()}%` });
+      }));
+    }
+
+    const [financeUsers, total] = await qb.getManyAndCount();
     return { financeUsers, total };
   }
 
@@ -290,7 +305,7 @@ export class FinanceService {
     };
   }
 
-  async getDashboardCalculations(): Promise<{
+  async getDashboardCalculations(schoolId?: string, superAdmin = false): Promise<{
     totalProcessedPayments: number;
     totalApprovedBudgets: number;
     totalRevenue: number;
@@ -303,28 +318,29 @@ export class FinanceService {
     const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
     const academicYearFilter = currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {};
 
-    const [pendingPayments, pendingBudgets, recentTransactions] =
+  const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
+  const [pendingPayments, pendingBudgets, recentTransactions] =
       await Promise.all([
         this.paymentRepository.find({
-          where: { status: 'pending', ...academicYearFilter },
+      where: { status: 'pending', ...academicYearFilter, ...(schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {}) },
           take: 5,
           order: { createdAt: 'DESC' },
           relations: ['student', 'academicYear'],
         }),
         this.budgetRepository.find({
-          where: { status: 'pending' },
+      where: { status: 'pending', ...(schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {}) },
           take: 5,
           order: { createdAt: 'DESC' },
         }),
         this.paymentRepository.find({
-          where: { status: 'completed', ...academicYearFilter },
+      where: { status: 'completed', ...academicYearFilter, ...(schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {}) },
           take: 5,
           order: { paymentDate: 'DESC' },
           relations: ['student', 'academicYear'],
         }),
       ]);
 
-    const stats = await this.getFinancialStats();
+  const stats = await this.getFinancialStats(undefined, schoolId, superAdmin);
 
     return {
       ...stats,
@@ -337,17 +353,36 @@ export class FinanceService {
   async getFinancialStats(dateRange?: {
     startDate?: Date;
     endDate?: Date;
-  }): Promise<{
+  }, schoolId?: string, superAdmin = false): Promise<{
     totalProcessedPayments: number;
     totalApprovedBudgets: number;
     totalRevenue: number;
     pendingApprovals: number;
+  fallbackUsed?: boolean;
   }> {
-    // Get current academic year for filtering
-    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    // Get current academic year for filtering (with safe fallback)
+    let currentAcademicYear: any = null;
+    try {
+      currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    } catch (err) {
+      await this.systemLoggingService.logSystemError(err, 'FINANCE', 'GET_CURRENT_ACADEMIC_YEAR_FAILED');
+    }
     
     const paymentWhere: any = { status: 'completed' };
     const budgetWhere: any = { status: 'approved' };
+
+    if (!superAdmin) {
+      if (schoolId) {
+        paymentWhere.schoolId = schoolId;
+        budgetWhere.schoolId = schoolId;
+      } else {
+        // No schoolId for non-super admin -> return zeros
+        return { totalProcessedPayments: 0, totalApprovedBudgets: 0, totalRevenue: 0, pendingApprovals: 0 };
+      }
+    } else if (schoolId) {
+      paymentWhere.schoolId = schoolId;
+      budgetWhere.schoolId = schoolId;
+    }
     
     // Add academic year filter if available
     if (currentAcademicYear) {
@@ -365,46 +400,147 @@ export class FinanceService {
       );
     }
 
-    const [
-      totalProcessedPayments,
-      totalApprovedBudgets,
-      totalRevenueResult,
-      pendingPaymentsCount,
-      pendingBudgetsCount,
-    ] = await Promise.all([
-      this.paymentRepository.count({ where: paymentWhere }),
-      this.budgetRepository.count({ where: budgetWhere }),
-      this.paymentRepository
-        .createQueryBuilder('payment')
-        .select('SUM(payment.amount)', 'sum')
-        .where('payment.status = :status', { status: 'completed' })
-        .andWhere(currentAcademicYear ? 'payment.academicYearId = :academicYearId' : '1=1', 
-          currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {})
-        .andWhere(
-          dateRange?.startDate && dateRange?.endDate
-            ? 'payment.paymentDate BETWEEN :startDate AND :endDate'
-            : '1=1',
-          {
-            startDate: dateRange?.startDate,
-            endDate: dateRange?.endDate,
+    let totalProcessedPayments = 0;
+    let totalApprovedBudgets = 0;
+    let totalRevenueResult: any = { sum: '0' };
+    let pendingPaymentsCount = 0;
+    let pendingBudgetsCount = 0;
+    try {
+      [
+        totalProcessedPayments,
+        totalApprovedBudgets,
+        totalRevenueResult,
+        pendingPaymentsCount,
+        pendingBudgetsCount,
+      ] = await Promise.all([
+        this.paymentRepository.count({ where: paymentWhere }),
+        this.budgetRepository.count({ where: budgetWhere }),
+        this.calculateTotalRevenue(paymentWhere, currentAcademicYear, dateRange),
+        this.paymentRepository.count({
+          where: {
+            status: 'pending',
+            ...(currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {}),
+            ...(paymentWhere.schoolId ? { schoolId: paymentWhere.schoolId } : {}),
           },
-        )
-        .getRawOne(),
-      this.paymentRepository.count({ 
-        where: { 
-          status: 'pending', 
-          ...(currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {})
-        } 
-      }),
-      this.budgetRepository.count({ where: { status: 'pending' } }),
-    ]);
+        }),
+        this.budgetRepository.count({
+          where: {
+            status: 'pending',
+            ...(budgetWhere.schoolId ? { schoolId: budgetWhere.schoolId } : {}),
+          },
+        }),
+      ]);
+    } catch (err) {
+      await this.systemLoggingService.logSystemError(err, 'FINANCE', 'FINANCIAL_STATS_QUERY_FAILED', {
+        paymentWhere,
+        budgetWhere,
+        dateRange: dateRange ? { start: dateRange.startDate, end: dateRange.endDate } : undefined,
+      });
+      return { totalProcessedPayments: 0, totalApprovedBudgets: 0, totalRevenue: 0, pendingApprovals: 0 };
+    }
+
+    let totalRevenue = parseFloat(totalRevenueResult?.sum || '0');
+    let fallbackUsed = false;
+
+    // Fallback: if academic-year filtered result is zero but there are payments for the school overall,
+    // attempt recalculation without academic year constraint (could indicate misaligned current academic year).
+    if (schoolId && totalProcessedPayments === 0 && totalRevenue === 0) {
+      try {
+        const overallRevenueResult = await this.paymentRepository
+          .createQueryBuilder('payment')
+          .select('SUM(payment.amount)', 'sum')
+          .where('payment.status = :status', { status: 'completed' })
+          .andWhere('payment.schoolId = :schoolId', { schoolId })
+          .getRawOne();
+        const overallCount = await this.paymentRepository.count({ where: { status: 'completed', schoolId } });
+        if (overallCount > 0 && parseFloat(overallRevenueResult?.sum || '0') > 0) {
+          totalProcessedPayments = overallCount;
+          totalRevenue = parseFloat(overallRevenueResult.sum || '0');
+          fallbackUsed = true;
+        }
+      } catch (fbErr) {
+        await this.systemLoggingService.logSystemError(fbErr, 'FINANCE', 'FINANCIAL_STATS_FALLBACK_FAILED', { schoolId });
+      }
+    }
+
+    if (fallbackUsed) {
+      await this.systemLoggingService.logAction({
+        action: 'FINANCIAL_STATS_FALLBACK_APPLIED',
+        module: 'FINANCE',
+        level: 'warn',
+        schoolId,
+        metadata: { reason: 'Academic year mismatch produced zero totals; recalculated without academic year filter' },
+      });
+    } else {
+      await this.systemLoggingService.logAction({
+        action: 'FINANCIAL_STATS_CALCULATED',
+        module: 'FINANCE',
+        level: 'debug',
+        schoolId,
+        metadata: {
+          totalProcessedPayments,
+          totalApprovedBudgets,
+          totalRevenue,
+          pendingApprovals: pendingPaymentsCount + pendingBudgetsCount,
+          academicYearId: currentAcademicYear?.id,
+        },
+      });
+    }
 
     return {
       totalProcessedPayments,
       totalApprovedBudgets,
-      totalRevenue: parseFloat(totalRevenueResult?.sum || '0'),
+      totalRevenue,
       pendingApprovals: pendingPaymentsCount + pendingBudgetsCount,
+      fallbackUsed,
     };
+  }
+
+  private async calculateTotalRevenue(
+    paymentWhere: any,
+    currentAcademicYear: any,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<{ sum: string }> {
+    const qb = this.paymentRepository
+      .createQueryBuilder('payment')
+      .select('SUM(payment.amount)', 'sum')
+      .where('payment.status = :status', { status: 'completed' });
+
+    if (currentAcademicYear) {
+      qb.andWhere('payment.academicYearId = :academicYearId', { 
+        academicYearId: currentAcademicYear.id 
+      });
+    }
+
+    if (paymentWhere.schoolId) {
+      qb.andWhere('payment.schoolId = :schoolId', { 
+        schoolId: paymentWhere.schoolId 
+      });
+    }
+
+    if (dateRange?.startDate && dateRange?.endDate) {
+      qb.andWhere('payment.paymentDate BETWEEN :startDate AND :endDate', {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+      });
+    }
+
+    const result = await qb.getRawOne();
+    return result || { sum: '0' };
+  }
+
+  // Simple raw totals ignoring academic year (diagnostic / fallback)
+  async getSimpleTotalsForSchool(schoolId: string): Promise<{ rawTotal: number; count: number }> {
+    if (!schoolId) return { rawTotal: 0, count: 0 };
+    const revenueResult = await this.paymentRepository
+      .createQueryBuilder('p')
+      .select('COALESCE(SUM(p.amount),0)', 'sum')
+      .where('p.status = :status', { status: 'completed' })
+      .andWhere('p.schoolId = :schoolId', { schoolId })
+      .getRawOne();
+    const rawTotal = parseFloat(revenueResult?.sum || '0');
+    const count = await this.paymentRepository.count({ where: { status: 'completed', schoolId } });
+    return { rawTotal, count };
   }
 
   async getTransactions(
@@ -521,7 +657,7 @@ async getParentPayments(
   };
 }
 
-  async createFinanceUser(createFinanceDto: CreateFinanceDto) {
+  async createFinanceUser(createFinanceDto: CreateFinanceDto, schoolId?: string, superAdmin = false) {
     const existingUser = await this.userRepository.findOne({
       where: [
         { username: createFinanceDto.username },
@@ -535,12 +671,17 @@ async getParentPayments(
 
     const hashedPassword = await bcrypt.hash(createFinanceDto.password, 10);
 
+    if (!superAdmin && !schoolId) {
+      throw new BadRequestException('Missing school scope for finance user creation');
+    }
+
     const user = this.userRepository.create({
       username: createFinanceDto.username,
       email: createFinanceDto.email,
       password: hashedPassword,
       role: Role.FINANCE,
       isActive: true,
+      schoolId: schoolId || undefined,
     });
 
     await this.userRepository.save(user);
@@ -556,6 +697,7 @@ async getParentPayments(
       canApproveBudgets: createFinanceDto.canApproveBudgets ?? false,
       canProcessPayments: createFinanceDto.canProcessPayments ?? true,
       user: user,
+      schoolId: schoolId || user.schoolId || null,
     });
 
     await this.financeRepository.save(finance);

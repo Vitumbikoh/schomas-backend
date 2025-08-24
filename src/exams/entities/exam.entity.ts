@@ -10,6 +10,7 @@ import { Class } from '../../classes/entity/class.entity';
 import { Teacher } from '../../user/entities/teacher.entity';
 import { Course } from '../../course/entities/course.entity';
 import { AcademicYear } from '../../settings/entities/academic-year.entity';
+import { School } from 'src/school/entities/school.entity';
 
 @Entity()
 export class Exam {
@@ -71,4 +72,12 @@ export class Exam {
   @ManyToOne(() => AcademicYear)
   @JoinColumn({ name: 'academicYearId' })
   academicYear: AcademicYear;
+
+    // Multi-tenant scope
+    @Column({ type: 'uuid', nullable: true })
+    schoolId?: string | null;
+
+    @ManyToOne(() => School, { nullable: true, onDelete: 'CASCADE' })
+    @JoinColumn({ name: 'schoolId' })
+    school?: School | null;
 }

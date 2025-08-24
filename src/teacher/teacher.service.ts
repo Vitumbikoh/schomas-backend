@@ -114,10 +114,24 @@ export class TeachersService {
   }
 
   async count(whereConditions: any): Promise<number> {
-    return this.teacherRepository.count({
-      where: whereConditions,
-      relations: ['user'],
-    });
+    if (whereConditions && whereConditions.schoolId) {
+      const schoolId = whereConditions.schoolId;
+      const qb = this.teacherRepository
+        .createQueryBuilder('teacher')
+        .leftJoin('teacher.user', 'user')
+        .where('(teacher.schoolId = :schoolId OR user.schoolId = :schoolId)', { schoolId });
+      return qb.getCount();
+    }
+    return this.teacherRepository.count({ where: whereConditions, relations: ['user'] });
+  }
+
+  async countTeachersBySchool(schoolId: string): Promise<number> {
+    if (!schoolId) return 0;
+    return this.teacherRepository
+      .createQueryBuilder('teacher')
+      .leftJoin('teacher.user', 'user')
+      .where('(teacher.schoolId = :schoolId OR user.schoolId = :schoolId)', { schoolId })
+      .getCount();
   }
 
   async findAllPaginated(
@@ -134,9 +148,9 @@ export class TeachersService {
 
     if (!superAdmin) {
       if (!schoolId) return [[], 0];
-      qb.where('teacher.schoolId = :schoolId', { schoolId });
+      qb.where('(teacher.schoolId = :schoolId OR user.schoolId = :schoolId)', { schoolId });
     } else if (schoolId) {
-      qb.where('teacher.schoolId = :schoolId', { schoolId });
+      qb.where('(teacher.schoolId = :schoolId OR user.schoolId = :schoolId)', { schoolId });
     }
 
     if (search) {
@@ -602,7 +616,7 @@ export class TeachersService {
     return studentIds.size;
   }
 
-  async getTotalCoursesCount(teacherId: string): Promise<number> {
+  async getTotalCoursesCount(teacherId: string, schoolId?: string, superAdmin = false): Promise<number> {
     console.log(`Fetching total courses count for teacher ID: ${teacherId}`);
 
     if (!isUUID(teacherId)) {
@@ -619,11 +633,25 @@ export class TeachersService {
       console.error(`Teacher with ID ${teacherId} not found`);
       throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
     }
+    
+    // Validate school access
+    if (!superAdmin && schoolId && teacher.schoolId !== schoolId) {
+      throw new ForbiddenException('Access denied to teacher from different school');
+    }
 
     console.log(`Teacher found: ${teacher.firstName} ${teacher.lastName}`);
 
+    const whereCondition: any = { teacher: { id: teacherId } };
+    
+    // Add school filtering to courses for extra security
+    if (!superAdmin) {
+      if (schoolId) whereCondition.schoolId = schoolId;
+    } else if (schoolId) {
+      whereCondition.schoolId = schoolId;
+    }
+
     const courseCount = await this.courseRepository.count({
-      where: { teacher: { id: teacherId } },
+      where: whereCondition,
     });
 
     console.log(`Total courses for teacher ${teacherId}: ${courseCount}`);
@@ -696,7 +724,7 @@ export class TeachersService {
     if (includeExams) {
       const courseIds = courses.map((c) => c.id);
       console.log('Course IDs for exam count query:', courseIds);
-      examCountMap = await this.examService.getExamCountByCourse(courseIds);
+  examCountMap = await this.examService.getExamCountByCourse(courseIds, teacher.schoolId, false);
       console.log('Exam count map:', Array.from(examCountMap.entries()));
     }
 

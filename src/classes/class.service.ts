@@ -53,11 +53,20 @@ export class ClassService {
     };
   }
 
-  async getAllClasses(schoolId?: string): Promise<ClassResponseDto[]> {
+  async getAllClasses(schoolId?: string, isElevated = false): Promise<ClassResponseDto[]> {
     const qb = this.classRepository.createQueryBuilder('class');
-    if (schoolId) {
+    
+    if (!isElevated) {
+      if (!schoolId) {
+        return []; // Non-elevated users without schoolId gets empty results
+      }
+      qb.where('class.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      // Elevated users (SUPER_ADMIN or ADMIN) can specify schoolId to filter by
       qb.where('class.schoolId = :schoolId', { schoolId });
     }
+    // If elevated user and no schoolId specified, return all classes
+    
     const classes = await qb.getMany();
     return classes.map(classItem => ({
       id: classItem.id,

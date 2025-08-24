@@ -24,6 +24,7 @@ import { Exam } from 'src/exams/entities/exam.entity';
 import { Grade } from 'src/grades/entity/grade.entity';
 import { TeachersModule } from 'src/teacher/teacher.module';
 import { FinanceModule } from 'src/finance/finance.module';
+import { LogsModule } from 'src/logs/logs.module';
 
 @Module({
   imports: [
@@ -44,7 +45,8 @@ import { FinanceModule } from 'src/finance/finance.module';
     ]),
     SettingsModule,
     TeachersModule,
-    FinanceModule
+    FinanceModule,
+    LogsModule
   ],
   controllers: [ReportsController],
   providers: [

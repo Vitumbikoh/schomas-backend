@@ -163,14 +163,22 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Get total students count' })
   @ApiResponse({ status: 200, description: 'Total students count retrieved successfully' })
-  async getTotalStudentsCount(@Query('activeOnly') activeOnly: boolean) {
+  async getTotalStudentsCount(
+    @Request() req,
+    @Query('activeOnly') activeOnly: boolean,
+    @Query('schoolId') schoolIdFilter?: string, // optional for super admin
+  ) {
     this.logger.log(`Fetching total students count, activeOnly: ${activeOnly}`);
     try {
-      const total = await this.studentService.getTotalStudentsCount(activeOnly);
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
+      
+      const total = await this.studentService.getTotalStudentsCount(activeOnly, effectiveSchoolId, isSuper);
       return {
         success: true,
         totalStudents: total,
         activeOnly: activeOnly || false,
+        schoolId: effectiveSchoolId,
       };
     } catch (error) {
       this.logger.error(`Failed to fetch total student count: ${error.message}`);

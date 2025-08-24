@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Put,
+  Delete,
   Body,
   Param,
   Query,
@@ -46,7 +48,13 @@ export class FinanceController {
     description: 'Dashboard data retrieved successfully',
   })
   async getDashboard(@Request() req) {
-    return this.financeService.getDashboardData(req.user.id);
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.financeService.getDashboardData(
+      user.id || user.sub,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
   }
 
   @Get('dashboard-data')
@@ -57,7 +65,12 @@ export class FinanceController {
     description: 'Dashboard data with calculations retrieved successfully',
   })
   async getDashboardData(@Request() req) {
-    const data = await this.financeService.getDashboardCalculations();
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    const data = await this.financeService.getDashboardCalculations(
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
     return {
       ...data,
       uiConfig: {
@@ -81,7 +94,11 @@ export class FinanceController {
   ) {
     try {
       const paymentResult = await this.financeService.processPayment(
-        { id: req.user.sub || req.user.id, role: req.user.role },
+        {
+          id: req.user.sub || req.user.id,
+          role: req.user.role,
+          schoolId: req.user.schoolId,
+        },
         processPaymentDto,
         req,
       );
@@ -90,90 +107,207 @@ export class FinanceController {
         action: 'FEE_PAYMENT_CREATED_CONTROLLER',
         module: 'FINANCE',
         level: 'info',
-        performedBy: req?.user ? { id: req.user.sub, email: req.user.email, role: req.user.role } : undefined,
+        schoolId: req.user.schoolId,
+        performedBy: req?.user
+          ? { id: req.user.sub, email: req.user.email, role: req.user.role }
+          : undefined,
         entityId: payment.id,
         entityType: 'FeePayment',
         newValues: {
           id: payment.id,
           amount: payment.amount,
-          paymentDate: payment.paymentDate ? new Date(payment.paymentDate).toISOString() : undefined,
+          paymentDate: payment.paymentDate
+            ? new Date(payment.paymentDate).toISOString()
+            : undefined,
           paymentMethod: payment.paymentMethod,
           status: payment.status,
           studentName: payment.studentName,
+          schoolId: payment.schoolId,
         },
-        metadata: { description: 'Fee payment processed via FinanceController' }
+        metadata: {
+          description: 'Fee payment processed via FinanceController',
+        },
       });
       return paymentResult;
     } catch (error) {
-      await this.systemLoggingService.logSystemError(error, 'FINANCE', 'FEE_PAYMENT_PROCESS_ERROR', { dto: processPaymentDto });
+      await this.systemLoggingService.logSystemError(
+        error,
+        'FINANCE',
+        'FEE_PAYMENT_PROCESS_ERROR',
+        { dto: processPaymentDto },
+        req.user.schoolId,
+      );
       throw error;
     }
   }
 
   // ---------------- Fee Structure Management ----------------
 
- @Post('fee-structure')
-@Roles(Role.ADMIN, Role.FINANCE)
-@ApiOperation({ summary: 'Create a new fee structure item' })
-@ApiResponse({ 
-  status: 201, 
-  description: 'Fee structure item created successfully' 
-})
-@ApiResponse({ 
-  status: 400, 
-  description: 'Bad Request - Validation failed' 
-})
-async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
-  // Set defaults if not provided
-  const feeStructureData = {
-    ...dto,
-    feeType: dto.feeType || 'Tuition',
-    isActive: dto.isActive !== undefined ? dto.isActive : true,
-    isOptional: dto.isOptional || false,
-    frequency: dto.frequency || 'per_term'
-  };
+  @Post('fee-structure')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Create a new fee structure item' })
+  @ApiResponse({
+    status: 201,
+    description: 'Fee structure item created successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Validation failed',
+  })
+  async createFeeStructureItem(
+    @Request() req,
+    @Body() dto: CreateFeeStructureDto,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
 
-  return this.studentFeeExpectationService.createFeeStructureItem(feeStructureData);
-}
+    // Set defaults if not provided
+    const feeStructureData = {
+      ...dto,
+      feeType: dto.feeType || 'Tuition',
+      isActive: dto.isActive !== undefined ? dto.isActive : true,
+      isOptional: dto.isOptional || false,
+      frequency: dto.frequency || 'per_term',
+    };
+
+    // Pass schoolId from authenticated user for multi-tenant isolation
+    return this.studentFeeExpectationService.createFeeStructureItem(
+      feeStructureData,
+      superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
+    );
+  }
 
   @Get('fee-structure')
   @Roles(Role.ADMIN, Role.FINANCE)
   @ApiOperation({ summary: 'Get fee structure for academic year' })
-  async getFeeStructure(@Query('academicYearId') academicYearId: string) {
-    return this.studentFeeExpectationService.getFeeStructureForAcademicYear(academicYearId);
+  async getFeeStructure(
+    @Request() req,
+    @Query('academicYearId') academicYearId: string,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+
+    return this.studentFeeExpectationService.getFeeStructureForAcademicYear(
+      academicYearId,
+      superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
+      superAdmin,
+    );
+  }
+
+  @Put('fee-structure/:id')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Update a fee structure item' })
+  @ApiResponse({
+    status: 200,
+    description: 'Fee structure item updated successfully',
+  })
+  async updateFeeStructureItem(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() dto: Partial<CreateFeeStructureDto>,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+
+    return this.studentFeeExpectationService.updateFeeStructureItem(
+      id,
+      dto,
+      superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
+      superAdmin,
+    );
+  }
+
+  @Delete('fee-structure/:id')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Delete a fee structure item' })
+  @ApiResponse({
+    status: 200,
+    description: 'Fee structure item deleted successfully',
+  })
+  async deleteFeeStructureItem(@Request() req, @Param('id') id: string) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+
+    return this.studentFeeExpectationService.deleteFeeStructureItem(
+      id,
+      superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
+      superAdmin,
+    );
   }
 
   // ---------------- Fee Status and Summary ----------------
 
   @Get('fee-summary')
   @Roles(Role.ADMIN, Role.FINANCE)
-  @ApiOperation({ summary: 'Summary of fee payment status for an academic year' })
-  async feeSummary(@Query('academicYearId') academicYearId: string) {
-    return this.studentFeeExpectationService.getFeeSummaryForAcademicYear(academicYearId);
+  @ApiOperation({
+    summary: 'Summary of fee payment status for an academic year',
+  })
+  async feeSummary(
+    @Request() req,
+    @Query('academicYearId') academicYearId: string,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.studentFeeExpectationService.getFeeSummaryForAcademicYear(
+      academicYearId,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
   }
 
   @Get('fee-statuses')
   @Roles(Role.ADMIN, Role.FINANCE)
-  @ApiOperation({ summary: 'List per-student payment status for an academic year' })
-  async feeStatuses(@Query('academicYearId') academicYearId: string) {
-    return this.studentFeeExpectationService.listStudentFeeStatuses(academicYearId);
+  @ApiOperation({
+    summary: 'List per-student payment status for an academic year',
+  })
+  async feeStatuses(
+    @Request() req,
+    @Query('academicYearId') academicYearId: string,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.studentFeeExpectationService.listStudentFeeStatuses(
+      academicYearId,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
   }
 
   @Get('fee-status/:studentId')
   @Roles(Role.ADMIN, Role.FINANCE)
   @ApiOperation({ summary: 'Get detailed fee status for a single student' })
   async studentFeeStatus(
-    @Param('studentId') studentId: string, 
-    @Query('academicYearId') academicYearId: string
+    @Request() req,
+    @Param('studentId') studentId: string,
+    @Query('academicYearId') academicYearId: string,
   ) {
-    return this.studentFeeExpectationService.getStudentFeeStatus(studentId, academicYearId);
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.studentFeeExpectationService.getStudentFeeStatus(
+      studentId,
+      academicYearId,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
   }
 
   @Get('fee-metrics')
   @Roles(Role.ADMIN, Role.FINANCE)
-  @ApiOperation({ summary: 'Aggregated fee metrics (expected, paid, pending, overdue) for dashboard cards' })
-  async feeMetrics(@Query('academicYearId') academicYearId: string) {
-    return this.studentFeeExpectationService.getFeeSummaryForAcademicYear(academicYearId);
+  @ApiOperation({
+    summary:
+      'Aggregated fee metrics (expected, paid, pending, overdue) for dashboard cards',
+  })
+  async feeMetrics(
+    @Request() req,
+    @Query('academicYearId') academicYearId: string,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.studentFeeExpectationService.getFeeSummaryForAcademicYear(
+      academicYearId,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
   }
 
   // ---------------- Finance User Management ----------------
@@ -186,15 +320,29 @@ async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
     description: 'Finance user created successfully',
   })
   @ApiResponse({ status: 403, description: 'Forbidden' })
-  async createFinanceUser(@Request() req, @Body() createFinanceDto: CreateFinanceDto) {
+  async createFinanceUser(
+    @Request() req,
+    @Body() createFinanceDto: CreateFinanceDto,
+    @Query('schoolId') schoolIdOverride?: string,
+  ) {
     try {
-      const financeUserResult = await this.financeService.createFinanceUser(createFinanceDto);
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      const schoolScope = isSuper
+        ? schoolIdOverride || req.user?.schoolId
+        : req.user?.schoolId;
+      const financeUserResult = await this.financeService.createFinanceUser(
+        createFinanceDto,
+        schoolScope,
+        isSuper,
+      );
       const financeUser = financeUserResult.financeProfile;
       await this.systemLoggingService.logAction({
         action: 'FINANCE_USER_CREATED',
         module: 'FINANCE',
         level: 'info',
-        performedBy: req?.user ? { id: req.user.sub, email: req.user.email, role: req.user.role } : undefined,
+        performedBy: req?.user
+          ? { id: req.user.sub, email: req.user.email, role: req.user.role }
+          : undefined,
         entityId: financeUserResult.id,
         entityType: 'FinanceUser',
         newValues: {
@@ -203,13 +351,18 @@ async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
           lastName: financeUser.lastName,
           department: financeUser.department,
           canApproveBudgets: financeUser.canApproveBudgets,
-          canProcessPayments: financeUser.canProcessPayments
+          canProcessPayments: financeUser.canProcessPayments,
         },
-        metadata: { description: 'Finance user created' }
+        metadata: { description: 'Finance user created' },
       });
       return financeUserResult;
     } catch (error) {
-      await this.systemLoggingService.logSystemError(error, 'FINANCE', 'FINANCE_USER_CREATE_ERROR', { dto: createFinanceDto });
+      await this.systemLoggingService.logSystemError(
+        error,
+        'FINANCE',
+        'FINANCE_USER_CREATE_ERROR',
+        { dto: createFinanceDto },
+      );
       throw error;
     }
   }
@@ -225,15 +378,24 @@ async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
     description: 'List of finance users retrieved successfully',
   })
   async getAllFinanceUsers(
+    @Request() req,
     @Query('page') page = 1,
     @Query('limit') limit = 10,
     @Query('search') search = '',
+    @Query('schoolId') schoolIdOverride?: string,
   ) {
-    const { financeUsers, total } = await this.financeService.getAllFinanceUsers(
-      Number(page),
-      Number(limit),
-      search,
-    );
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolScope = isSuper
+      ? schoolIdOverride || req.user?.schoolId
+      : req.user?.schoolId;
+    const { financeUsers, total } =
+      await this.financeService.getAllFinanceUsers(
+        Number(page),
+        Number(limit),
+        search,
+        schoolScope,
+        isSuper,
+      );
 
     const transformedFinanceOfficers = financeUsers.map((finance) => ({
       id: finance.id,
@@ -256,6 +418,7 @@ async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
         currentPage: page,
         itemsPerPage: limit,
       },
+      filters: { schoolId: schoolScope, search },
     };
   }
 
@@ -281,15 +444,28 @@ async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
         action: 'BUDGET_APPROVED',
         module: 'FINANCE',
         level: 'info',
-        performedBy: req?.user ? { id: req.user.sub, email: req.user.email, role: req.user.role } : undefined,
+        performedBy: req?.user
+          ? { id: req.user.sub, email: req.user.email, role: req.user.role }
+          : undefined,
         entityId: approved?.id,
         entityType: 'Budget',
-        newValues: approved ? { id: approved.id, status: approved.status, totalAmount: approved.totalAmount } : undefined,
-        metadata: { description: 'Budget approved' }
+        newValues: approved
+          ? {
+              id: approved.id,
+              status: approved.status,
+              totalAmount: approved.totalAmount,
+            }
+          : undefined,
+        metadata: { description: 'Budget approved' },
       });
       return approvedResult;
     } catch (error) {
-      await this.systemLoggingService.logSystemError(error, 'FINANCE', 'BUDGET_APPROVE_ERROR', { budgetId, dto: approveBudgetDto });
+      await this.systemLoggingService.logSystemError(
+        error,
+        'FINANCE',
+        'BUDGET_APPROVE_ERROR',
+        { budgetId, dto: approveBudgetDto },
+      );
       throw error;
     }
   }
@@ -303,8 +479,19 @@ async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
     status: 200,
     description: 'Statistics retrieved successfully',
   })
-  async getFinancialStats() {
-    return this.financeService.getFinancialStats();
+  async getFinancialStats(
+    @Request() req,
+    @Query('schoolId') schoolIdOverride?: string,
+  ) {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolScope = isSuper
+      ? schoolIdOverride || req.user?.schoolId
+      : req.user?.schoolId;
+    return this.financeService.getFinancialStats(
+      undefined,
+      schoolScope,
+      isSuper,
+    );
   }
 
   @Get('total-finances')
@@ -315,27 +502,80 @@ async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
   async getTotalFinances(
+    @Request() req,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query('schoolId') schoolIdOverride?: string,
   ) {
     try {
       const dateRange = {
         startDate: startDate ? new Date(startDate) : undefined,
         endDate: endDate ? new Date(endDate) : undefined,
       };
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      const schoolScope = isSuper
+        ? schoolIdOverride || req.user?.schoolId
+        : req.user?.schoolId;
+      const stats = await this.financeService.getFinancialStats(
+        dateRange,
+        schoolScope,
+        isSuper,
+      );
 
-      const stats = await this.financeService.getFinancialStats(dateRange);
+      // If academic-year filtered stats are zero, attempt simple fallback without academic year filter
+      if (schoolScope && !isSuper && stats.totalProcessedPayments === 0 && Number(stats.totalRevenue) === 0) {
+        const simple = await this.financeService.getSimpleTotalsForSchool(schoolScope);
+        if (simple.rawTotal > 0) {
+          stats.totalProcessedPayments = simple.count;
+          stats.totalRevenue = simple.rawTotal;
+          (stats as any).fallbackUsed = true;
+        }
+      }
+
+      // Defensive: ensure numeric
+      const revenueNumber = Number(stats.totalRevenue) || 0;
+
+      await this.systemLoggingService.logAction({
+        action: 'FINANCE_TOTALS_QUERIED',
+        module: 'FINANCE',
+        level: 'debug',
+        schoolId: schoolScope,
+        metadata: {
+          startDate: dateRange.startDate?.toISOString(),
+          endDate: dateRange.endDate?.toISOString(),
+          totalProcessedPayments: stats.totalProcessedPayments,
+          totalApprovedBudgets: stats.totalApprovedBudgets,
+          pendingApprovals: stats.pendingApprovals,
+          rawRevenue: stats.totalRevenue,
+          revenueFormatted: `$${revenueNumber.toFixed(2)}`,
+        },
+      });
 
       return {
         success: true,
         ...stats,
-        totalRevenue: `$${stats.totalRevenue.toFixed(2)}`,
+        totalRevenue: `$${revenueNumber.toFixed(2)}`,
         dateRange: {
           start: dateRange.startDate?.toISOString(),
           end: dateRange.endDate?.toISOString(),
         },
+        filters: { schoolId: schoolScope },
+        fallbackUsed: stats.fallbackUsed || false,
       };
     } catch (error) {
+      await this.systemLoggingService.logSystemError(
+        error,
+        'FINANCE',
+        'FINANCE_TOTALS_ERROR',
+        {
+          startDate,
+          endDate,
+          schoolIdOverride,
+          userId: req.user?.sub || req.user?.id,
+          role: req.user?.role,
+        },
+        req.user?.schoolId,
+      );
       throw new Error(
         'Failed to fetch total financial metrics: ' + error.message,
       );
@@ -427,7 +667,8 @@ async createFeeStructureItem(@Body() dto: CreateFeeStructureDto) {
   @ApiQuery({ name: 'search', required: false, type: String })
   @ApiResponse({
     status: 200,
-    description: "List of fee payments for parent's children retrieved successfully",
+    description:
+      "List of fee payments for parent's children retrieved successfully",
   })
   async getParentPayments(
     @Request() req: any,

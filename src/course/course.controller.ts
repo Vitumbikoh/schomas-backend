@@ -200,13 +200,19 @@ async getAllCourses(
     status: 200,
     description: 'Statistics retrieved successfully',
   })
-  async getTotalCoursesStats(@Request() req): Promise<{
+  async getTotalCoursesStats(
+    @Request() req,
+    @Query('schoolId') schoolIdFilter?: string, // optional for super admin
+  ): Promise<{
     title: string;
     value: string;
     trend: { value: number; isPositive: boolean };
   }> {
     try {
-      const totalCourses = await this.courseService.count();
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
+      
+      const totalCourses = await this.courseService.count({}, effectiveSchoolId, isSuper);
       const currentDate = new Date();
       const currentMonthStart = new Date(
         currentDate.getFullYear(),
@@ -232,10 +238,10 @@ async getAllCourses(
       const [currentMonthCount, previousMonthCount] = await Promise.all([
         this.courseService.count({
           createdAt: Between(currentMonthStart, currentMonthEnd),
-        }),
+        }, effectiveSchoolId, isSuper),
         this.courseService.count({
           createdAt: Between(previousMonthStart, previousMonthEnd),
-        }),
+        }, effectiveSchoolId, isSuper),
       ]);
 
       let trendValue = 0;
