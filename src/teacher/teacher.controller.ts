@@ -1009,7 +1009,11 @@ export class TeacherController {
       }
 
       // Verify the exam belongs to this teacher
-      const exam = await this.examService.findOne(submitGradesDto.examId);
+      const exam = await this.examService.findOne(
+        submitGradesDto.examId,
+        teacher.schoolId, // Pass the teacher's schoolId
+        false // Not a super admin
+      );
       if (exam.teacher.id !== teacher.id) {
         throw new ForbiddenException(
           'You are not authorized to grade this exam',

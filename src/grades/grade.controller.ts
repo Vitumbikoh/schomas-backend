@@ -39,7 +39,7 @@ export class GradeController {
     @Query('academicYear') academicYear?: string,
     @Query('term') term?: string
   ) {
-    return this.gradeService.getClassStudents(classId, req.user.sub);
+    return this.gradeService.getClassStudents(classId, req.user.sub, req.user.schoolId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -50,7 +50,13 @@ export class GradeController {
     @Query('academicYear') academicYear?: string,
     @Query('term') term?: string
   ) {
-    return this.gradeService.getClassGrades(classId, req.user.sub);
+    return this.gradeService.getClassGrades(
+      classId, 
+      req.user.sub, 
+      req.user.schoolId, // Pass the user's schoolId
+      academicYear, 
+      term
+    );
   }
 
   @UseGuards(JwtAuthGuard)

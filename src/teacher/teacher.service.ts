@@ -25,6 +25,7 @@ import { ExamService } from 'src/exams/exam.service';
 import { Exam } from 'src/exams/entities/exam.entity';
 import { Grade } from 'src/grades/entity/grade.entity';
 import { Student } from 'src/user/entities/student.entity';
+import { SettingsService } from 'src/settings/settings.service';
 
 @Injectable()
 export class TeachersService {
@@ -48,6 +49,7 @@ export class TeachersService {
     private readonly gradeRepository: Repository<Grade>,
     @InjectRepository(Student)
     private readonly studentRepository: Repository<Student>,
+    private readonly settingsService: SettingsService,
   ) {}
 
   async findOne(id: string): Promise<Teacher> {
@@ -1087,10 +1089,27 @@ export class TeachersService {
     teacherId: string,
     courseId: string,
   ): Promise<any[]> {
+    // First get the teacher to access their schoolId
+    const teacher = await this.teacherRepository.findOne({
+      where: { id: teacherId },
+      select: ['id', 'schoolId'],
+    });
+
+    if (!teacher) {
+      throw new NotFoundException('Teacher not found');
+    }
+
+    console.log(`[DEBUG] getExamsForGrading - teacherId: ${teacherId}, courseId: ${courseId}, schoolId: ${teacher.schoolId}`);
+
     const exams = await this.examService.findByCourseAndTeacher(
       courseId,
       teacherId,
+      teacher.schoolId, // Pass the teacher's schoolId
+      false, // Not a super admin
     );
+
+    console.log(`[DEBUG] Found ${exams.length} exams for grading`);
+    console.log(`[DEBUG] Exam details:`, exams.map(e => ({ id: e.id, title: e.title, teacherId: e.teacher?.id, courseId: e.course?.id })));
 
     return exams.map((exam) => ({
       id: exam.id,
@@ -1108,8 +1127,21 @@ async submitExamGrades(
   teacherId: string, // Change from userId to teacherId since we already verified in controller
   submitGradesDto: SubmitGradesDto,
 ): Promise<any> {
+  // Get the teacher profile first to access their schoolId
+  const teacher = await this.teacherRepository.findOne({
+    where: { id: teacherId },
+    select: ['id', 'schoolId'],
+  });
+
+  if (!teacher) {
+    throw new NotFoundException('Teacher not found');
+  }
+
   const exam = await this.examRepository.findOne({
-    where: { id: submitGradesDto.examId },
+    where: { 
+      id: submitGradesDto.examId,
+      schoolId: teacher.schoolId, // Add schoolId filtering
+    },
     relations: ['course', 'teacher', 'class'],
   });
 
@@ -1117,18 +1149,15 @@ async submitExamGrades(
     throw new NotFoundException('Exam not found');
   }
 
-  // Get the teacher profile using the provided teacherId
-  const teacher = await this.teacherRepository.findOne({
-    where: { id: teacherId },
-  });
-
-  if (!teacher) {
-    throw new NotFoundException('Teacher not found');
-  }
-
   // Verify the teacher is authorized for this exam
   if (exam.teacher.id !== teacher.id) {
     throw new ForbiddenException('You are not authorized to grade this exam');
+  }
+
+  // Get the current academic year
+  const academicYear = await this.settingsService.getCurrentAcademicYear();
+  if (!academicYear) {
+    throw new BadRequestException('No current academic year found. Please contact your administrator.');
   }
 
   // Rest of the method remains the same...
@@ -1154,6 +1183,9 @@ async submitExamGrades(
     grade.exam = exam;
     grade.course = exam.course;
     grade.class = exam.class;
+    // Add multi-tenancy and academic year tracking
+    grade.schoolId = teacher.schoolId;
+    grade.academicYearId = academicYear.id;
     gradeRecords.push(grade);
   }
 

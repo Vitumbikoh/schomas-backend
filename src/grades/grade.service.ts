@@ -139,8 +139,13 @@ export class GradeService {
     return this.gradeRepository.save(gradeRecords);
   }
 
-  async getAllClasses(): Promise<Class[]> {
+  async getAllClasses(schoolId?: string): Promise<Class[]> {
+    const where: any = {};
+    if (schoolId) {
+      where.schoolId = schoolId;
+    }
     return this.classRepository.find({
+      where,
       relations: ['students'],
     });
   }
@@ -148,6 +153,7 @@ export class GradeService {
   async getClassStudents(
     classId: string,
     userId: string,
+    schoolId?: string,
     academicYear?: string,
     term?: string,
   ): Promise<Student[]> {
@@ -156,13 +162,23 @@ export class GradeService {
       throw new UnauthorizedException('User not found');
     }
 
+    const where: any = { id: classId };
+    if (schoolId) {
+      where.schoolId = schoolId;
+    }
+
     const classEntity = await this.classRepository.findOne({
-      where: { id: classId },
+      where,
       relations: ['students', 'students.user'],
     });
 
     if (!classEntity) {
       throw new NotFoundException('Class not found');
+    }
+
+    // Additional filtering of students by schoolId if provided
+    if (schoolId) {
+      return classEntity.students.filter(student => student.schoolId === schoolId);
     }
 
     return classEntity.students;
@@ -171,6 +187,7 @@ export class GradeService {
   async getClassGrades(
     classId: string,
     userId: string,
+    schoolId?: string,
     academicYear?: string,
     term?: string,
   ): Promise<any> {
@@ -207,6 +224,11 @@ export class GradeService {
       .leftJoinAndSelect('grade.student', 'student')
       .leftJoinAndSelect('grade.course', 'course')
       .where('grade.classId = :classId', { classId });
+
+    // Add schoolId filtering for multi-tenancy
+    if (schoolId) {
+      query.andWhere('grade.schoolId = :schoolId', { schoolId });
+    }
 
     if (academicYear) {
       query.andWhere('EXTRACT(YEAR FROM grade.date) = :year', {
@@ -369,9 +391,12 @@ export class GradeService {
       throw new NotFoundException('Student not found');
     }
 
-    // Get all grades for this student
+    // Get all grades for this student, filtered by schoolId for multi-tenancy
     const grades = await this.gradeRepository.find({
-      where: { student: { id: student.id } },
+      where: { 
+        student: { id: student.id },
+        schoolId: student.schoolId, // Add schoolId filtering
+      },
       relations: ['course', 'class'],
     });
 

@@ -442,20 +442,36 @@ async getExamCountByCourse(courseIds: string[], schoolId?: string, superAdmin = 
   }
 
   async findByCourseAndTeacher(courseId: string, teacherId: string, schoolId?: string, superAdmin = false): Promise<Exam[]> {
-    const where: any = {
-      course: { id: courseId },
-      teacher: { id: teacherId },
-    };
+    console.log(`[DEBUG] findByCourseAndTeacher - courseId: ${courseId}, teacherId: ${teacherId}, schoolId: ${schoolId}, superAdmin: ${superAdmin}`);
+    
+    const queryBuilder = this.examRepository
+      .createQueryBuilder('exam')
+      .leftJoinAndSelect('exam.course', 'course')
+      .leftJoinAndSelect('exam.teacher', 'teacher')
+      .leftJoinAndSelect('exam.class', 'class')
+      .leftJoinAndSelect('exam.academicYear', 'academicYear')
+      .where('exam.courseId = :courseId', { courseId })
+      .andWhere('exam.teacherId = :teacherId', { teacherId });
+
     if (!superAdmin) {
-      if (!schoolId) return [];
-      where.schoolId = schoolId;
+      if (!schoolId) {
+        console.log(`[DEBUG] Returning empty array - no schoolId provided for non-super admin`);
+        return [];
+      }
+      queryBuilder.andWhere('exam.schoolId = :schoolId', { schoolId });
     } else if (schoolId) {
-      where.schoolId = schoolId;
+      queryBuilder.andWhere('exam.schoolId = :schoolId', { schoolId });
     }
-    return this.examRepository.find({
-      where,
-      relations: ['course', 'teacher'],
-    });
+
+    const sqlQuery = queryBuilder.getSql();
+    const parameters = queryBuilder.getParameters();
+    console.log(`[DEBUG] SQL Query: ${sqlQuery}`);
+    console.log(`[DEBUG] Parameters:`, parameters);
+
+    const results = await queryBuilder.getMany();
+    console.log(`[DEBUG] Query returned ${results.length} results`);
+    
+    return results;
   }
 
   // Attempt to backfill missing schoolId on legacy exam rows using related entities
