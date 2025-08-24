@@ -12,6 +12,8 @@ import { UsersModule } from '../user/users.module';
 import { SettingsModule } from '../settings/settings.module';
 import { TeachersModule } from 'src/teacher/teacher.module';
 import { LogsModule } from '../logs/logs.module';
+import { AuthModule } from '../auth/auth.module';
+import { ConfigModule } from '../config/config.module';
 
 @Module({
   imports: [
@@ -23,6 +25,8 @@ import { LogsModule } from '../logs/logs.module';
     TypeOrmModule.forFeature([Exam]), 
     forwardRef(() => TeachersModule),
     LogsModule,
+    AuthModule,
+    ConfigModule,
   ],
   controllers: [ExamController],
   providers: [ExamService],

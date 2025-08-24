@@ -43,6 +43,7 @@ export class ClassController {
   }
 
   @Get()
+  @UseGuards(JwtAuthGuard)
   async getAllClasses(@Request() req, @Query('schoolId') schoolIdOverride?: string): Promise<ClassResponseDto[]> {
     const isSuper = req.user?.role === Role.SUPER_ADMIN;
     const isAdmin = req.user?.role === Role.ADMIN;
