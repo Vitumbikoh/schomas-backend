@@ -28,6 +28,7 @@ import {
 import { AcademicCalendar } from './entities/academic-calendar.entity';
 import { Term } from './entities/term.entity';
 import { AcademicYear } from './entities/academic-year.entity';
+import { AcademicCalendarUtils } from './utils/academic-calendar.utils';
 import {
   AcademicYearTermDto,
   CreateAcademicYearTermDto,
@@ -400,6 +401,21 @@ export class SettingsService {
 
       if (!calendar) {
         throw new NotFoundException('Academic calendar not found for your school');
+      }
+
+      // Get the currently active calendar for validation
+      const currentActiveCalendar = await queryRunner.manager.findOne(AcademicCalendar, {
+        where: { schoolId, isActive: true },
+      });
+
+      // Validate that we're not setting a previous calendar as active
+      const validation = AcademicCalendarUtils.canActivateCalendar(
+        calendar.academicYear,
+        currentActiveCalendar?.academicYear
+      );
+
+      if (!validation.isValid) {
+        throw new BadRequestException(validation.reason);
       }
 
       // Deactivate all other calendars for this school only

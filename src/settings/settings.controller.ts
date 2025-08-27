@@ -14,6 +14,7 @@ import {
   Query,
   NotFoundException,
   InternalServerErrorException,
+  BadRequestException,
 } from '@nestjs/common';
 import { SettingsService } from './settings.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
@@ -28,6 +29,7 @@ import { AcademicCalendar } from './entities/academic-calendar.entity';
 import { Term } from './entities/term.entity';
 import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
+import { AcademicCalendarUtils } from './utils/academic-calendar.utils';
 import { AcademicYearTermDto, CreateAcademicYearTermDto } from './dtos/academic-year-term.dto';
 
 @Controller('settings')
@@ -346,6 +348,21 @@ export class SettingsController {
         throw new NotFoundException('Academic calendar not found for your school');
       }
 
+      // Get the currently active calendar for validation
+      const currentActiveCalendar = await queryRunner.manager.findOne(AcademicCalendar, {
+        where: { schoolId: req.user.schoolId, isActive: true },
+      });
+
+      // Validate that we're not setting a previous calendar as active
+      const validation = AcademicCalendarUtils.canActivateCalendar(
+        calendar.academicYear,
+        currentActiveCalendar?.academicYear
+      );
+
+      if (!validation.isValid) {
+        throw new BadRequestException(validation.reason);
+      }
+
       // Deactivate all other calendars for this school only
       await queryRunner.manager.update(
         AcademicCalendar,
@@ -523,6 +540,21 @@ async createAcademicYearTerm(
 
         if (!calendar) {
           throw new NotFoundException('Academic calendar not found for your school');
+        }
+
+        // Get the currently active calendar for validation
+        const currentActiveCalendar = await queryRunner.manager.findOne(AcademicCalendar, {
+          where: { schoolId: req.user.schoolId, isActive: true },
+        });
+
+        // Validate that we're not setting a previous calendar as active
+        const validation = AcademicCalendarUtils.canActivateCalendar(
+          calendar.academicYear,
+          currentActiveCalendar?.academicYear
+        );
+
+        if (!validation.isValid) {
+          throw new BadRequestException(validation.reason);
         }
 
         // Deactivate all other calendars for this school
