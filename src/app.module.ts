@@ -22,6 +22,7 @@ import { ActivitiesModule } from './activity/activity.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { SuperAdminsModule } from './super-admins/super-admins.module';
 import { SchoolModule } from './school/school.module';
+import { ProfileModule } from './profile/profile.module';
 
 @Module({
   imports: [
@@ -46,9 +47,10 @@ import { SchoolModule } from './school/school.module';
     LearningMaterialsModule,
     GradeModule, 
     ActivitiesModule,
-  AnalyticsModule,
-  SuperAdminsModule,
-  SchoolModule,
+    AnalyticsModule,
+    SuperAdminsModule,
+    SchoolModule,
+    ProfileModule,
   ],
 })
 export class AppModule {}
