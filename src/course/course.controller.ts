@@ -589,15 +589,16 @@ async getCourse(@Request() req, @Param('id') id: string) {
           id: enrollment.id,
           student: {
             id: enrollment.student?.id || '',
+            studentId: enrollment.student?.studentId || '', // human readable
             firstName: enrollment.student?.firstName || 'Unknown',
             lastName: enrollment.student?.lastName || '',
             email: enrollment.student?.user?.email || '',
           },
           course: {
             id: enrollment.course?.id || '',
-            name: enrollment.course?.name || 'Unknown',
+            name: enrollment.course?.name || '',
           },
-          enrollmentDate: enrollment.createdAt.toISOString(),
+          enrollmentDate: enrollment.createdAt?.toISOString?.() || '',
           status: enrollment.status,
         })),
       };

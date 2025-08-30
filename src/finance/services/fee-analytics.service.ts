@@ -119,7 +119,7 @@ export class FeeAnalyticsService {
           termId: currentTerm.id,
           status: 'completed'
         },
-        relations: ['student', 'Term']
+        relations: ['student', 'term']
       });
 
       // Calculate payment summary
