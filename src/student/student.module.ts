@@ -24,10 +24,12 @@ import { Log } from 'src/logs/logs.entity';
 import { LogsService } from 'src/logs/logs.service';
 import { SettingsModule } from 'src/settings/settings.module';
 import { LogsModule } from 'src/logs/logs.module';
+import { StudentClassPromotion } from './entities/student-class-promotion.entity';
+import { StudentPromotionService } from './services/student-promotion.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Student, User, Parent, Schedule, Course, Class, Classroom, LearningMaterial, Enrollment, Log]),
+  TypeOrmModule.forFeature([Student, User, Parent, Schedule, Course, Class, Classroom, LearningMaterial, Enrollment, Log, StudentClassPromotion]),
     UsersModule,
     AuthModule,
     ConfigModule,
@@ -36,8 +38,8 @@ import { LogsModule } from 'src/logs/logs.module';
     SettingsModule,
     LogsModule,    
   ],
-  providers: [StudentsService, ScheduleService, CourseService, ClassService, ClassroomService],
+  providers: [StudentsService, ScheduleService, CourseService, ClassService, ClassroomService, StudentPromotionService],
   controllers: [StudentController],
-  exports: [StudentsService],
+  exports: [StudentsService, StudentPromotionService],
 })
 export class StudentsModule {}

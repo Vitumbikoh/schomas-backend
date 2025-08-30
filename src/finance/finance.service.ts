@@ -768,6 +768,37 @@ async getParentPayments(
     };
   }
 
+  async getFinanceUserDetails(id: string, schoolScopedId?: string, superAdmin = false) {
+    // Finance profile joined with user
+    const finance = await this.financeRepository.findOne({
+      where: { id, ...(superAdmin ? {} : (schoolScopedId ? { schoolId: schoolScopedId } : {})) },
+      relations: ['user']
+    });
+    if (!finance) {
+      throw new NotFoundException('Finance user not found');
+    }
+    return {
+      id: finance.id,
+      firstName: finance.firstName,
+      lastName: finance.lastName,
+      phoneNumber: finance.phoneNumber,
+      address: finance.address,
+      dateOfBirth: finance.dateOfBirth,
+      gender: finance.gender,
+      department: finance.department,
+      canApproveBudgets: finance.canApproveBudgets,
+      canProcessPayments: finance.canProcessPayments,
+      schoolId: finance.schoolId,
+      user: finance.user ? {
+        id: finance.user.id,
+        username: finance.user.username,
+        email: finance.user.email,
+        role: finance.user.role,
+        isActive: finance.user.isActive,
+      } : null,
+    };
+  }
+
   private async getFinanceUser(userId: string): Promise<Finance | User> {
     const financeUser = await this.financeRepository.findOne({
       where: { user: { id: userId } },

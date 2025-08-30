@@ -9,6 +9,8 @@ import {
   Query,
   UseGuards,
   Request,
+  ParseUUIDPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { FinanceService } from './finance.service';
 import { AuthGuard } from '@nestjs/passport';
@@ -56,6 +58,25 @@ export class FinanceController {
       superAdmin,
     );
   }
+
+  // Explicit path to avoid clashing with other routes like /finance/transactions
+  @Get('user/:id')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Get finance user details by ID' })
+  @ApiResponse({ status: 200, description: 'Finance user details returned' })
+  async getFinanceUser(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Request() req,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.financeService.getFinanceUserDetails(
+      id,
+      superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
+      superAdmin,
+    );
+  }
+
 
   @Get('dashboard-data')
   @Roles(Role.FINANCE, Role.ADMIN)
