@@ -6,7 +6,7 @@ import { Class } from 'src/classes/entity/class.entity';
 import { Course } from 'src/course/entities/course.entity';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { StudentClassPromotion } from '../entities/student-class-promotion.entity';
-import { SettingsService } from 'src/settings/settings.service';
+import { Term } from 'src/settings/entities/term.entity';
 
 @Injectable()
 export class StudentPromotionService {
@@ -21,10 +21,11 @@ export class StudentPromotionService {
     private readonly courseRepository: Repository<Course>,
     @InjectRepository(Enrollment)
     private readonly enrollmentRepository: Repository<Enrollment>,
-    @InjectRepository(StudentClassPromotion)
-    private readonly promotionHistoryRepository: Repository<StudentClassPromotion>,
-    private readonly settingsService: SettingsService,
-    private readonly dataSource: DataSource,
+  @InjectRepository(StudentClassPromotion)
+  private readonly promotionHistoryRepository: Repository<StudentClassPromotion>,
+  @InjectRepository(Term)
+  private readonly termRepository: Repository<Term>,
+  private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -84,8 +85,9 @@ export class StudentPromotionService {
         };
       }
       // current term context for enrollment operations
-      const term = await this.settingsService.getCurrentTerm();
-      const termId = term?.id || null;
+  // fetch current term directly to avoid service circular dependency
+  const currentTerm = await this.termRepository.findOne({ where: { isCurrent: true }, select: ['id'] });
+  const termId = currentTerm?.id || null;
       // fetch enrollments (active only) with their courses
       const currentEnrollments = await manager.find(Enrollment, {
         where: { studentId },

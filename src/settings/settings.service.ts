@@ -33,8 +33,8 @@ import {
   TermPeriodDto,
   CreateTermPeriodDto,
 } from './dtos/term-period.dto';
-import { StudentPromotionService } from '../student/services/student-promotion.service';
 import { AcademicCalendarConstraintService } from './services/academic-calendar-constraint.service';
+import { StudentPromotionService } from '../student/services/student-promotion.service';
 
 @Injectable()
 export class SettingsService {
@@ -62,8 +62,8 @@ export class SettingsService {
     @InjectRepository(Term)
     private termRepository: Repository<Term>,
     private dataSource: DataSource,
-    private studentPromotionService: StudentPromotionService,
-    private academicCalendarConstraintService: AcademicCalendarConstraintService,
+  private academicCalendarConstraintService: AcademicCalendarConstraintService,
+  private studentPromotionService: StudentPromotionService,
     
   ) {}
 

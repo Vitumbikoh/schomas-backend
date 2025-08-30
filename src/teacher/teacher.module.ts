@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { UsersModule } from '../user/users.module';
@@ -32,7 +32,7 @@ import { LogsModule } from 'src/logs/logs.module';
     TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom,Attendance, Grade, Exam, Term]),
     UsersModule,
     AuthModule,
-    SettingsModule,
+  forwardRef(() => SettingsModule),
     ExamModule,
     LogsModule,
   ],

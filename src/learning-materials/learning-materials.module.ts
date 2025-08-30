@@ -29,7 +29,7 @@ import { LogsModule } from 'src/logs/logs.module';
     ]),
     AuthModule,
     ConfigModule,
-    SettingsModule,
+    forwardRef(() => SettingsModule),
     LogsModule,
     forwardRef(() => CourseModule),
     forwardRef(() => StudentsModule),

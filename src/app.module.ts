@@ -42,7 +42,6 @@ import { ProfileModule } from './profile/profile.module';
     ClassModule,
     SettingsModule,
     ReportsModule,
-    EnrollmentModule, 
     AttendanceModule,
     LearningMaterialsModule,
     GradeModule, 

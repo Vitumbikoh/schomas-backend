@@ -1,5 +1,5 @@
 // src/enrollment/enrollment.module.ts
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Enrollment } from './entities/enrollment.entity';
 import { EnrollmentService } from './enrollment.service';
@@ -11,7 +11,7 @@ import { SettingsModule } from 'src/settings/settings.module';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Enrollment, Course, Student]),
- SettingsModule, LogsModule],
+ forwardRef(() => SettingsModule), LogsModule],
   providers: [EnrollmentService],
   controllers: [EnrollmentController],
   exports: [EnrollmentService, TypeOrmModule], // This exports the EnrollmentRepository

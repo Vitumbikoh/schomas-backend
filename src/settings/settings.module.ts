@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SettingsService } from './settings.service';
 import { SettingsController } from './settings.controller';
@@ -16,8 +16,8 @@ import { AcademicCalendar } from './entities/academic-calendar.entity';
 import { Period } from './entities/period.entity';
 import { Term } from './entities/term.entity';
 import { Class } from '../classes/entity/class.entity';
-import { StudentPromotionService } from '../student/services/student-promotion.service';
 import { AcademicCalendarConstraintService } from './services/academic-calendar-constraint.service';
+import { StudentsModule } from '../student/student.module';
 
 @Module({
   imports: [
@@ -37,8 +37,9 @@ import { AcademicCalendarConstraintService } from './services/academic-calendar-
     AuthModule,
     ConfigModule,
     LogsModule,
+    forwardRef(() => StudentsModule),
   ],
-  providers: [SettingsService, StudentPromotionService, AcademicCalendarConstraintService],
+  providers: [SettingsService, AcademicCalendarConstraintService],
   controllers: [SettingsController],
   exports: [TypeOrmModule, SettingsService],
 })

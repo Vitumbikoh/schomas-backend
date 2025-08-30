@@ -18,7 +18,7 @@ import { LogsModule } from 'src/logs/logs.module';
     TypeOrmModule.forFeature([Course, Teacher, Enrollment, Student, Class]), 
     UsersModule,
     TeachersModule,
-  EnrollmentModule,
+  forwardRef(() => EnrollmentModule),
   LogsModule,
     forwardRef(() => StudentsModule),
   ],

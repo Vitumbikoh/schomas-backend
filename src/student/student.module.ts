@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { Parent } from 'src/user/entities/parent.entity';
@@ -25,17 +25,18 @@ import { LogsService } from 'src/logs/logs.service';
 import { SettingsModule } from 'src/settings/settings.module';
 import { LogsModule } from 'src/logs/logs.module';
 import { StudentClassPromotion } from './entities/student-class-promotion.entity';
+import { Term } from 'src/settings/entities/term.entity';
 import { StudentPromotionService } from './services/student-promotion.service';
 
 @Module({
   imports: [
-  TypeOrmModule.forFeature([Student, User, Parent, Schedule, Course, Class, Classroom, LearningMaterial, Enrollment, Log, StudentClassPromotion]),
+  TypeOrmModule.forFeature([Student, User, Parent, Schedule, Course, Class, Classroom, LearningMaterial, Enrollment, Log, StudentClassPromotion, Term]),
     UsersModule,
     AuthModule,
     ConfigModule,
     LearningMaterialsModule,
-    EnrollmentModule,
-    SettingsModule,
+    forwardRef(() => EnrollmentModule),
+  forwardRef(() => SettingsModule),
     LogsModule,    
   ],
   providers: [StudentsService, ScheduleService, CourseService, ClassService, ClassroomService, StudentPromotionService],
