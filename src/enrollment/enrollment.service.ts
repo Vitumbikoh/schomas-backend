@@ -20,7 +20,7 @@ export class EnrollmentService {
   ) {}
 
   /**
-   * Return students (same school) not yet enrolled in the given course for the current academic year.
+   * Return students (same school) not yet enrolled in the given course for the current term.
    */
   async getEligibleStudents(
     courseId: string,
@@ -37,14 +37,14 @@ export class EnrollmentService {
       }
     }
 
-    // Current academic year (optional filter so we don't consider historical enrollments)
-    const academicYear = await this.settingsService.getCurrentAcademicYear();
+    // Current term (optional filter so we don't consider historical enrollments)
+    const Term = await this.settingsService.getCurrentTerm();
 
     const qb = this.studentRepository
       .createQueryBuilder('student')
-      .leftJoin('student.enrollments', 'enrollment', 'enrollment.courseId = :courseId' + (academicYear ? ' AND enrollment.academicYearId = :ayId' : ''), {
+      .leftJoin('student.enrollments', 'enrollment', 'enrollment.courseId = :courseId' + (Term ? ' AND enrollment.termId = :ayId' : ''), {
         courseId,
-        ayId: academicYear?.id,
+        ayId: Term?.id,
       })
       .leftJoinAndSelect('student.user', 'user');
 
@@ -85,23 +85,23 @@ export class EnrollmentService {
       throw new NotFoundException('Student not found');
     }
 
-    // Get current academic year
-    const academicYear = await this.settingsService.getCurrentAcademicYear();
-    if (!academicYear) {
-      throw new NotFoundException('No current academic year found');
+    // Get current term
+    const Term = await this.settingsService.getCurrentTerm();
+    if (!Term) {
+      throw new NotFoundException('No current term found');
     }
 
-    // Check if already enrolled in this academic year
+    // Check if already enrolled in this term
     const existingEnrollment = await this.enrollmentRepository.findOne({
       where: {
         courseId,
         studentId,
-        academicYearId: academicYear.id,
+        termId: Term.id,
       },
     });
     if (existingEnrollment) {
       throw new Error(
-        'Student is already enrolled in this course for the current academic year',
+        'Student is already enrolled in this course for the current term',
       );
     }
 
@@ -115,7 +115,7 @@ export class EnrollmentService {
     const enrollment = this.enrollmentRepository.create({
       course,
       student,
-      academicYearId: academicYear.id,
+      termId: Term.id,
       enrollmentDate: new Date(),
       status: 'active',
       schoolId: schoolId || undefined,
@@ -191,14 +191,14 @@ export class EnrollmentService {
     return qb.getMany();
   }
 
-  // Update getAllEnrollments to include academic year
+  // Update getAllEnrollments to include term
   async getAllEnrollments(page: number, limit: number, search: string, schoolId?: string, superAdmin = false) {
     const skip = (page - 1) * limit;
     const qb = this.enrollmentRepository
       .createQueryBuilder('enrollment')
       .leftJoinAndSelect('enrollment.student', 'student')
       .leftJoinAndSelect('enrollment.course', 'course')
-      .leftJoinAndSelect('enrollment.academicYear', 'academicYear')
+      .leftJoinAndSelect('enrollment.Term', 'Term')
       .orderBy('enrollment.createdAt', 'DESC');
     if (!superAdmin) {
       qb.where('enrollment.schoolId = :schoolId', { schoolId });

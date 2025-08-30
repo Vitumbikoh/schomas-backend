@@ -1,26 +1,26 @@
-# Academic Year Integration & Fee Analytics Implementation Summary
+# Term Integration & Fee Analytics Implementation Summary
 
 ## Overview
-This document summarizes the comprehensive implementation of academic year relationships, fee payment analytics, and system-wide logging for the school management system.
+This document summarizes the comprehensive implementation of term relationships, fee payment analytics, and system-wide logging for the school management system.
 
-## Phase 1: Academic Year Integration ✅ COMPLETED
+## Phase 1: Term Integration ✅ COMPLETED
 
-### 1. Learning Materials Academic Year Integration
+### 1. Learning Materials Term Integration
 **File**: `src/learning-materials/entities/learning-material.entity.ts`
-- Added `academicYearId` foreign key relationship
-- Implemented automatic academic year assignment during material creation
+- Added `TermId` foreign key relationship
+- Implemented automatic term assignment during material creation
 - Enhanced entity with proper TypeORM relationships
 
-### 2. Fee Payment Academic Year Integration  
+### 2. Fee Payment Term Integration  
 **File**: `src/finance/entities/fee-payment.entity.ts`
-- Added `academicYearId` foreign key relationship to track payments per academic year
-- Updated payment processing to automatically assign current academic year
+- Added `TermId` foreign key relationship to track payments per term
+- Updated payment processing to automatically assign current term
 - Maintained backward compatibility with existing payment records
 
 ### 3. Database Migration
-**File**: `src/migrations/1734567890123-add-academic-year-relationships.ts`
-- Created migration to add academic year columns to both tables
-- Safely handles existing data by setting current academic year as default
+**File**: `src/migrations/1734567890123-add-term-relationships.ts`
+- Created migration to add term columns to both tables
+- Safely handles existing data by setting current term as default
 - Includes proper foreign key constraints and indexes
 
 ### 4. Service Layer Updates
@@ -29,9 +29,9 @@ This document summarizes the comprehensive implementation of academic year relat
 - `src/finance/finance.service.ts`
 
 Updated both services to:
-- Automatically fetch and assign current academic year during creation
-- Filter queries by academic year where appropriate
-- Handle cases where no active academic year exists
+- Automatically fetch and assign current term during creation
+- Filter queries by term where appropriate
+- Handle cases where no active term exists
 
 ## Phase 2: Fee Analytics & Enhanced Logging ✅ COMPLETED
 
@@ -40,7 +40,7 @@ Updated both services to:
 - Comprehensive fee definition system
 - Support for different fee types (tuition, exam, transport, etc.)
 - Class-specific and general fee structures
-- Academic year-based fee management
+- Term-based fee management
 - Frequency support (annual, semester, monthly)
 
 **Key Features**:
@@ -49,7 +49,7 @@ Updated both services to:
 - Amount tracking with decimal precision
 - Optional fees support
 - Class-specific fee structures
-- Academic year relationships
+- Term relationships
 ```
 
 ### 2. Fee Analytics Service
@@ -58,7 +58,7 @@ Updated both services to:
 - 300+ lines of sophisticated calculation logic
 
 **Key Analytics Features**:
-- **Total Fee Calculations**: Expected vs. paid fees across academic years
+- **Total Fee Calculations**: Expected vs. paid fees across terms
 - **Payment Rate Analysis**: Percentage calculations with student enrollment data
 - **Fee Type Breakdown**: Detailed analysis by payment type (tuition, exam, etc.)
 - **Class-wise Analytics**: Performance tracking per class
@@ -67,9 +67,9 @@ Updated both services to:
 
 **Core Methods**:
 ```typescript
-- getFeeAnalytics(academicYearId: string): FeeAnalyticsData
-- getStudentFeeDetails(studentId: string, academicYearId: string): StudentFeeDetails  
-- calculatePaymentSummary(academicYearId: string)
+- getFeeAnalytics(TermId: string): FeeAnalyticsData
+- getStudentFeeDetails(studentId: string, TermId: string): StudentFeeDetails  
+- calculatePaymentSummary(TermId: string)
 - getClassWiseAnalytics() - Private method for class performance
 - getPaymentTrends() - Private method for temporal analysis
 ```
@@ -82,9 +82,9 @@ Updated both services to:
 
 **Endpoints**:
 ```typescript
-GET /fee-analytics/dashboard/:academicYearId - Complete analytics dashboard
-GET /fee-analytics/student/:studentId?academicYearId=xxx - Student-specific details
-GET /fee-analytics/summary/:academicYearId - Payment summary overview
+GET /fee-analytics/dashboard/:TermId - Complete analytics dashboard
+GET /fee-analytics/student/:studentId?TermId=xxx - Student-specific details
+GET /fee-analytics/summary/:TermId - Payment summary overview
 ```
 
 ### 4. System-Wide Logging Enhancement
@@ -143,7 +143,7 @@ GET /fee-analytics/summary/:academicYearId - Payment summary overview
 - Integrated SystemLoggingService for material creation tracking
 - Enhanced error handling with detailed logging
 - Teacher activity monitoring
-- Academic year context in logs
+- Term context in logs
 
 ## Module Dependencies & Integration
 
@@ -169,9 +169,9 @@ GET /fee-analytics/summary/:academicYearId - Payment summary overview
 
 ## Data Relationships & Architecture
 
-### Academic Year Integration Architecture
+### Term Integration Architecture
 ```
-AcademicYear (Settings)
+Term (Settings)
     ├── LearningMaterial (Many-to-One)
     ├── FeePayment (Many-to-One)  
     ├── FeeStructure (Many-to-One)
@@ -198,13 +198,13 @@ Module-Specific Methods → Contextual Logging → Audit Trail
 
 ### Fee Analytics Endpoints
 ```
-GET /fee-analytics/dashboard/:academicYearId
+GET /fee-analytics/dashboard/:TermId
 Response: Complete analytics with payment rates, class breakdown, trends
 
-GET /fee-analytics/student/:studentId?academicYearId=xxx  
+GET /fee-analytics/student/:studentId?TermId=xxx  
 Response: Student payment history and outstanding amounts
 
-GET /fee-analytics/summary/:academicYearId
+GET /fee-analytics/summary/:TermId
 Response: High-level payment summary and statistics
 ```
 
@@ -217,7 +217,7 @@ Response: High-level payment summary and statistics
 
 ### Database Considerations
 - Foreign key relationships properly established
-- Academic year filtering implemented across services
+- Term filtering implemented across services
 - Migration handles existing data safely
 - Indexes added for performance optimization
 
@@ -261,16 +261,16 @@ Response: High-level payment summary and statistics
 1. **Log Rotation**: Automated old log cleanup
 2. **Performance Monitoring**: Query optimization tracking
 3. **Data Archiving**: Historical data management
-4. **Backup Strategies**: Academic year data preservation
+4. **Backup Strategies**: Term data preservation
 
 ## Conclusion
 
 The implementation successfully delivers:
-✅ **Academic Year Integration**: Complete relationship management
+✅ **Term Integration**: Complete relationship management
 ✅ **Fee Analytics**: Comprehensive payment tracking and analysis  
 ✅ **System Logging**: Detailed audit trail and monitoring
 ✅ **Performance Optimization**: Efficient queries and relationships
 ✅ **Security**: Role-based access and authentication
 ✅ **Scalability**: Modular architecture for future enhancements
 
-The system now provides complete visibility into fee payments across academic years with detailed analytics and comprehensive logging for all major operations.
+The system now provides complete visibility into fee payments across terms with detailed analytics and comprehensive logging for all major operations.

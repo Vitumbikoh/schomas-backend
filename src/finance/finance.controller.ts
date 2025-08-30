@@ -167,7 +167,7 @@ export class FinanceController {
       feeType: dto.feeType || 'Tuition',
       isActive: dto.isActive !== undefined ? dto.isActive : true,
       isOptional: dto.isOptional || false,
-      frequency: dto.frequency || 'per_term',
+      frequency: dto.frequency || 'per_period',
     };
 
     // Pass schoolId from authenticated user for multi-tenant isolation
@@ -179,16 +179,16 @@ export class FinanceController {
 
   @Get('fee-structure')
   @Roles(Role.ADMIN, Role.FINANCE)
-  @ApiOperation({ summary: 'Get fee structure for academic year' })
+  @ApiOperation({ summary: 'Get fee structure for term' })
   async getFeeStructure(
     @Request() req,
-    @Query('academicYearId') academicYearId: string,
+    @Query('termId') termId: string,
   ) {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
 
-    return this.studentFeeExpectationService.getFeeStructureForAcademicYear(
-      academicYearId,
+    return this.studentFeeExpectationService.getFeeStructureForTerm(
+      termId,
       superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
       superAdmin,
     );
@@ -240,16 +240,16 @@ export class FinanceController {
   @Get('fee-summary')
   @Roles(Role.ADMIN, Role.FINANCE)
   @ApiOperation({
-    summary: 'Summary of fee payment status for an academic year',
+    summary: 'Summary of fee payment status for a term',
   })
   async feeSummary(
     @Request() req,
-    @Query('academicYearId') academicYearId: string,
+    @Query('termId') termId: string,
   ) {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
-    return this.studentFeeExpectationService.getFeeSummaryForAcademicYear(
-      academicYearId,
+    return this.studentFeeExpectationService.getFeeSummaryForTerm(
+      termId,
       superAdmin ? req.query.schoolId : user.schoolId,
       superAdmin,
     );
@@ -258,16 +258,16 @@ export class FinanceController {
   @Get('fee-statuses')
   @Roles(Role.ADMIN, Role.FINANCE)
   @ApiOperation({
-    summary: 'List per-student payment status for an academic year',
+    summary: 'List per-student payment status for a term',
   })
   async feeStatuses(
     @Request() req,
-    @Query('academicYearId') academicYearId: string,
+    @Query('termId') termId: string,
   ) {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
     return this.studentFeeExpectationService.listStudentFeeStatuses(
-      academicYearId,
+      termId,
       superAdmin ? req.query.schoolId : user.schoolId,
       superAdmin,
     );
@@ -279,13 +279,13 @@ export class FinanceController {
   async studentFeeStatus(
     @Request() req,
     @Param('studentId') studentId: string,
-    @Query('academicYearId') academicYearId: string,
+    @Query('termId') termId: string,
   ) {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
     return this.studentFeeExpectationService.getStudentFeeStatus(
       studentId,
-      academicYearId,
+      termId,
       superAdmin ? req.query.schoolId : user.schoolId,
       superAdmin,
     );
@@ -299,12 +299,12 @@ export class FinanceController {
   })
   async feeMetrics(
     @Request() req,
-    @Query('academicYearId') academicYearId: string,
+    @Query('termId') termId: string,
   ) {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
-    return this.studentFeeExpectationService.getFeeSummaryForAcademicYear(
-      academicYearId,
+    return this.studentFeeExpectationService.getFeeSummaryForTerm(
+      termId,
       superAdmin ? req.query.schoolId : user.schoolId,
       superAdmin,
     );
@@ -522,7 +522,7 @@ export class FinanceController {
         isSuper,
       );
 
-      // If academic-year filtered stats are zero, attempt simple fallback without academic year filter
+      // If term filtered stats are zero, attempt simple fallback without term filter
       if (schoolScope && !isSuper && stats.totalProcessedPayments === 0 && Number(stats.totalRevenue) === 0) {
         const simple = await this.financeService.getSimpleTotalsForSchool(schoolScope);
         if (simple.rawTotal > 0) {

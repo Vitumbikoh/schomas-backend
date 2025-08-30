@@ -2,7 +2,7 @@
 import { Entity, PrimaryGeneratedColumn, ManyToOne, JoinColumn, Column, CreateDateColumn } from 'typeorm';
 import { Course } from 'src/course/entities/course.entity';
 import { Student } from 'src/user/entities/student.entity';
-import { AcademicYear } from 'src/settings/entities/academic-year.entity';
+import { Term } from 'src/settings/entities/term.entity';
 import { School } from 'src/school/entities/school.entity';
 
 @Entity()
@@ -32,11 +32,11 @@ course: Course;
 student: Student;
 
  @Column({ type: 'uuid' })
-  academicYearId: string; // Add this line
+  termId: string; // Updated to termId
   
-  @ManyToOne(() => AcademicYear)
-  @JoinColumn({ name: 'academicYearId' })
-  academicYear: AcademicYear; // Add this relationship
+  @ManyToOne(() => Term)
+  @JoinColumn({ name: 'termId' })
+  term: Term; // Updated to use Term
 
   // Multi-tenant scope
   @Column({ type: 'uuid', nullable: true })

@@ -321,16 +321,16 @@ This document provides a comprehensive list of all API endpoints in the SCHOMAS 
   - Handles caching and cleanup of temporary files
 
 ### Fee Analytics Controller (`/fee-analytics`)
-- **GET /fee-analytics/dashboard/:academicYearId** - Fee analytics dashboard
+- **GET /fee-analytics/dashboard/:TermId** - Fee analytics dashboard
   - Admin/Finance endpoint for fee collection analytics
-  - Returns payment trends and collection metrics by academic year
+  - Returns payment trends and collection metrics by term
 
 - **GET /fee-analytics/student/:studentId** - Student fee details
   - Admin/Finance endpoint for individual student payment analysis
   - Returns detailed payment history and outstanding balances
 
-- **GET /fee-analytics/summary/:academicYearId** - Payment summary
-  - Admin/Finance endpoint for academic year payment summaries
+- **GET /fee-analytics/summary/:TermId** - Payment summary
+  - Admin/Finance endpoint for term payment summaries
   - Returns aggregated payment data and collection rates
 
 ---
@@ -359,7 +359,7 @@ This document provides a comprehensive list of all API endpoints in the SCHOMAS 
 ### Exams Controller (`/exams`)
 - **GET /exams** - Get all exams
   - Returns list of all scheduled exams with filtering options
-  - Supports search by class, teacher, and academic year
+  - Supports search by class, teacher, and term
 
 - **POST /exams** - Create new exam
   - Creates new exam with course, class, and date assignments
@@ -456,24 +456,24 @@ This document provides a comprehensive list of all API endpoints in the SCHOMAS 
   - Logs settings modification activities
 
 - **POST /settings/academic-calendar** - Create academic calendar
-  - Admin-only endpoint for setting up academic year calendar
+  - Admin-only endpoint for setting up term calendar
   - Defines start/end dates and active academic periods
   - Logs calendar creation activities
 
 - **GET /settings/academic-calendar** - Get academic calendar
   - Admin-only endpoint for viewing current academic calendar
-  - Returns active academic year configuration
+  - Returns active term configuration
 
 - **POST /settings/terms** - Create academic terms
   - Admin-only endpoint for setting up academic terms
-  - Defines semester/quarter structure within academic year
+  - Defines semester/quarter structure within term
 
 - **GET /settings/terms** - Get academic terms
   - Returns list of academic terms and their configurations
 
-- **POST /settings/academic-year-terms** - Create academic year term structure
-  - Admin-only endpoint for complex academic year setup
-  - Links terms to specific academic years
+- **POST /settings/term-terms** - Create term term structure
+  - Admin-only endpoint for complex term setup
+  - Links terms to specific terms
 
 ### Admins Controller (`/admins`)
 - **POST /admins** - Create admin user
@@ -483,6 +483,45 @@ This document provides a comprehensive list of all API endpoints in the SCHOMAS 
 - **PATCH /admins/:id** - Update admin user
   - Modifies existing admin user configurations
   - Updates permissions and account settings
+
+### Schools Controller (`/schools`)
+- **POST /schools** - Create new school
+  - Super Admin only endpoint for creating new schools
+  - Auto-generates admin credentials for the school
+  - Stores admin credentials for super admin reference
+
+- **GET /schools** - Get all schools
+  - Super Admin only endpoint for viewing all schools
+  - Supports search by school name or code
+
+- **GET /schools/:id** - Get specific school details
+  - Super Admin only endpoint for detailed school information
+  - Returns school profile and metadata
+
+- **PATCH /schools/:id** - Update school information
+  - Super Admin only endpoint for modifying school profiles
+  - Updates school name, code, status, and metadata
+
+- **PATCH /schools/:id/suspend** - Suspend school
+  - Super Admin only endpoint for suspending school operations
+  - Changes school status to SUSPENDED
+
+- **PATCH /schools/:id/activate** - Activate school
+  - Super Admin only endpoint for activating suspended schools
+  - Changes school status to ACTIVE
+
+- **GET /schools/credentials/all** - Get all school admin credentials
+  - Super Admin only endpoint for viewing all school admin credentials
+  - Supports pagination and search functionality
+  - Returns username, email, and password for each school admin
+
+- **GET /schools/:id/credentials** - Get credentials for specific school
+  - Super Admin only endpoint for viewing specific school admin credentials
+  - Returns detailed credential information for the school
+
+- **PATCH /schools/:id/credentials/reset-password** - Reset school admin password
+  - Super Admin only endpoint for resetting school admin passwords
+  - Generates new default password and forces password reset on next login
 
 ---
 

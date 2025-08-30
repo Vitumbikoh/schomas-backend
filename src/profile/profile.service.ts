@@ -43,11 +43,11 @@ export class ProfileService {
     }
 
     // Base profile information for all users
-    const baseProfile = {
+    const baseProfile: ProfileResponseDto = {
       id: user.id,
       username: user.username,
       role: user.role,
-      email: user.email,
+      email: user.email ?? null,
       school: user.school ? {
         id: user.school.id,
         name: user.school.name,
@@ -134,7 +134,7 @@ export class ProfileService {
     return {
       ...baseProfile,
       ...roleSpecificProfile,
-    };
+    } as ProfileResponseDto;
   }
 
   async updateProfile(userId: string, updateData: UpdateProfileDto): Promise<ProfileResponseDto> {

@@ -23,14 +23,14 @@ import {
   SettingsResponseDto,
   UpdateSettingsDto,
   AcademicCalendarDto,
-  TermDto,
+  PeriodDto,
 } from './dtos/settings.dto';
 import { AcademicCalendar } from './entities/academic-calendar.entity';
-import { Term } from './entities/term.entity';
+import { Period } from './entities/period.entity';
 import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { AcademicCalendarUtils } from './utils/academic-calendar.utils';
-import { AcademicYearTermDto, CreateAcademicYearTermDto } from './dtos/academic-year-term.dto';
+import { CreateTermPeriodDto, TermPeriodDto } from './dtos/term-period.dto';
 
 @Controller('settings')
 export class SettingsController {
@@ -38,12 +38,12 @@ export class SettingsController {
 
   constructor(
     private readonly settingsService: SettingsService,
-  private readonly dataSource: DataSource,
-  private readonly systemLoggingService: SystemLoggingService,
+    private readonly dataSource: DataSource,
+    private readonly systemLoggingService: SystemLoggingService,
     @InjectRepository(AcademicCalendar)
     private readonly academicCalendarRepository: Repository<AcademicCalendar>,
-    @InjectRepository(Term)
-    private readonly termRepository: Repository<Term>,
+    @InjectRepository(Period)
+    private readonly periodRepository: Repository<Period>,
   ) {}
 
   @UseGuards(JwtAuthGuard)
@@ -156,7 +156,7 @@ export class SettingsController {
       }
 
       const calendarData = {
-        academicYear: dto.academicYear,
+        term: dto.term,
         schoolId: req.user.schoolId,
         startDate: dto.startDate ? new Date(dto.startDate) : undefined,
         endDate: dto.endDate ? new Date(dto.endDate) : undefined,
@@ -172,7 +172,7 @@ export class SettingsController {
 
       const response = {
         id: savedCalendar.id,
-        academicYear: savedCalendar.academicYear,
+        term: savedCalendar.term,
         startDate: savedCalendar.startDate?.toISOString(),
         endDate: savedCalendar.endDate?.toISOString(),
         isActive: savedCalendar.isActive,
@@ -212,70 +212,70 @@ export class SettingsController {
 
     if (!academicCalendar) {
       return {
-        academicYear: '',
+        term: '',
         startDate: '',
         endDate: '',
       };
     }
 
     return {
-      academicYear: academicCalendar.academicYear,
+      term: academicCalendar.term,
       startDate: academicCalendar.startDate?.toISOString(),
       endDate: academicCalendar.endDate?.toISOString(),
     };
   }
 
-  // Term Endpoints
+  // Period Endpoints
   @UseGuards(JwtAuthGuard)
-  @Post('terms')
-  async createTerm(@Request() req, @Body() dto: TermDto): Promise<TermDto> {
+  @Post('periods')
+  async createPeriod(@Request() req, @Body() dto: PeriodDto): Promise<PeriodDto> {
     if (req.user.role !== 'ADMIN') {
-      throw new UnauthorizedException('Only admins can create terms');
+      throw new UnauthorizedException('Only admins can create periods');
     }
-    const created = await this.settingsService.createTerm(dto);
+    const created = await this.settingsService.createPeriod(dto);
     await this.systemLoggingService.logAction({
-      action: 'TERM_CREATED',
+      action: 'PERIOD_CREATED',
       module: 'SETTINGS',
       level: 'info',
       performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
       entityId: created.id,
-      entityType: 'Term',
+      entityType: 'Period',
       newValues: created as any
     });
     return created;
   }
 
   @UseGuards(JwtAuthGuard)
-  @Get('terms')
-  async getTerms(
+  @Get('periods')
+  async getPeriods(
     @Request() req,
     @Query('academicCalendarId') academicCalendarId?: string,
-  ): Promise<TermDto[]> {
+  ): Promise<PeriodDto[]> {
     if (req.user.role !== 'ADMIN') {
-      throw new UnauthorizedException('Only admins can access terms');
+      throw new UnauthorizedException('Only admins can access periods');
     }
-    return this.settingsService.getTerms(academicCalendarId);
+    return this.settingsService.getPeriods(academicCalendarId);
   }
 
   @UseGuards(JwtAuthGuard)
-  @Patch('terms/:id')
-  async updateTerm(
+  @Patch('periods/:id')
+  async updatePeriod(
     @Request() req,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: TermDto,
-  ): Promise<TermDto> {
+    @Body() dto: PeriodDto,
+  ): Promise<PeriodDto> {
     if (req.user.role !== 'ADMIN') {
-      throw new UnauthorizedException('Only admins can update terms');
+      throw new UnauthorizedException('Only admins can update periods');
     }
-    const before = await this.termRepository.findOne({ where: { id } });
-    const updated = await this.settingsService.updateTerm(id, dto);
+    const before = await this.periodRepository.findOne({ where: { id } });
+    const updated = await this.settingsService.updatePeriod(id, dto);
     await this.systemLoggingService.logAction({
-      action: 'TERM_UPDATED',
+      action: 'PERIOD_UPDATED',
       module: 'SETTINGS',
       level: 'info',
       performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
       entityId: id,
-      entityType: 'Term',
+      entityType: 'Period',
       oldValues: before as any,
       newValues: updated as any
     });
@@ -306,7 +306,7 @@ export class SettingsController {
 
     return calendars.map((calendar) => ({
       id: calendar.id,
-      academicYear: calendar.academicYear,
+      term: calendar.term,
       startDate: calendar.startDate
         ? new Date(calendar.startDate).toISOString()
         : undefined,
@@ -334,58 +334,11 @@ export class SettingsController {
       );
     }
 
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
     try {
-      // First check if the calendar belongs to the admin's school
-      const calendar = await queryRunner.manager.findOne(AcademicCalendar, {
-        where: { id, schoolId: req.user.schoolId },
-      });
+      // Use the service method which includes student promotion logic
+      const updatedCalendar = await this.settingsService.activateAcademicCalendar(id, req.user.schoolId);
 
-      if (!calendar) {
-        throw new NotFoundException('Academic calendar not found for your school');
-      }
-
-      // Get the currently active calendar for validation
-      const currentActiveCalendar = await queryRunner.manager.findOne(AcademicCalendar, {
-        where: { schoolId: req.user.schoolId, isActive: true },
-      });
-
-      // Validate that we're not setting a previous calendar as active
-      const validation = AcademicCalendarUtils.canActivateCalendar(
-        calendar.academicYear,
-        currentActiveCalendar?.academicYear
-      );
-
-      if (!validation.isValid) {
-        throw new BadRequestException(validation.reason);
-      }
-
-      // Deactivate all other calendars for this school only
-      await queryRunner.manager.update(
-        AcademicCalendar,
-        { schoolId: req.user.schoolId, isActive: true },
-        { isActive: false },
-      );
-
-      // Then activate the selected one
-      calendar.isActive = true;
-      const updatedCalendar = await queryRunner.manager.save(
-        AcademicCalendar,
-        calendar,
-      );
-
-      await queryRunner.commitTransaction();
-
-      const response = {
-        id: updatedCalendar.id,
-        academicYear: updatedCalendar.academicYear,
-        startDate: updatedCalendar.startDate?.toISOString(),
-        endDate: updatedCalendar.endDate?.toISOString(),
-        isActive: updatedCalendar.isActive,
-      };
+      // Log the action
       await this.systemLoggingService.logAction({
         action: 'ACADEMIC_CALENDAR_ACTIVATED',
         module: 'SETTINGS',
@@ -393,94 +346,120 @@ export class SettingsController {
         performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
         entityId: updatedCalendar.id,
         entityType: 'AcademicCalendar',
-        newValues: response as any
+        newValues: updatedCalendar as any
       });
-      return response;
+
+      return updatedCalendar;
     } catch (error) {
-      await queryRunner.rollbackTransaction();
       this.logger.error('Failed to activate academic calendar', error.stack);
-      throw error;
-    } finally {
-      await queryRunner.release();
+      
+      if (error instanceof NotFoundException || error instanceof UnauthorizedException || error instanceof BadRequestException) {
+        throw error;
+      }
+      
+      throw new InternalServerErrorException('Failed to activate academic calendar');
     }
   }
 
    @UseGuards(JwtAuthGuard)
-  @Get('terms/available')
-  async getAvailableTerms(@Request() req): Promise<Term[]> {
+  @Get('periods/available')
+  async getAvailablePeriods(@Request() req): Promise<Period[]> {
     if (req.user.role !== 'ADMIN') {
-      throw new UnauthorizedException('Only admins can access terms');
+      throw new UnauthorizedException('Only admins can access periods');
     }
-    return this.settingsService.getAvailableTerms();
+    return this.settingsService.getAvailablePeriods();
   }
 
   @UseGuards(JwtAuthGuard)
-@Post('terms/academic-year')
-async createAcademicYearTerm(
+@Post('periods/term')
+async createTermPeriod(
   @Request() req,
-  @Body() dto: CreateAcademicYearTermDto,
-): Promise<AcademicYearTermDto> {
+  @Body() dto: CreateTermPeriodDto,
+): Promise<TermPeriodDto> {
   if (req.user.role !== 'ADMIN') {
-    throw new UnauthorizedException('Only admins can create academic year terms');
+    throw new UnauthorizedException('Only admins can create term periods');
   }
-  const created = await this.settingsService.createAcademicYearTerm(dto);
+  const created = await this.settingsService.createTermPeriod(dto);
   await this.systemLoggingService.logAction({
-    action: 'ACADEMIC_YEAR_TERM_CREATED',
+    action: 'Term_PERIOD_CREATED',
     module: 'SETTINGS',
     level: 'info',
     performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
     entityId: created.id,
-    entityType: 'AcademicYearTerm',
+    entityType: 'TermPeriod',
     newValues: created as any
   });
   return created;
 }
 
   @UseGuards(JwtAuthGuard)
-  @Get('terms/academic-year')
-  async getAcademicYearTerms(
+  @Get('periods/term')
+  async getTermPeriods(
     @Request() req,
     @Query('academicCalendarId') academicCalendarId?: string,
-  ): Promise<AcademicYearTermDto[]> {
+  ): Promise<TermPeriodDto[]> {
     if (req.user.role !== 'ADMIN') {
-      throw new UnauthorizedException('Only admins can access academic year terms');
+      throw new UnauthorizedException('Only admins can access term periods');
     }
-    return this.settingsService.getAcademicYearTerms(academicCalendarId);
+    return this.settingsService.getTermPeriods(academicCalendarId);
   }
 
   @UseGuards(JwtAuthGuard)
-  @Patch('terms/academic-year/:id/activate')
-  async activateAcademicYearTerm(
+  @Patch('periods/term/:id/activate')
+  async activateTermPeriod(
     @Request() req,
     @Param('id') id: string,
-  ): Promise<AcademicYearTermDto> {
+  ): Promise<TermPeriodDto> {
     if (req.user.role !== 'ADMIN') {
-      throw new UnauthorizedException('Only admins can activate academic year terms');
+      throw new UnauthorizedException('Only admins can activate term periods');
     }
-    const updated = await this.settingsService.activateAcademicYearTerm(id);
+    const updated = await this.settingsService.activateTermPeriod(id);
     await this.systemLoggingService.logAction({
-      action: 'ACADEMIC_YEAR_TERM_ACTIVATED',
+      action: 'Term_PERIOD_ACTIVATED',
       module: 'SETTINGS',
       level: 'info',
       performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
       entityId: updated.id,
-      entityType: 'AcademicYearTerm',
+      entityType: 'TermPeriod',
       newValues: updated as any
     });
     return updated;
   }
 
-  // List academic years (term instances) for a calendar (or active calendar if none provided)
   @UseGuards(JwtAuthGuard)
-  @Get('academic-years')
-  async listAcademicYears(
+  @Patch('periods/term/:id')
+  async updateTermPeriod(
+    @Request() req,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() updateDto: CreateTermPeriodDto,
+  ): Promise<TermPeriodDto> {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can update term periods');
+    }
+    const updated = await this.settingsService.updateTermPeriod(id, updateDto);
+    await this.systemLoggingService.logAction({
+      action: 'TERM_PERIOD_UPDATED',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityId: updated.id,
+      entityType: 'TermPeriod',
+      newValues: updated as any
+    });
+    return updated;
+  }
+
+  // List terms (period instances) for a calendar (or active calendar if none provided)
+  @UseGuards(JwtAuthGuard)
+  @Get('terms')
+  async listTerms(
     @Request() req,
     @Query('academicCalendarId') academicCalendarId?: string,
   ) {
     if (!['ADMIN','FINANCE'].includes(req.user.role)) {
-      throw new UnauthorizedException('Only admins or finance can access academic years');
+      throw new UnauthorizedException('Only admins or finance can access terms');
     }
-    return this.settingsService.getAcademicYears(academicCalendarId);
+    return this.settingsService.getTerms(academicCalendarId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -506,7 +485,7 @@ async createAcademicYearTerm(
 
     return {
       id: activeCalendar.id,
-      academicYear: activeCalendar.academicYear,
+      term: activeCalendar.term,
       startDate: activeCalendar.startDate ? new Date(activeCalendar.startDate).toISOString() : undefined,
       endDate: activeCalendar.endDate ? new Date(activeCalendar.endDate).toISOString() : undefined,
       isActive: activeCalendar.isActive,
@@ -528,90 +507,130 @@ async createAcademicYearTerm(
     }
 
     try {
-      const queryRunner = this.dataSource.createQueryRunner();
-      await queryRunner.connect();
-      await queryRunner.startTransaction();
+      // Use the service method which includes student promotion logic
+      const updatedCalendar = await this.settingsService.activateAcademicCalendar(id, req.user.schoolId);
 
-      try {
-        // Verify the calendar belongs to the admin's school
-        const calendar = await queryRunner.manager.findOne(AcademicCalendar, {
-          where: { id, schoolId: req.user.schoolId },
-        });
-
-        if (!calendar) {
-          throw new NotFoundException('Academic calendar not found for your school');
+      // Log the action
+      await this.systemLoggingService.logAction({
+        action: 'ACADEMIC_CALENDAR_ACTIVATED',
+        module: 'SETTINGS',
+        level: 'info',
+        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+        entityId: updatedCalendar.id,
+        entityType: 'AcademicCalendar',
+        metadata: { 
+          description: `Academic calendar ${updatedCalendar.term} set as active`,
+          schoolId: req.user.schoolId 
         }
+      });
 
-        // Get the currently active calendar for validation
-        const currentActiveCalendar = await queryRunner.manager.findOne(AcademicCalendar, {
-          where: { schoolId: req.user.schoolId, isActive: true },
-        });
-
-        // Validate that we're not setting a previous calendar as active
-        const validation = AcademicCalendarUtils.canActivateCalendar(
-          calendar.academicYear,
-          currentActiveCalendar?.academicYear
-        );
-
-        if (!validation.isValid) {
-          throw new BadRequestException(validation.reason);
-        }
-
-        // Deactivate all other calendars for this school
-        await queryRunner.manager.update(
-          AcademicCalendar,
-          { schoolId: req.user.schoolId, isActive: true },
-          { isActive: false },
-        );
-
-        // Activate the selected calendar
-        calendar.isActive = true;
-        const updatedCalendar = await queryRunner.manager.save(AcademicCalendar, calendar);
-
-        await queryRunner.commitTransaction();
-
-        // Log the action
-        await this.systemLoggingService.logAction({
-          action: 'ACADEMIC_CALENDAR_ACTIVATED',
-          module: 'SETTINGS',
-          level: 'info',
-          performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
-          entityId: updatedCalendar.id,
-          entityType: 'AcademicCalendar',
-          metadata: { 
-            description: `Academic calendar ${updatedCalendar.academicYear} set as active`,
-            schoolId: req.user.schoolId 
-          }
-        });
-
-        return {
-          success: true,
-          message: `Academic calendar for ${updatedCalendar.academicYear} is now active`,
-          activeCalendar: {
-            id: updatedCalendar.id,
-            academicYear: updatedCalendar.academicYear,
-            startDate: updatedCalendar.startDate ? new Date(updatedCalendar.startDate).toISOString() : undefined,
-            endDate: updatedCalendar.endDate ? new Date(updatedCalendar.endDate).toISOString() : undefined,
-            isActive: updatedCalendar.isActive,
-          }
-        };
-      } catch (error) {
-        if (queryRunner.isTransactionActive) {
-          await queryRunner.rollbackTransaction();
-        }
-        throw error;
-      } finally {
-        await queryRunner.release();
-      }
+      return {
+        success: true,
+        message: `Academic calendar for ${updatedCalendar.term} is now active`,
+        activeCalendar: updatedCalendar
+      };
     } catch (error) {
       this.logger.error(`Error setting active academic calendar: ${error.message}`, error.stack);
       
-      if (error instanceof NotFoundException || error instanceof UnauthorizedException) {
+      if (error instanceof NotFoundException || error instanceof UnauthorizedException || error instanceof BadRequestException) {
         throw error;
       }
       
       throw new InternalServerErrorException('Failed to set active academic calendar');
     }
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('term/:id/complete')
+  async completeTerm(
+    @Request() req,
+    @Param('id') TermId: string,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    calendarCompleted?: boolean;
+    nextYearActivated?: boolean;
+  }> {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only school administrators can complete terms');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
+    try {
+      const result = await this.settingsService.completeTerm(TermId, req.user.schoolId);
+
+      // Log the action
+      await this.systemLoggingService.logAction({
+        action: 'Term_COMPLETED',
+        module: 'SETTINGS',
+        level: 'info',
+        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+        entityId: TermId,
+        entityType: 'Term',
+        metadata: { 
+          description: `Term completed`,
+          schoolId: req.user.schoolId,
+          calendarCompleted: result.calendarCompleted,
+          nextYearActivated: result.nextYearActivated
+        }
+      });
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Error completing term: ${error.message}`, error.stack);
+      
+      if (error instanceof NotFoundException || error instanceof UnauthorizedException || error instanceof BadRequestException) {
+        throw error;
+      }
+      
+      throw new InternalServerErrorException('Failed to complete term');
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('calendar-completion-status')
+  async getCalendarCompletionStatus(@Request() req) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only school administrators can view calendar completion status');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
+    try {
+      return await this.settingsService.getCalendarCompletionStatus(req.user.schoolId);
+    } catch (error) {
+      this.logger.error(`Error getting calendar completion status: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Failed to get calendar completion status');
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('can-activate-calendar/:id')
+  async canActivateNewCalendar(
+    @Request() req,
+    @Param('id') newCalendarId: string,
+  ) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only school administrators can check calendar activation');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
+    try {
+      return await this.settingsService.canActivateNewCalendar(req.user.schoolId, newCalendarId);
+    } catch (error) {
+      this.logger.error(`Error checking calendar activation: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Failed to check calendar activation');
+    }
+  }
+
+  // Student Promotion Endpoints
 
 }

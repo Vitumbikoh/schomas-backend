@@ -1,5 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
-import { AcademicYear } from '../../settings/entities/academic-year.entity';
+import { Term } from '../../settings/entities/term.entity';
 import { Class } from '../../classes/entity/class.entity';
 import { School } from 'src/school/entities/school.entity';
 
@@ -23,15 +23,15 @@ export class FeeStructure {
   @Column({ type: 'boolean', default: false })
   isOptional: boolean; // Some fees might be optional
 
-  @Column({ type: 'varchar', length: 50, default: 'per_term' })
-  frequency: 'per_term' | 'per_year' | 'one_time'; // How often the fee is charged
+  @Column({ type: 'varchar', length: 50, default: 'per_period' })
+  frequency: 'per_period' | 'per_year' | 'one_time'; // How often the fee is charged
 
   @Column({ type: 'uuid' })
-  academicYearId: string;
+  termId: string;
 
-  @ManyToOne(() => AcademicYear)
-  @JoinColumn({ name: 'academicYearId' })
-  academicYear: AcademicYear;
+  @ManyToOne(() => Term)
+  @JoinColumn({ name: 'termId' })
+  term: Term;
 
   @Column({ type: 'uuid', nullable: true })
   classId: string; // Optional: specific to a class

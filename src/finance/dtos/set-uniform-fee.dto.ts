@@ -2,11 +2,11 @@ import { IsUUID, IsNumber, IsPositive, IsBoolean, IsOptional } from 'class-valid
 
 export class SetUniformFeeDto {
   @IsUUID()
-  academicYearId: string; // Represents the specific term (AcademicYear row with term relation)
+  TermId: string; // Represents the specific period (Term row with period relation)
 
   @IsNumber()
   @IsPositive()
-  amount: number; // Base expected fee each student must pay for the term
+  amount: number; // Base expected fee each student must pay for the period
 
   @IsOptional()
   @IsBoolean()

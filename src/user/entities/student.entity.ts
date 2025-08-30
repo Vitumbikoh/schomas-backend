@@ -86,7 +86,7 @@ export class Student extends BaseEntity {
   courses: Course[];
 
    @Column({ nullable: true })
-  academicYearId: string;
+  termId: string;
 
   // Multi-tenant scope
   @Column({ type: 'uuid', nullable: true })

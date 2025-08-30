@@ -93,10 +93,10 @@ export class LearningMaterialsService {
       throw new BadRequestException('Invalid course or teacher not assigned');
     }
 
-    // Get current academic year
-    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
-    if (!currentAcademicYear) {
-      throw new BadRequestException('No active academic year found. Please contact administration.');
+    // Get current term
+    const currentTerm = await this.settingsService.getCurrentTerm();
+    if (!currentTerm) {
+      throw new BadRequestException('No active term found. Please contact administration.');
     }
 
     const learningMaterial = new LearningMaterial();
@@ -106,7 +106,7 @@ export class LearningMaterialsService {
     learningMaterial.title = title;
     learningMaterial.description = description ?? '';
     learningMaterial.filePath = file.path;
-    learningMaterial.academicYearId = currentAcademicYear.id;
+    learningMaterial.termId = currentTerm.id;
 
     try {
       const savedMaterial = await this.learningMaterialRepository.save(learningMaterial);
@@ -149,17 +149,17 @@ export class LearningMaterialsService {
 
   async getStudentMaterials(studentId: string, courseId?: string): Promise<StudentMaterialDto[]> {
     try {
-      // Get current academic year
-      const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
-      if (!currentAcademicYear) {
-        throw new BadRequestException('No active academic year found');
+      // Get current term
+      const currentTerm = await this.settingsService.getCurrentTerm();
+      if (!currentTerm) {
+        throw new BadRequestException('No active term found');
       }
 
-      // Fetch student's enrolled courses for current academic year
+      // Fetch student's enrolled courses for current term
       const enrollments = await this.enrollmentRepository.find({
         where: { 
           student: { userId: studentId },
-          academicYearId: currentAcademicYear.id
+          termId: currentTerm.id
         },
         relations: ['course'],
       });
@@ -167,16 +167,16 @@ export class LearningMaterialsService {
       const courseIds = enrollments.map(enrollment => enrollment.course.id);
 
       if (courseIds.length === 0) {
-        return []; // No enrollments for current academic year
+        return []; // No enrollments for current term
       }
 
-      // Fetch materials for enrolled courses in current academic year
+      // Fetch materials for enrolled courses in current term
       const query = this.learningMaterialRepository
         .createQueryBuilder('material')
         .leftJoinAndSelect('material.course', 'course')
-        .leftJoinAndSelect('material.academicYear', 'academicYear')
+        .leftJoinAndSelect('material.Term', 'Term')
         .where('material.courseId IN (:...courseIds)', { courseIds })
-        .andWhere('material.academicYearId = :academicYearId', { academicYearId: currentAcademicYear.id });
+        .andWhere('material.TermId = :TermId', { TermId: currentTerm.id });
 
       if (courseId) {
         query.andWhere('material.courseId = :courseId', { courseId });

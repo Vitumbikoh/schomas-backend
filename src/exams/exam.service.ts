@@ -9,7 +9,7 @@ import { Teacher } from '../user/entities/teacher.entity';
 import { Course } from '../course/entities/course.entity';
 import { User } from '../user/entities/user.entity';
 import { SettingsService } from '../settings/settings.service'; // Add this import
-import { AcademicYear } from 'src/settings/entities/academic-year.entity';
+import { Term } from 'src/settings/entities/term.entity';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
 
 @Injectable()
@@ -23,8 +23,8 @@ export class ExamService {
     private teacherRepository: Repository<Teacher>,
     @InjectRepository(Course)
     private courseRepository: Repository<Course>,
-    @InjectRepository(AcademicYear) // Add this injection
-    private academicYearRepository: Repository<AcademicYear>,
+    @InjectRepository(Term) // Add this injection
+    private termRepository: Repository<Term>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
     private settingsService: SettingsService, // Add this
@@ -41,7 +41,7 @@ export class ExamService {
     }
     const exams = await this.examRepository.find({
       where,
-      relations: ['class', 'teacher', 'course', 'academicYear'],
+      relations: ['class', 'teacher', 'course', 'Term'],
     });
     if (this.systemLoggingService) {
       await this.systemLoggingService.logAction({
@@ -58,10 +58,10 @@ export class ExamService {
   async create(createExamDto: CreateExamDto, schoolId?: string, superAdmin = false): Promise<Exam> {
     const { classId, teacherId, courseId, ...examData } = createExamDto;
 
-    // Get current academic year automatically
-    const academicYear = await this.settingsService.getCurrentAcademicYear();
-    if (!academicYear) {
-      throw new NotFoundException('No current academic year found');
+    // Get current term automatically
+    const Term = await this.settingsService.getCurrentTerm();
+    if (!Term) {
+      throw new NotFoundException('No current term found');
     }
 
     const classEntity = await this.classRepository.findOne({
@@ -129,7 +129,7 @@ export class ExamService {
       class: classEntity,
       teacher: teacher,
       course: course,
-      academicYearId: academicYear.id,
+      TermId: Term.id,
       schoolId: derivedSchoolId,
     });
 
@@ -137,11 +137,11 @@ export class ExamService {
   }
 
   async findByFilters(
-    searchTerm?: string,
+    searchText?: string,
     className?: string,
     teacherId?: string,
     teacherName?: string,
-    academicYear?: string,
+    Term?: string,
     schoolId?: string,
     superAdmin = false,
   ): Promise<Exam[]> {
@@ -153,7 +153,7 @@ export class ExamService {
         level: 'debug',
         schoolId,
         metadata: { 
-          searchTerm, className, teacherId, teacherName, academicYear, 
+          searchText, className, teacherId, teacherName, Term, 
           superAdmin, schoolIdProvided: !!schoolId 
         }
       });
@@ -177,7 +177,7 @@ export class ExamService {
       .leftJoinAndSelect('exam.teacher', 'teacher')
       .leftJoinAndSelect('teacher.user', 'user')
       .leftJoinAndSelect('exam.course', 'course')
-      .leftJoinAndSelect('exam.academicYear', 'academicYear'); // Include academicYear
+      .leftJoinAndSelect('exam.Term', 'Term'); // Include Term
 
     if (!superAdmin) {
       query.andWhere('exam.schoolId = :schoolId', { schoolId });
@@ -185,11 +185,11 @@ export class ExamService {
       query.andWhere('exam.schoolId = :schoolId', { schoolId });
     }
 
-    if (searchTerm) {
+    if (searchText) {
       // Use andWhere so we don't overwrite previous where clauses (schoolId constraint)
       query.andWhere(
-        '(exam.title ILIKE :searchTerm OR exam.subject ILIKE :searchTerm OR course.name ILIKE :searchTerm)',
-        { searchTerm: `%${searchTerm}%` },
+        '(exam.title ILIKE :searchText OR exam.subject ILIKE :searchText OR course.name ILIKE :searchText)',
+        { searchText: `%${searchText}%` },
       );
     }
 
@@ -208,10 +208,10 @@ export class ExamService {
       );
     }
 
-    if (academicYear && academicYear !== 'All Years') {
-      // Try to filter by academicYear.id first, then fallback to any exam if no current year matches
-      query.andWhere('academicYear.id = :academicYearId', {
-        academicYearId: academicYear,
+    if (Term && Term !== 'All Years') {
+      // Try to filter by Term.id first, then fallback to any exam if no current year matches
+      query.andWhere('Term.id = :TermId', {
+        TermId: Term,
       });
     }
 
@@ -231,21 +231,21 @@ export class ExamService {
 
     // Enhanced fallback logic for better data retrieval
     if (!superAdmin && schoolId && results.length === 0) {
-      // Try without academic year filter if no results
+      // Try without term filter if no results
       const fallbackQuery = this.examRepository
         .createQueryBuilder('exam')
         .leftJoinAndSelect('exam.class', 'class')
         .leftJoinAndSelect('exam.teacher', 'teacher')
         .leftJoinAndSelect('teacher.user', 'user')
         .leftJoinAndSelect('exam.course', 'course')
-        .leftJoinAndSelect('exam.academicYear', 'academicYear')
+        .leftJoinAndSelect('exam.Term', 'Term')
         .where('exam.schoolId = :schoolId', { schoolId });
 
-      // Apply same filters except academic year
-      if (searchTerm) {
+      // Apply same filters except term
+      if (searchText) {
         fallbackQuery.andWhere(
-          '(exam.title ILIKE :searchTerm OR exam.subject ILIKE :searchTerm OR course.name ILIKE :searchTerm)',
-          { searchTerm: `%${searchTerm}%` },
+          '(exam.title ILIKE :searchText OR exam.subject ILIKE :searchText OR course.name ILIKE :searchText)',
+          { searchText: `%${searchText}%` },
         );
       }
       if (className && className !== 'All Classes') {
@@ -269,7 +269,7 @@ export class ExamService {
           module: 'EXAMS',
           level: 'info',
           schoolId,
-          metadata: { fallbackResultCount: results.length, reason: 'Academic year filter removed' }
+          metadata: { fallbackResultCount: results.length, reason: 'Term filter removed' }
         });
       }
     }
@@ -305,10 +305,10 @@ export class ExamService {
     gradedExams: number;
     upcomingExams: number;
   }> {
-    // Get current academic year
-    const academicYear = await this.settingsService.getCurrentAcademicYear();
+    // Get current term
+    const Term = await this.settingsService.getCurrentTerm();
     const baseWhere: any = {};
-    if (academicYear) baseWhere.academicYearId = academicYear.id;
+    if (Term) baseWhere.termId = Term.id;
     if (!superAdmin) {
       if (!schoolId) {
         return { totalExams: 0, administeredExams: 0, gradedExams: 0, upcomingExams: 0 };
@@ -325,7 +325,7 @@ export class ExamService {
       this.examRepository.count({ where: { ...baseWhere, status: 'upcoming' } }),
     ]);
 
-    // Fallback if zero but there are legacy exams without academicYearId or with different year
+    // Fallback if zero but there are legacy exams without TermId or with different year
     if (totalExams === 0 && schoolId) {
       const legacyCount = await this.examRepository.count({ where: { schoolId } });
       if (legacyCount > 0) {
@@ -339,7 +339,7 @@ export class ExamService {
             module: 'EXAMS',
             level: 'warn',
             schoolId,
-            metadata: { reason: 'Academic year mismatch', legacyCount }
+            metadata: { reason: 'Term mismatch', legacyCount }
           });
         }
       }
@@ -351,7 +351,7 @@ export class ExamService {
         module: 'EXAMS',
         level: 'debug',
         schoolId,
-        metadata: { totalExams, administeredExams, gradedExams, upcomingExams, academicYearId: academicYear?.id }
+        metadata: { totalExams, administeredExams, gradedExams, upcomingExams, TermId: Term?.id }
       });
     }
 
@@ -405,18 +405,18 @@ async getExamCountByCourse(courseIds: string[], schoolId?: string, superAdmin = 
   return examCountMap;
 }
 
-  async getDistinctAcademicYears(): Promise<string[]> {
-    // Get all academic years with their calendar relations
-    const academicYears = await this.academicYearRepository.find({
+  async getDistinctTerms(): Promise<string[]> {
+    // Get all terms with their calendar relations
+    const Terms = await this.termRepository.find({
       relations: ['academicCalendar'],
       order: { startDate: 'ASC' },
     });
 
-    // Extract unique academic years from the calendar
+    // Extract unique terms from the calendar
     const years = new Set<string>();
-    academicYears.forEach((ay) => {
-      if (ay.academicCalendar?.academicYear) {
-        years.add(ay.academicCalendar.academicYear);
+    Terms.forEach((ay) => {
+      if (ay.academicCalendar?.term) {
+        years.add(ay.academicCalendar.term);
       }
     });
 
@@ -433,7 +433,7 @@ async getExamCountByCourse(courseIds: string[], schoolId?: string, superAdmin = 
     }
     const exam = await this.examRepository.findOne({
       where,
-      relations: ['class', 'teacher', 'course', 'academicYear'],
+      relations: ['class', 'teacher', 'course', 'Term'],
     });
     if (!exam) {
       throw new NotFoundException(`Exam with ID ${id} not found`);
@@ -449,7 +449,7 @@ async getExamCountByCourse(courseIds: string[], schoolId?: string, superAdmin = 
       .leftJoinAndSelect('exam.course', 'course')
       .leftJoinAndSelect('exam.teacher', 'teacher')
       .leftJoinAndSelect('exam.class', 'class')
-      .leftJoinAndSelect('exam.academicYear', 'academicYear')
+      .leftJoinAndSelect('exam.Term', 'Term')
       .where('exam.courseId = :courseId', { courseId })
       .andWhere('exam.teacherId = :teacherId', { teacherId });
 
@@ -509,7 +509,7 @@ async getExamCountByCourse(courseIds: string[], schoolId?: string, superAdmin = 
         e.title,
         e."schoolId",
         e."teacherId",
-        e."academicYearId",
+        e."TermId",
         t.id as teacher_id,
         t."userId" as teacher_user_id,
         t."firstName" as teacher_first_name,

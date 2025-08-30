@@ -3,13 +3,13 @@ import { Role } from '../../user/enums/role.enum';
 import { Transform } from 'class-transformer';
 
 export class CreateStudentDto {
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  username: string;
+  username?: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsEmail()
-  email: string;
+  email?: string;
 
   @IsNotEmpty()
   @IsString()
@@ -53,5 +53,5 @@ export class CreateStudentDto {
   parentId?: string;
 
   @IsOptional()
-  academicYearId?: string;
+  termId?: string;
 }

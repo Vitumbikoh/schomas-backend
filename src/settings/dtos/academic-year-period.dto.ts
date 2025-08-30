@@ -1,14 +1,14 @@
-// academic-year-term.dto.ts
+// term-period.dto.ts
 import { IsBoolean, IsDateString, IsUUID } from 'class-validator';
 
-export class AcademicYearTermDto {
+export class TermPeriodDto {
   @IsUUID()
   id: string;
 
   @IsUUID()
-  termId: string;
+  periodId: string;
 
-  termName: string;  // Add this line
+  periodName: string;  // Add this line
 
   @IsUUID()
   academicCalendarId: string;
@@ -23,9 +23,9 @@ export class AcademicYearTermDto {
   isCurrent: boolean;
 }
 
-export class CreateAcademicYearTermDto {
-  @IsUUID(undefined, { message: 'termId must be a valid UUID' })
-  termId: string;
+export class CreateTermPeriodDto {
+  @IsUUID(undefined, { message: 'periodId must be a valid UUID' })
+  periodId: string;
 
   @IsDateString({}, { message: 'startDate must be a valid date string' })
   startDate: string;

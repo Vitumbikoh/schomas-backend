@@ -50,7 +50,7 @@ export class ProfileResponseDto {
   id: string;
   username: string;
   role: string;
-  email: string;
+  email?: string | null;
   school?: {
     id: string;
     name: string;

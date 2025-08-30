@@ -11,36 +11,67 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
-  async validateUser(email: string, password: string): Promise<any> {
-    console.log('Trying to login with:', email, password);
-    const user = await this.usersService.findByEmail(email);
-    
+  async validateUser(identifier: string, password: string): Promise<any> {
+    // identifier is expected to be username, but we fallback to email for backward compatibility
+    const trimmed = (identifier || '').trim();
+    if (!trimmed) {
+      console.log('[AUTH] Empty identifier provided');
+      return null;
+    }
+
+    console.log('[AUTH] Login attempt:', { identifier: trimmed });
+
+    let user = await this.usersService.findByUsername(trimmed);
+
     if (!user) {
-        console.log('User not found');
-        return null; // Return null instead of throwing error for Passport compatibility
+      // Backward compatibility: allow using email if username not found
+      user = await this.usersService.findByEmail(trimmed);
+      if (user) {
+        console.log('[AUTH] Matched by email fallback');
+      }
     }
-    
-    console.log('Found user:', user);
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    
+
+    if (!user) {
+      console.log('[AUTH] User not found for identifier');
+      return null; // Passport expects null for failure
+    }
+
+    // Password verification
+    const storedPassword = user.password || '';
+    let isPasswordValid = false;
+    try {
+      // If stored password looks like a bcrypt hash, compare; else direct compare (legacy plain-text) then rehash path could be added later
+      const looksHashed = storedPassword.startsWith('$2a$') || storedPassword.startsWith('$2b$') || storedPassword.startsWith('$2y$');
+      if (looksHashed) {
+        isPasswordValid = await bcrypt.compare(password, storedPassword);
+      } else {
+        isPasswordValid = password === storedPassword;
+      }
+    } catch (e) {
+      console.log('[AUTH] Password compare error', e);
+      return null;
+    }
+
     if (!isPasswordValid) {
-        console.log('Invalid password');
-        return null;
+      console.log('[AUTH] Invalid password');
+      return null;
     }
-    
-    if (!user.isActive) { // Assuming you have an isActive field
-        console.log('User inactive');
-        return null;
+
+    // Treat null/undefined isActive as true (legacy rows) but block explicit false
+    if (user.isActive === false) {
+      console.log('[AUTH] User inactive');
+      return null;
     }
-    
-    const { password: _, ...result } = user;
+
+    const { password: _pw, ...result } = user;
+    console.log('[AUTH] Login success:', { id: user.id, username: user.username, role: user.role });
     return result;
-}
+  }
   
 
   async login(user: User) {
     const payload = { 
-      email: user.email, 
+      username: user.username,
       sub: user.id,
       role: user.role,
       schoolId: user.schoolId || null,
@@ -49,6 +80,7 @@ export class AuthService {
       access_token: this.jwtService.sign(payload),
       user: {
         id: user.id,
+        username: user.username,
         email: user.email,
         role: user.role,
         schoolId: user.schoolId || null,

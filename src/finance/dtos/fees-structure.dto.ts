@@ -6,7 +6,7 @@ export class CreateFeeStructureDto {
   amount: number;
 
   @IsUUID()
-  academicYearId: string;
+  termId: string;
 
   @IsString()
   @IsOptional()
@@ -22,7 +22,7 @@ export class CreateFeeStructureDto {
 
   @IsString()
   @IsOptional()
-  frequency?: string = 'per_term'; // Default frequency
+  frequency?: string = 'per_period'; // Default frequency
 
   @IsUUID()
   @IsOptional()

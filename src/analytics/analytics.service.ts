@@ -8,7 +8,7 @@ import { Attendance } from '../attendance/entity/attendance.entity';
 import { FeePayment } from '../finance/entities/fee-payment.entity';
 import { Student } from '../user/entities/student.entity';
 import { Teacher } from '../user/entities/teacher.entity';
-import { AcademicYear } from '../settings/entities/academic-year.entity';
+import { Term } from '../settings/entities/term.entity';
 import { SettingsService } from '../settings/settings.service';
 import { FeeAnalyticsService } from '../finance/services/fee-analytics.service';
 
@@ -22,27 +22,27 @@ export class AnalyticsService {
     @InjectRepository(FeePayment) private feePaymentRepo: Repository<FeePayment>,
     @InjectRepository(Student) private studentRepo: Repository<Student>,
     @InjectRepository(Teacher) private teacherRepo: Repository<Teacher>,
-    @InjectRepository(AcademicYear) private academicYearRepo: Repository<AcademicYear>,
+    @InjectRepository(Term) private termRepo: Repository<Term>,
     private settingsService: SettingsService,
     private feeAnalyticsService: FeeAnalyticsService,
   ) {}
 
-  private async resolveAcademicYearRange(academicYearId?: string): Promise<{ start: Date; end: Date; entity: AcademicYear } | null> {
-    let academicYearEntity: AcademicYear | null = null;
-    if (academicYearId) {
-      academicYearEntity = await this.academicYearRepo.findOne({ where: { id: academicYearId } });
+  private async resolveTermRange(termId?: string): Promise<{ start: Date; end: Date; entity: Term } | null> {
+    let termEntity: Term | null = null;
+    if (termId) {
+      termEntity = await this.termRepo.findOne({ where: { id: termId } });
     } else {
-      const current = await this.settingsService.getCurrentAcademicYear();
+      const current = await this.settingsService.getCurrentTerm();
       if (current?.id) {
-        academicYearEntity = await this.academicYearRepo.findOne({ where: { id: current.id } });
+        termEntity = await this.termRepo.findOne({ where: { id: current.id } });
       }
     }
-    if (!academicYearEntity) return null;
-    return { start: new Date(academicYearEntity.startDate), end: new Date(academicYearEntity.endDate), entity: academicYearEntity };
+    if (!termEntity) return null;
+    return { start: new Date(termEntity.startDate), end: new Date(termEntity.endDate), entity: termEntity };
   }
 
-  async getClassPerformance(classId: string, academicYearId?: string, schoolId?: string, superAdmin = false) {
-    const range = await this.resolveAcademicYearRange(academicYearId);
+  async getClassPerformance(classId: string, TermId?: string, schoolId?: string, superAdmin = false) {
+    const range = await this.resolveTermRange(TermId);
     const qb = this.gradeRepo.createQueryBuilder('g')
       .leftJoin('g.class', 'c')
       .leftJoin('g.student', 's')
@@ -91,9 +91,9 @@ export class AnalyticsService {
     };
   }
 
-  async getCourseAverages(academicYearId?: string, scope: 'current-year' | 'all' = 'current-year', schoolId?: string, superAdmin = false) {
-    // If scope is all we ignore academic year filtering
-    const range = scope === 'current-year' ? await this.resolveAcademicYearRange(academicYearId) : null;
+  async getCourseAverages(TermId?: string, scope: 'current-year' | 'all' = 'current-year', schoolId?: string, superAdmin = false) {
+    // If scope is all we ignore term filtering
+    const range = scope === 'current-year' ? await this.resolveTermRange(TermId) : null;
 
     // Use QueryBuilder for flexible filtering
     const qb = this.gradeRepo.createQueryBuilder('g')
@@ -163,8 +163,8 @@ export class AnalyticsService {
     return result;
   }
 
-  async getAttendanceOverview(academicYearId?: string, schoolId?: string, superAdmin = false) {
-    const range = await this.resolveAcademicYearRange(academicYearId);
+  async getAttendanceOverview(TermId?: string, schoolId?: string, superAdmin = false) {
+    const range = await this.resolveTermRange(TermId);
     const qb = this.attendanceRepo.createQueryBuilder('a')
       .leftJoin('a.student', 's')
       .select("TO_CHAR(a.date, 'YYYY-MM')", 'month')
@@ -188,8 +188,8 @@ export class AnalyticsService {
     return rows.map(r => ({ month: r.month, totalRecords: parseInt(r.totalRecords,10), present: parseInt(r.presentCount,10), attendanceRate: parseFloat(((parseInt(r.presentCount,10)/(parseInt(r.totalRecords,10)||1))*100).toFixed(2)) }));
   }
 
-  async getAttendanceByClass(academicYearId?: string, schoolId?: string, superAdmin = false) {
-    const range = await this.resolveAcademicYearRange(academicYearId);
+  async getAttendanceByClass(TermId?: string, schoolId?: string, superAdmin = false) {
+    const range = await this.resolveTermRange(TermId);
 
     const build = (applyRange: boolean) => {
       const qb = this.attendanceRepo.createQueryBuilder('a')
@@ -240,23 +240,23 @@ export class AnalyticsService {
     });
   }
 
-  async getFeeCollectionStatus(academicYearId?: string, schoolId?: string, superAdmin = false) {
+  async getFeeCollectionStatus(TermId?: string, schoolId?: string, superAdmin = false) {
     // For now, we'll use the existing fee analytics service without school filtering
     // TODO: Update FeeAnalyticsService to support school filtering
-    return this.feeAnalyticsService.getFeeAnalytics(academicYearId || undefined as any);
+    return this.feeAnalyticsService.getFeeAnalytics(TermId || undefined as any);
   }
 
-  async getCurrentAcademicYearDetails() {
-    const current = await this.settingsService.getCurrentAcademicYear();
+  async getCurrentTermDetails() {
+    const current = await this.settingsService.getCurrentTerm();
     if (!current) return null;
-    const entity = await this.academicYearRepo.findOne({ where: { id: current.id } });
+    const entity = await this.termRepo.findOne({ where: { id: current.id } });
     if (!entity) return null;
     return {
       id: entity.id,
       startDate: entity.startDate,
       endDate: entity.endDate,
-      term: entity.term?.name,
-      academicYear: entity.academicCalendar?.academicYear,
+      period: entity.period?.name,
+      Term: entity.academicCalendar?.term,
       isCurrent: entity.isCurrent,
     };
   }
@@ -271,7 +271,7 @@ export class AnalyticsService {
         return {
           totalStudents: 0,
           totalTeachers: 0,
-          currentAcademicYear: null,
+          currentTerm: null,
           averageGrade: 0,
           attendanceRate: 0,
           feePaymentPercentage: 0,
@@ -289,7 +289,7 @@ export class AnalyticsService {
       this.teacherRepo.count({ where: teacherWhere }),
     ]);
     
-    const currentYear = await this.getCurrentAcademicYearDetails();
+    const currentYear = await this.getCurrentTermDetails();
     let gradeAvg = 0;
     if (currentYear) {
       const qb = this.gradeRepo.createQueryBuilder('g')
@@ -340,7 +340,7 @@ export class AnalyticsService {
     return {
       totalStudents: students,
       totalTeachers: teachers,
-      currentAcademicYear: currentYear,
+      currentTerm: currentYear,
       averageGrade: gradeAvg,
       attendanceRate,
       feePaymentPercentage,

@@ -91,8 +91,8 @@ export class GradeService {
 
     // Validate assessment type
     const validAssessmentTypes = [
-      'midterm',
-      'endterm',
+      'midperiod',
+      'endperiod',
       'quiz',
       'assignment',
       'practical',
@@ -154,8 +154,8 @@ export class GradeService {
     classId: string,
     userId: string,
     schoolId?: string,
-    academicYear?: string,
-    term?: string,
+    Term?: string,
+    period?: string,
   ): Promise<Student[]> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
@@ -188,8 +188,8 @@ export class GradeService {
     classId: string,
     userId: string,
     schoolId?: string,
-    academicYear?: string,
-    term?: string,
+    Term?: string,
+    period?: string,
   ): Promise<any> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
@@ -230,9 +230,9 @@ export class GradeService {
       query.andWhere('grade.schoolId = :schoolId', { schoolId });
     }
 
-    if (academicYear) {
+    if (Term) {
       query.andWhere('EXTRACT(YEAR FROM grade.date) = :year', {
-        year: academicYear.split('-')[0],
+        year: Term.split('-')[0],
       });
     }
 
@@ -317,8 +317,8 @@ export class GradeService {
     studentId: string,
     userId?: string,
     classId?: string,
-    academicYear?: string,
-    term?: string,
+    Term?: string,
+    period?: string,
   ): Promise<any> {
     if (userId) {
       const user = await this.userRepository.findOne({ where: { id: userId } });
@@ -347,9 +347,9 @@ export class GradeService {
     if (classId) {
       query.andWhere('grade.classId = :classId', { classId });
     }
-    if (academicYear) {
+    if (Term) {
       query.andWhere('EXTRACT(YEAR FROM grade.date) = :year', {
-        year: academicYear.split('-')[0],
+        year: Term.split('-')[0],
       });
     }
 

@@ -10,7 +10,7 @@ import { Student } from '../user/entities/student.entity';
 import { User } from '../user/entities/user.entity';
 import { Department } from './entities/department.entity';
 import { Enrollment } from '../enrollment/entities/enrollment.entity';
-import { AcademicYear } from '../settings/entities/academic-year.entity';
+import { Term } from '../settings/entities/term.entity';
 import { Class } from '../classes/entity/class.entity';
 import { ReceiptController } from './receipt.controller';
 import { SettingsModule } from '../settings/settings.module';
@@ -31,7 +31,7 @@ import { StudentFeeExpectationService } from './student-fee-expectation.service'
       User,
       Department,
       Enrollment,
-      AcademicYear,
+      Term,
       Class,
     ]),
     SettingsModule,

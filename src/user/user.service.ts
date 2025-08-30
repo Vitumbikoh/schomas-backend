@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOneOptions, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
@@ -7,6 +7,7 @@ import { Teacher } from './entities/teacher.entity';
 import { Student } from './entities/student.entity';
 import { Parent } from './entities/parent.entity';
 import { Finance } from './entities/finance.entity';
+import { SchoolAdminCredentials } from '../school/entities/school-admin-credentials.entity';
 import { CreateUserDto } from './dtos/create-user.dto';
 import { CreateTeacherDto } from './dtos/create-teacher.dto';
 import { CreateStudentDto } from './dtos/create-student.dto';
@@ -29,6 +30,9 @@ export class UsersService {
     private readonly parentRepository: Repository<Parent>,
     @InjectRepository(Finance)
     private readonly financeRepository: Repository<Finance>,
+    @InjectRepository(SchoolAdminCredentials)
+    @Optional()
+    private readonly schoolAdminCredentialsRepository?: Repository<SchoolAdminCredentials>,
   ) {}
 
   // In user.service.ts
@@ -51,6 +55,8 @@ export class UsersService {
   }
 
   async findByEmail(email: string): Promise<User | null> {
+    // Deprecated: email is now optional; prefer findByUsername for auth
+    if (!email) return null;
     return this.userRepository.findOne({
       where: { email },
       relations: ['teacher', 'student', 'parent', 'finance'],
@@ -62,7 +68,7 @@ export class UsersService {
     const userSettings = new UserSettings();
     const user = this.userRepository.create({
       username: createUserDto.username,
-      email: createUserDto.email,
+  email: createUserDto.email ?? null,
       password: hashedPassword,
       role: createUserDto.role as Role,
       isActive: true,
@@ -91,13 +97,17 @@ export class UsersService {
 
   async createStudent(createStudentDto: CreateStudentDto, schoolId?: string): Promise<Student> {
     const userDto: CreateUserDto = {
-      username: createStudentDto.username,
+  username: createStudentDto.username || '', // will be replaced later if empty by student service path
       email: createStudentDto.email,
       password: createStudentDto.password,
       role: Role.STUDENT,
       schoolId: schoolId ?? undefined,
     } as any;
 
+    if (!userDto.username) {
+      // Simple fallback to temporary placeholder; actual generation should occur in StudentsService path
+      userDto.username = `temp_${Date.now().toString(36)}`;
+    }
     const user = await this.createUser(userDto);
     const student = this.studentRepository.create({
       ...createStudentDto,
@@ -168,6 +178,15 @@ export class UsersService {
     user.forcePasswordReset = false as any;
     user.updatedAt = new Date();
     await this.userRepository.save(user);
+
+    // If this is a school admin, mark password as changed in credentials table
+    if (user.role === Role.ADMIN && user.schoolId && this.schoolAdminCredentialsRepository) {
+      await this.schoolAdminCredentialsRepository.update(
+        { schoolId: user.schoolId },
+        { passwordChanged: true, updatedAt: new Date() }
+      );
+    }
+
     return { ok: true };
   }
 

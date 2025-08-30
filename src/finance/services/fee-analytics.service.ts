@@ -8,10 +8,10 @@ import { Enrollment } from '../../enrollment/entities/enrollment.entity';
 import { SettingsService } from '../../settings/settings.service';
 
 export interface FeeAnalytics {
-  academicYear: {
+  Term: {
     id: string;
     name: string;
-    term: string;
+    period: string;
   };
   totalStudents: number;
   totalEnrolledStudents: number;
@@ -64,31 +64,31 @@ export class FeeAnalyticsService {
     private settingsService: SettingsService,
   ) {}
 
-  async getFeeAnalytics(academicYearId?: string): Promise<FeeAnalytics> {
+  async getFeeAnalytics(TermId?: string): Promise<FeeAnalytics> {
     this.logger.log('Generating fee analytics report...');
 
     try {
-      // Get current academic year if not provided
-      let currentAcademicYear;
-      if (academicYearId) {
-        currentAcademicYear = { id: academicYearId };
+      // Get current term if not provided
+      let currentTerm;
+      if (TermId) {
+        currentTerm = { id: TermId };
       } else {
-        currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+        currentTerm = await this.settingsService.getCurrentTerm();
       }
 
-      if (!currentAcademicYear) {
-        throw new Error('No academic year found');
+      if (!currentTerm) {
+        throw new Error('No term found');
       }
 
-      this.logger.log(`Analyzing fees for academic year: ${currentAcademicYear.id}`);
+      this.logger.log(`Analyzing fees for term: ${currentTerm.id}`);
 
-      // Get academic year details
-      const academicYearDetails = await this.settingsService.getCurrentAcademicYear();
+      // Get term details
+      const termDetails = await this.settingsService.getCurrentTerm();
 
-      // Get all students enrolled in current academic year
+      // Get all students enrolled in current term
       const enrollments = await this.enrollmentRepository.find({
-        where: { academicYearId: currentAcademicYear.id },
-        relations: ['student', 'student.class', 'academicYear'],
+        where: { termId: currentTerm.id },
+        relations: ['student', 'student.class', 'term'],
       });
 
       const enrolledStudents = enrollments.reduce((acc, enrollment) => {
@@ -101,10 +101,10 @@ export class FeeAnalyticsService {
       // Get total students (not necessarily enrolled)
       const totalStudents = await this.studentRepository.count();
 
-      // Get fee structure for current academic year
+      // Get fee structure for current term
       const feeStructures = await this.feeStructureRepository.find({
         where: { 
-          academicYearId: currentAcademicYear.id,
+          termId: currentTerm.id,
           isActive: true 
         },
         relations: ['class']
@@ -113,13 +113,13 @@ export class FeeAnalyticsService {
       // Calculate expected fees per student
       const feeStructureAnalysis = this.calculateFeeStructure(feeStructures);
 
-      // Get all payments for current academic year
+      // Get all payments for current term
       const payments = await this.feePaymentRepository.find({
         where: { 
-          academicYearId: currentAcademicYear.id,
+          termId: currentTerm.id,
           status: 'completed'
         },
-        relations: ['student', 'academicYear']
+        relations: ['student', 'Term']
       });
 
       // Calculate payment summary
@@ -142,10 +142,10 @@ export class FeeAnalyticsService {
       this.logger.log('Fee analytics report generated successfully');
 
       return {
-        academicYear: {
-          id: currentAcademicYear.id,
-          name: academicYearDetails ? 'Current Academic Year' : 'N/A',
-          term: 'Current Term'
+        Term: {
+          id: currentTerm.id,
+          name: termDetails ? 'Current Term' : 'N/A',
+          period: 'Current Period'
         },
         totalStudents,
         totalEnrolledStudents: enrolledStudents.length,
@@ -282,15 +282,15 @@ export class FeeAnalyticsService {
     return { byMonth, byFeeType };
   }
 
-  async getStudentFeeDetails(studentId: string, academicYearId?: string) {
+  async getStudentFeeDetails(studentId: string, termId?: string) {
     this.logger.log(`Getting fee details for student: ${studentId}`);
 
-    const currentAcademicYear = academicYearId 
-      ? { id: academicYearId }
-      : await this.settingsService.getCurrentAcademicYear();
+    const currentTerm = termId 
+      ? { id: termId }
+      : await this.settingsService.getCurrentTerm();
 
-    if (!currentAcademicYear) {
-      throw new Error('No academic year found');
+    if (!currentTerm) {
+      throw new Error('No term found');
     }
 
     const student = await this.studentRepository.findOne({
@@ -305,7 +305,7 @@ export class FeeAnalyticsService {
     // Get fee structure
     const feeStructures = await this.feeStructureRepository.find({
       where: { 
-        academicYearId: currentAcademicYear.id,
+        termId: currentTerm.id,
         isActive: true 
       }
     });
@@ -314,7 +314,7 @@ export class FeeAnalyticsService {
     const payments = await this.feePaymentRepository.find({
       where: { 
         student: { id: studentId },
-        academicYearId: currentAcademicYear.id 
+        termId: currentTerm.id 
       },
       order: { paymentDate: 'DESC' }
     });

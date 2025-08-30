@@ -13,8 +13,11 @@ import { Parent } from '../user/entities/parent.entity';
 import { Student } from '../user/entities/student.entity';
 import { Teacher } from '../user/entities/teacher.entity';
 import { AcademicCalendar } from './entities/academic-calendar.entity';
+import { Period } from './entities/period.entity';
 import { Term } from './entities/term.entity';
-import { AcademicYear } from './entities/academic-year.entity';
+import { Class } from '../classes/entity/class.entity';
+import { StudentPromotionService } from '../student/services/student-promotion.service';
+import { AcademicCalendarConstraintService } from './services/academic-calendar-constraint.service';
 
 @Module({
   imports: [
@@ -27,14 +30,15 @@ import { AcademicYear } from './entities/academic-year.entity';
       Parent, 
       Finance,
       AcademicCalendar,
+      Period,
       Term,
-      AcademicYear
+      Class
     ]),
     AuthModule,
     ConfigModule,
     LogsModule,
   ],
-  providers: [SettingsService],
+  providers: [SettingsService, StudentPromotionService, AcademicCalendarConstraintService],
   controllers: [SettingsController],
   exports: [TypeOrmModule, SettingsService],
 })

@@ -2,7 +2,7 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateCol
 import { Class } from 'src/classes/entity/class.entity';
 import { Course } from 'src/course/entities/course.entity';
 import { User } from 'src/user/entities/user.entity';
-import { AcademicYear } from 'src/settings/entities/academic-year.entity';
+import { Term } from 'src/settings/entities/term.entity';
 
 @Entity('learning_material')
 export class LearningMaterial {
@@ -40,11 +40,11 @@ export class LearningMaterial {
   filePath: string;
 
   @Column({ type: 'uuid' })
-  academicYearId: string;
+  termId: string;
 
-  @ManyToOne(() => AcademicYear)
-  @JoinColumn({ name: 'academicYearId' })
-  academicYear: AcademicYear;
+  @ManyToOne(() => Term)
+  @JoinColumn({ name: 'termId' })
+  term: Term;
 
   @CreateDateColumn()
   createdAt: Date;

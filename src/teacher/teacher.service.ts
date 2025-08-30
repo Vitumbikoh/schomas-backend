@@ -1154,10 +1154,10 @@ async submitExamGrades(
     throw new ForbiddenException('You are not authorized to grade this exam');
   }
 
-  // Get the current academic year
-  const academicYear = await this.settingsService.getCurrentAcademicYear();
-  if (!academicYear) {
-    throw new BadRequestException('No current academic year found. Please contact your administrator.');
+  // Get the current term
+  const Term = await this.settingsService.getCurrentTerm();
+  if (!Term) {
+    throw new BadRequestException('No current term found. Please contact your administrator.');
   }
 
   // Rest of the method remains the same...
@@ -1183,9 +1183,9 @@ async submitExamGrades(
     grade.exam = exam;
     grade.course = exam.course;
     grade.class = exam.class;
-    // Add multi-tenancy and academic year tracking
+    // Add multi-tenancy and term tracking
     grade.schoolId = teacher.schoolId;
-    grade.academicYearId = academicYear.id;
+    grade.termId = Term.id;
     gradeRecords.push(grade);
   }
 

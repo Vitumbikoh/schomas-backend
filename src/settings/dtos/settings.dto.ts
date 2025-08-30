@@ -38,13 +38,13 @@ export class SchoolSettingsDto {
   schoolAbout: string;
 }
 
-export class TermDto {
+export class PeriodDto {
   @IsOptional()
   @IsString()
   id?: string;
 
   @IsString()
-  termName: string;
+  periodName: string;
 
    @IsDateString()
   startDate: string; // Make required
@@ -56,8 +56,8 @@ export class TermDto {
   isCurrent: boolean;
 
   @IsString()
-  @Matches(/^\d{4}-\d{4}$/, { message: 'Academic year must be in YYYY-YYYY format' })
-  academicYear: string;
+  @Matches(/^\d{4}-\d{4}$/, { message: 'Term must be in YYYY-YYYY format' })
+  term: string;
 }
 
 export class UserSettingsDto {
@@ -67,8 +67,9 @@ export class UserSettingsDto {
   @IsString()
   username: string;
 
+  @IsOptional()
   @IsEmail()
-  email: string;
+  email?: string | null;
 
   @IsString()
   role: string;
@@ -107,8 +108,8 @@ export class SettingsResponseDto {
 
   @IsOptional()
   @ValidateNested()
-  @Type(() => TermDto)
-  currentTerm?: TermDto;
+  @Type(() => PeriodDto)
+  currentPeriod?: PeriodDto;
 }
 
 export class UpdateSettingsDto {
@@ -146,8 +147,8 @@ export class UpdateSettingsDto {
 
   @IsOptional()
   @ValidateNested()
-  @Type(() => TermDto)
-  currentTerm?: TermDto;
+  @Type(() => PeriodDto)
+  currentPeriod?: PeriodDto;
 
   @IsOptional()
   @IsString()

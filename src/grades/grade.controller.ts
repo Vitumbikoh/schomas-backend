@@ -36,8 +36,8 @@ export class GradeController {
   async getClassStudents(
     @Param('classId') classId: string,
     @Request() req,
-    @Query('academicYear') academicYear?: string,
-    @Query('term') term?: string
+    @Query('Term') Term?: string,
+    @Query('period') period?: string
   ) {
     return this.gradeService.getClassStudents(classId, req.user.sub, req.user.schoolId);
   }
@@ -47,15 +47,15 @@ export class GradeController {
   async getClassGrades(
     @Param('classId') classId: string,
     @Request() req,
-    @Query('academicYear') academicYear?: string,
-    @Query('term') term?: string
+    @Query('Term') Term?: string,
+    @Query('period') period?: string
   ) {
     return this.gradeService.getClassGrades(
       classId, 
       req.user.sub, 
       req.user.schoolId, // Pass the user's schoolId
-      academicYear, 
-      term
+      Term, 
+      period
     );
   }
 
@@ -65,8 +65,8 @@ export class GradeController {
     @Param('studentId') studentId: string,
     @Request() req,
     @Query('classId') classId?: string,
-    @Query('academicYear') academicYear?: string,
-    @Query('term') term?: string
+    @Query('Term') Term?: string,
+    @Query('period') period?: string
   ) {
     return this.gradeService.getStudentGrades(studentId, req.user.sub);
   }

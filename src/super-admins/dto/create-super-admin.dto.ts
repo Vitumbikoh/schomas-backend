@@ -5,7 +5,7 @@ export class CreateSuperAdminDto {
   username: string;
 
   @IsEmail()
-  email: string;
+  email: string; // Still required for super admins
 
   @MinLength(8)
   password: string;

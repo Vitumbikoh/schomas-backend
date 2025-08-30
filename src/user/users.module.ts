@@ -6,6 +6,7 @@ import { Teacher } from './entities/teacher.entity';
 import { Student } from './entities/student.entity';
 import { Parent } from './entities/parent.entity';
 import { Finance } from './entities/finance.entity';
+import { SchoolAdminCredentials } from '../school/entities/school-admin-credentials.entity';
 import { DatabaseModule } from '../database/database.module';
 import { UsersService } from './user.service';
 import { ConfigModule } from 'src/config/config.module';
@@ -14,7 +15,7 @@ import { LogsModule } from 'src/logs/logs.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Teacher, Student, Parent, Finance]),
+    TypeOrmModule.forFeature([User, Teacher, Student, Parent, Finance, SchoolAdminCredentials]),
     forwardRef(() => AuthModule), 
     DatabaseModule,
     ConfigModule,

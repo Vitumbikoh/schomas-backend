@@ -15,63 +15,63 @@ export class AnalyticsController {
   async classPerformance(
     @Request() req,
     @Query('classId') classId: string, 
-    @Query('academicYearId') academicYearId?: string,
+    @Query('TermId') TermId?: string,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
-    return this.analyticsService.getClassPerformance(classId, academicYearId, effectiveSchoolId, isSuper);
+    return this.analyticsService.getClassPerformance(classId, TermId, effectiveSchoolId, isSuper);
   }
 
   @Get('course-averages')
   async courseAverages(
     @Request() req,
-    @Query('academicYearId') academicYearId?: string,
+    @Query('TermId') TermId?: string,
     @Query('scope') scope: 'current-year' | 'all' = 'current-year',
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
-    return this.analyticsService.getCourseAverages(academicYearId, scope, effectiveSchoolId, isSuper);
+    return this.analyticsService.getCourseAverages(TermId, scope, effectiveSchoolId, isSuper);
   }
 
   @Get('attendance-overview')
   async attendanceOverview(
     @Request() req,
-    @Query('academicYearId') academicYearId?: string,
+    @Query('TermId') TermId?: string,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
-    return this.analyticsService.getAttendanceOverview(academicYearId, effectiveSchoolId, isSuper);
+    return this.analyticsService.getAttendanceOverview(TermId, effectiveSchoolId, isSuper);
   }
 
   @Get('attendance-by-class')
   async attendanceByClass(
     @Request() req,
-    @Query('academicYearId') academicYearId?: string,
+    @Query('TermId') TermId?: string,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
-    return this.analyticsService.getAttendanceByClass(academicYearId, effectiveSchoolId, isSuper);
+    return this.analyticsService.getAttendanceByClass(TermId, effectiveSchoolId, isSuper);
   }
 
   @Get('fee-collection-status')
   async feeCollectionStatus(
     @Request() req,
-    @Query('academicYearId') academicYearId?: string,
+    @Query('TermId') TermId?: string,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
-    return this.analyticsService.getFeeCollectionStatus(academicYearId, effectiveSchoolId, isSuper);
+    return this.analyticsService.getFeeCollectionStatus(TermId, effectiveSchoolId, isSuper);
   }
 
-  @Get('current-academic-year')
-  async currentAcademicYear(@Request() req) {
-    // Academic year might be global or school-specific depending on your business logic
-    return this.analyticsService.getCurrentAcademicYearDetails();
+  @Get('current-term')
+  async currentTerm(@Request() req) {
+    // Term might be global or school-specific depending on your business logic
+    return this.analyticsService.getCurrentTermDetails();
   }
 
   @Get('dashboard-summary')

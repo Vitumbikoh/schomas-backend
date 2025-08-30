@@ -6,6 +6,7 @@ import { Exam } from './entities/exam.entity';
 import { Class } from '../classes/entity/class.entity';
 import { Teacher } from '../user/entities/teacher.entity';
 import { Course } from '../course/entities/course.entity';
+import { Term } from '../settings/entities/term.entity';
 import { CourseModule } from '../course/course.module';
 import { ClassModule } from '../classes/class.module';
 import { UsersModule } from '../user/users.module';
@@ -17,7 +18,7 @@ import { ConfigModule } from '../config/config.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Exam, Class, Teacher, Course]),
+    TypeOrmModule.forFeature([Exam, Class, Teacher, Course, Term]),
     forwardRef(() => ClassModule),
     forwardRef(() => UsersModule),
     forwardRef(() => CourseModule),

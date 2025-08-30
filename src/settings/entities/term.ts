@@ -1,9 +1,9 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { AcademicCalendar } from './academic-calendar.entity';
-import { Term } from './term.entity';
+import { Period } from './period.entity';
 
 @Entity()
-export class AcademicYear {
+export class Term {
     @PrimaryGeneratedColumn('uuid')
     id: string;
 
@@ -11,9 +11,9 @@ export class AcademicYear {
     @JoinColumn()
     academicCalendar: AcademicCalendar;
 
-    @ManyToOne(() => Term, { eager: true })
+    @ManyToOne(() => Period, { eager: true })
     @JoinColumn()
-    term: Term;
+    period: Period;
 
     @Column()
     startDate: Date;
@@ -23,4 +23,16 @@ export class AcademicYear {
 
     @Column({ default: false })
     isCurrent: boolean;
+
+    @Column({ default: false })
+    isCompleted: boolean;
+
+    @Column({ type: 'int' })
+    termNumber: number; // 1, 2, or 3
+
+    @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+    createdAt: Date;
+
+    @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+    updatedAt: Date;
 }

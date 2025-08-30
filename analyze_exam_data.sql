@@ -58,13 +58,13 @@ LEFT JOIN teacher t ON u.id = t."userId"
 WHERE u.role IN ('ADMIN', 'TEACHER', 'FINANCE')
 ORDER BY u.role, u.email;
 
--- 5. Academic year check
+-- 5. Term check
 SELECT 
   e.id, 
   e.title, 
-  e."academicYearId",
-  ay.id as academic_year_exists,
+  e."TermId",
+  ay.id as Term_exists,
   ay."startDate",
   ay."endDate"
 FROM exam e
-LEFT JOIN academic_year ay ON e."academicYearId" = ay.id;
+LEFT JOIN Term ay ON e."TermId" = ay.id;

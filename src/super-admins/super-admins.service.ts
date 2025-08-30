@@ -8,7 +8,7 @@ export class SuperAdminsService {
   constructor(private readonly usersService: UsersService) {}
 
   async create(dto: CreateSuperAdminDto) {
-    // Enforce uniqueness by email via UsersService findByEmail
+  // Super admins still require email (even though general users may not)
     const existing = await this.usersService.findByEmail(dto.email);
     if (existing) throw new ConflictException('Email already in use');
 

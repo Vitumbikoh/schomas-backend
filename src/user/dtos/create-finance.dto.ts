@@ -8,8 +8,8 @@ export class CreateFinanceDto {
   username: string;
 
   @IsEmail()
-  @IsNotEmpty()
-  email: string;
+  @IsOptional()
+  email?: string;
 
   @IsString()
   @IsNotEmpty()

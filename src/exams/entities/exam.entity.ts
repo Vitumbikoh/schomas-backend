@@ -9,7 +9,7 @@ import {
 import { Class } from '../../classes/entity/class.entity';
 import { Teacher } from '../../user/entities/teacher.entity';
 import { Course } from '../../course/entities/course.entity';
-import { AcademicYear } from '../../settings/entities/academic-year.entity';
+import { Term } from '../../settings/entities/term.entity';
 import { School } from 'src/school/entities/school.entity';
 
 @Entity()
@@ -38,7 +38,7 @@ export class Exam {
   duration: string;
 
   @Column({ type: 'uuid' })
-  academicYearId: string;
+  TermId: string;
 
   @Column({ type: 'integer', nullable: false })
   totalMarks: number;
@@ -69,9 +69,9 @@ export class Exam {
   @JoinColumn({ name: 'courseId' })
   course: Course;
 
-  @ManyToOne(() => AcademicYear)
-  @JoinColumn({ name: 'academicYearId' })
-  academicYear: AcademicYear;
+  @ManyToOne(() => Term)
+  @JoinColumn({ name: 'TermId' })
+  Term: Term;
 
     // Multi-tenant scope
     @Column({ type: 'uuid', nullable: true })

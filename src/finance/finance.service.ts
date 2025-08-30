@@ -41,18 +41,18 @@ export class FinanceService {
   async getDashboardData(userId: string, schoolId?: string, superAdmin = false) {
     const financeUser = await this.getFinanceUser(userId);
 
-    // Get current academic year for filtering
-    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
-    const academicYearFilter = currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {};
+    // Get current term for filtering
+    const currentTerm = await this.settingsService.getCurrentTerm();
+    const termFilter = currentTerm ? { termId: currentTerm.id } : {};
 
   const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
 
     const [pendingPayments, pendingBudgets, recentTransactions] = await Promise.all([
       this.paymentRepository.find({
-        where: { status: 'pending', ...academicYearFilter, ...schoolScope },
+        where: { status: 'pending', ...termFilter, ...schoolScope },
         take: 5,
         order: { createdAt: 'DESC' },
-        relations: ['student', 'academicYear'],
+        relations: ['student', 'term'],
       }),
       this.budgetRepository.find({
         where: { status: 'pending', ...(schoolScope || {}) },
@@ -60,22 +60,22 @@ export class FinanceService {
         order: { createdAt: 'DESC' },
       }),
       this.paymentRepository.find({
-        where: { status: 'completed', ...academicYearFilter, ...schoolScope },
+        where: { status: 'completed', ...termFilter, ...schoolScope },
         take: 5,
         order: { paymentDate: 'DESC' },
-        relations: ['student', 'academicYear'],
+        relations: ['student', 'term'],
       }),
     ]);
 
     const totalProcessedPayments = await this.paymentRepository.count({
-      where: { status: 'completed', ...academicYearFilter, ...schoolScope },
+      where: { status: 'completed', ...termFilter, ...schoolScope },
     });
 
     const totalRevenueResult = await this.paymentRepository
       .createQueryBuilder('payment')
       .select('SUM(payment.amount)', 'sum')
   .where('payment.status = :status', { status: 'completed' })
-  .andWhere(currentAcademicYear ? 'payment.academicYearId = :academicYearId' : '1=1', currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {})
+  .andWhere(currentTerm ? 'payment.termId = :termId' : '1=1', currentTerm ? { termId: currentTerm.id } : {})
   .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
       .getRawOne();
 
@@ -147,7 +147,7 @@ export class FinanceService {
             action: 'FINANCE_PROFILE_MISSING_FALLBACK',
             module: 'FINANCE',
             level: 'warn',
-            performedBy: { id: processingUser.id, role: processingUser.role, email: processingUser.email },
+            performedBy: { id: processingUser.id, role: processingUser.role, email: processingUser.email ?? '' },
             metadata: { description: 'Finance user has FINANCE role but no finance profile; using admin processing fallback.' },
           });
         }
@@ -166,10 +166,10 @@ export class FinanceService {
         throw new BadRequestException('Invalid payment type');
       }
 
-      // Get current academic year
-      const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
-      if (!currentAcademicYear) {
-        throw new BadRequestException('No active academic year found. Please contact administration.');
+      // Get current term
+      const currentTerm = await this.settingsService.getCurrentTerm();
+      if (!currentTerm) {
+        throw new BadRequestException('No active term found. Please contact administration.');
       }
 
       const payment = this.paymentRepository.create({
@@ -181,7 +181,7 @@ export class FinanceService {
         status: 'completed',
         paymentDate: new Date(processPaymentDto.paymentDate),
         student: { id: student.id },
-        academicYearId: currentAcademicYear.id,
+        termId: currentTerm.id,
         schoolId: user.schoolId || undefined,
         ...(financeUser
           ? { processedBy: { id: financeUser.id } }
@@ -314,18 +314,18 @@ export class FinanceService {
     pendingPayments: FeePayment[];
     pendingBudgets: Budget[];
   }> {
-    // Get current academic year for filtering
-    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
-    const academicYearFilter = currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {};
+    // Get current term for filtering
+    const currentTerm = await this.settingsService.getCurrentTerm();
+    const termFilter = currentTerm ? { termId: currentTerm.id } : {};
 
   const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
   const [pendingPayments, pendingBudgets, recentTransactions] =
       await Promise.all([
         this.paymentRepository.find({
-      where: { status: 'pending', ...academicYearFilter, ...(schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {}) },
+      where: { status: 'pending', ...termFilter, ...(schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {}) },
           take: 5,
           order: { createdAt: 'DESC' },
-          relations: ['student', 'academicYear'],
+          relations: ['student', 'term'],
         }),
         this.budgetRepository.find({
       where: { status: 'pending', ...(schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {}) },
@@ -333,10 +333,10 @@ export class FinanceService {
           order: { createdAt: 'DESC' },
         }),
         this.paymentRepository.find({
-      where: { status: 'completed', ...academicYearFilter, ...(schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {}) },
+      where: { status: 'completed', ...termFilter, ...(schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {}) },
           take: 5,
           order: { paymentDate: 'DESC' },
-          relations: ['student', 'academicYear'],
+          relations: ['student', 'term'],
         }),
       ]);
 
@@ -360,12 +360,12 @@ export class FinanceService {
     pendingApprovals: number;
   fallbackUsed?: boolean;
   }> {
-    // Get current academic year for filtering (with safe fallback)
-    let currentAcademicYear: any = null;
+    // Get current term for filtering (with safe fallback)
+    let currentTerm: any = null;
     try {
-      currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+      currentTerm = await this.settingsService.getCurrentTerm();
     } catch (err) {
-      await this.systemLoggingService.logSystemError(err, 'FINANCE', 'GET_CURRENT_ACADEMIC_YEAR_FAILED');
+      await this.systemLoggingService.logSystemError(err, 'FINANCE', 'GET_CURRENT_TERM_FAILED');
     }
     
     const paymentWhere: any = { status: 'completed' };
@@ -384,9 +384,9 @@ export class FinanceService {
       budgetWhere.schoolId = schoolId;
     }
     
-    // Add academic year filter if available
-    if (currentAcademicYear) {
-      paymentWhere.academicYearId = currentAcademicYear.id;
+    // Add term filter if available
+    if (currentTerm) {
+      paymentWhere.termId = currentTerm.id;
     }
 
     if (dateRange?.startDate && dateRange?.endDate) {
@@ -415,11 +415,11 @@ export class FinanceService {
       ] = await Promise.all([
         this.paymentRepository.count({ where: paymentWhere }),
         this.budgetRepository.count({ where: budgetWhere }),
-        this.calculateTotalRevenue(paymentWhere, currentAcademicYear, dateRange),
+        this.calculateTotalRevenue(paymentWhere, currentTerm, dateRange),
         this.paymentRepository.count({
           where: {
             status: 'pending',
-            ...(currentAcademicYear ? { academicYearId: currentAcademicYear.id } : {}),
+            ...(currentTerm ? { termId: currentTerm.id } : {}),
             ...(paymentWhere.schoolId ? { schoolId: paymentWhere.schoolId } : {}),
           },
         }),
@@ -442,8 +442,8 @@ export class FinanceService {
     let totalRevenue = parseFloat(totalRevenueResult?.sum || '0');
     let fallbackUsed = false;
 
-    // Fallback: if academic-year filtered result is zero but there are payments for the school overall,
-    // attempt recalculation without academic year constraint (could indicate misaligned current academic year).
+    // Fallback: if term filtered result is zero but there are payments for the school overall,
+    // attempt recalculation without term constraint (could indicate misaligned current term).
     if (schoolId && totalProcessedPayments === 0 && totalRevenue === 0) {
       try {
         const overallRevenueResult = await this.paymentRepository
@@ -469,7 +469,7 @@ export class FinanceService {
         module: 'FINANCE',
         level: 'warn',
         schoolId,
-        metadata: { reason: 'Academic year mismatch produced zero totals; recalculated without academic year filter' },
+        metadata: { reason: 'Term mismatch produced zero totals; recalculated without term filter' },
       });
     } else {
       await this.systemLoggingService.logAction({
@@ -482,7 +482,7 @@ export class FinanceService {
           totalApprovedBudgets,
           totalRevenue,
           pendingApprovals: pendingPaymentsCount + pendingBudgetsCount,
-          academicYearId: currentAcademicYear?.id,
+          termId: currentTerm?.id,
         },
       });
     }
@@ -498,7 +498,7 @@ export class FinanceService {
 
   private async calculateTotalRevenue(
     paymentWhere: any,
-    currentAcademicYear: any,
+    currentTerm: any,
     dateRange?: { startDate?: Date; endDate?: Date }
   ): Promise<{ sum: string }> {
     const qb = this.paymentRepository
@@ -506,9 +506,9 @@ export class FinanceService {
       .select('SUM(payment.amount)', 'sum')
       .where('payment.status = :status', { status: 'completed' });
 
-    if (currentAcademicYear) {
-      qb.andWhere('payment.academicYearId = :academicYearId', { 
-        academicYearId: currentAcademicYear.id 
+    if (currentTerm) {
+      qb.andWhere('payment.termId = :termId', { 
+        termId: currentTerm.id 
       });
     }
 
@@ -529,7 +529,7 @@ export class FinanceService {
     return result || { sum: '0' };
   }
 
-  // Simple raw totals ignoring academic year (diagnostic / fallback)
+  // Simple raw totals ignoring term (diagnostic / fallback)
   async getSimpleTotalsForSchool(schoolId: string): Promise<{ rawTotal: number; count: number }> {
     if (!schoolId) return { rawTotal: 0, count: 0 };
     const revenueResult = await this.paymentRepository
@@ -549,14 +549,14 @@ export class FinanceService {
     search: string,
     dateRange?: { startDate?: Date; endDate?: Date },
   ) {
-    // Get current academic year for filtering
-    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    // Get current term for filtering
+    const currentTerm = await this.settingsService.getCurrentTerm();
     
     const where: any = {};
 
-    // Add academic year filter if available
-    if (currentAcademicYear) {
-      where.academicYearId = currentAcademicYear.id;
+    // Add term filter if available
+    if (currentTerm) {
+      where.termId = currentTerm.id;
     }
 
     if (search) {
@@ -569,7 +569,7 @@ export class FinanceService {
 
     const [transactions, total] = await this.paymentRepository.findAndCount({
       where,
-      relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
+      relations: ['student', 'processedBy', 'processedByAdmin', 'term'],
       skip: (page - 1) * limit,
       take: limit,
       order: { paymentDate: 'DESC' },
@@ -581,7 +581,7 @@ export class FinanceService {
         studentName: t.student ? `${t.student.firstName} ${t.student.lastName}` : 'Unknown',
         paymentDate: t.paymentDate?.toISOString(),
         processedByName: t.processedBy?.user?.username || t.processedByAdmin?.username || 'Unknown',
-        academicYear: t.academicYear ? `${t.academicYear.academicCalendar.academicYear} - ${t.academicYear.term.name}` : 'N/A',
+        term: t.term ? `${t.term.academicCalendar.term} - ${t.term.period.name}` : 'N/A',
       })),
       pagination: {
         totalItems: total,
@@ -609,16 +609,16 @@ async getParentPayments(
 
   const studentIds = parent.parent.children.map((child) => child.id);
 
-  // Get current academic year for filtering
-  const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+  // Get current term for filtering
+  const currentTerm = await this.settingsService.getCurrentTerm();
 
   const where: any = {
     student: { id: In(studentIds) },
   };
 
-  // Add academic year filter if available
-  if (currentAcademicYear) {
-    where.academicYearId = currentAcademicYear.id;
+  // Add term filter if available
+  if (currentTerm) {
+    where.termId = currentTerm.id;
   }
 
   if (search) {
@@ -627,7 +627,7 @@ async getParentPayments(
 
   const [payments, total] = await this.paymentRepository.findAndCount({
     where,
-    relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
+    relations: ['student', 'processedBy', 'processedByAdmin', 'term'],
     skip: (page - 1) * limit,
     take: limit,
     order: { paymentDate: 'DESC' },
@@ -646,7 +646,7 @@ async getParentPayments(
       receiptNumber: payment.receiptNumber,
       status: payment.status,
       notes: payment.notes,
-      academicYear: payment.academicYear ? `${payment.academicYear.academicCalendar.academicYear} - ${payment.academicYear.term.name}` : 'N/A',
+      term: payment.term ? `${payment.term.academicCalendar.term} - ${payment.term.period.name}` : 'N/A',
     })),
     pagination: {
       totalItems: total,
@@ -765,7 +765,7 @@ async getParentPayments(
   async generateReceipt(transactionId: string): Promise<string> {
     const payment = await this.paymentRepository.findOne({
       where: { id: transactionId },
-      relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
+      relations: ['student', 'processedBy', 'processedByAdmin', 'Term'],
     });
 
     if (!payment) {
@@ -794,7 +794,7 @@ async getParentPayments(
     doc.text(`Payment Type: ${payment.paymentType}`);
     doc.text(`Payment Method: ${payment.paymentMethod}`);
     doc.text(
-      `Academic Year: ${payment.academicYear ? `${payment.academicYear.academicCalendar.academicYear} - ${payment.academicYear.term.name}` : 'N/A'}`,
+      `Term: ${payment.term ? `${payment.term.academicCalendar.term} - ${payment.term.period.name}` : 'N/A'}`,
     );
     doc.text(
       `Processed By: ${payment.processedBy?.user?.username || payment.processedByAdmin?.username || 'System'}`,
@@ -817,21 +817,21 @@ async getParentPayments(
     schoolId?: string,
     superAdmin = false,
   ) {
-    // Get current academic year for filtering
-    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    // Get current term for filtering
+    const currentTerm = await this.settingsService.getCurrentTerm();
 
     const qb = this.paymentRepository
       .createQueryBuilder('payment')
       .leftJoinAndSelect('payment.student', 'student')
       .leftJoinAndSelect('payment.processedBy', 'processedBy')
       .leftJoinAndSelect('payment.processedByAdmin', 'processedByAdmin')
-      .leftJoinAndSelect('payment.academicYear', 'academicYear')
+      .leftJoinAndSelect('payment.term', 'term')
       .orderBy('payment.paymentDate', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
 
-    if (currentAcademicYear) {
-      qb.andWhere('payment.academicYearId = :ayId', { ayId: currentAcademicYear.id });
+    if (currentTerm) {
+      qb.andWhere('payment.termId = :termId', { termId: currentTerm.id });
     }
 
     if (!superAdmin) {
@@ -855,26 +855,26 @@ async getParentPayments(
   async getPaymentById(id: string) {
     return this.paymentRepository.findOne({
       where: { id },
-      relations: ['student', 'processedBy', 'processedByAdmin', 'academicYear'],
+      relations: ['student', 'processedBy', 'processedByAdmin', 'term'],
     });
   }
 
   async getRecentPayments(limit: number, schoolId?: string, superAdmin = false): Promise<any[]> {
-    // Get current academic year for filtering
-    const currentAcademicYear = await this.settingsService.getCurrentAcademicYear();
+    // Get current term for filtering
+    const currentTerm = await this.settingsService.getCurrentTerm();
 
     const qb = this.paymentRepository
       .createQueryBuilder('payment')
       .leftJoinAndSelect('payment.student', 'student')
       .leftJoinAndSelect('payment.processedBy', 'processedBy')
       .leftJoinAndSelect('payment.processedByAdmin', 'processedByAdmin')
-      .leftJoinAndSelect('payment.academicYear', 'academicYear')
+      .leftJoinAndSelect('payment.term', 'term')
       .where('payment.status = :status', { status: 'completed' })
       .orderBy('payment.paymentDate', 'DESC')
       .take(limit);
 
-    if (currentAcademicYear) {
-      qb.andWhere('payment.academicYearId = :ayId', { ayId: currentAcademicYear.id });
+    if (currentTerm) {
+      qb.andWhere('payment.termId = :termId', { termId: currentTerm.id });
     }
 
     if (!superAdmin) {

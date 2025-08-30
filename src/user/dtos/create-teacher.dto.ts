@@ -60,9 +60,9 @@ export class CreateTeacherDto {
   @IsString({ message: 'username must be a string' })
   username: string;
 
-  @IsNotEmpty({ message: 'email should not be empty' })
+  @IsOptional()
   @IsEmail({}, { message: 'email must be a valid email' })
-  email: string;
+  email?: string;
 
   @IsNotEmpty({ message: 'password should not be empty' })
   @IsString({ message: 'password must be a string' })

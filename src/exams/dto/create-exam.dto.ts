@@ -53,7 +53,7 @@ export class CreateExamDto {
 
   // @IsNotEmpty()
   // @IsUUID()
-  // academicYearId: string; // Changed from academicYear to academicYearId
+  // TermId: string; // Changed from Term to TermId
 
   @IsNotEmpty()
   @IsUUID()

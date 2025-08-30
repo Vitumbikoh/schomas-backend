@@ -58,32 +58,32 @@ describe('AcademicCalendarUtils', () => {
       expect(result.reason).toContain('Cannot set academic calendar 2022-2023 as active because it is from a previous year');
     });
 
-    it('should handle invalid academic year format', () => {
+    it('should handle invalid term format', () => {
       const result = AcademicCalendarUtils.canActivateCalendar('invalid-format', '2024-2025');
       expect(result.isValid).toBe(false);
-      expect(result.reason).toContain('Invalid academic year format');
+      expect(result.reason).toContain('Invalid term format');
     });
   });
 
-  describe('compareAcademicYears', () => {
-    it('should compare academic years correctly', () => {
-      expect(AcademicCalendarUtils.compareAcademicYears('2023-2024', '2024-2025')).toBe(-1);
-      expect(AcademicCalendarUtils.compareAcademicYears('2024-2025', '2023-2024')).toBe(1);
-      expect(AcademicCalendarUtils.compareAcademicYears('2024-2025', '2024-2025')).toBe(0);
+  describe('compareTerms', () => {
+    it('should compare terms correctly', () => {
+      expect(AcademicCalendarUtils.compareTerms('2023-2024', '2024-2025')).toBe(-1);
+      expect(AcademicCalendarUtils.compareTerms('2024-2025', '2023-2024')).toBe(1);
+      expect(AcademicCalendarUtils.compareTerms('2024-2025', '2024-2025')).toBe(0);
     });
   });
 
-  describe('getNextAcademicYear', () => {
-    it('should get next academic year correctly', () => {
-      expect(AcademicCalendarUtils.getNextAcademicYear('2024-2025')).toBe('2025-2026');
-      expect(AcademicCalendarUtils.getNextAcademicYear('2023-2024')).toBe('2024-2025');
+  describe('getNextTerm', () => {
+    it('should get next term correctly', () => {
+      expect(AcademicCalendarUtils.getNextTerm('2024-2025')).toBe('2025-2026');
+      expect(AcademicCalendarUtils.getNextTerm('2023-2024')).toBe('2024-2025');
     });
   });
 
-  describe('getPreviousAcademicYear', () => {
-    it('should get previous academic year correctly', () => {
-      expect(AcademicCalendarUtils.getPreviousAcademicYear('2024-2025')).toBe('2023-2024');
-      expect(AcademicCalendarUtils.getPreviousAcademicYear('2025-2026')).toBe('2024-2025');
+  describe('getPreviousTerm', () => {
+    it('should get previous term correctly', () => {
+      expect(AcademicCalendarUtils.getPreviousTerm('2024-2025')).toBe('2023-2024');
+      expect(AcademicCalendarUtils.getPreviousTerm('2025-2026')).toBe('2024-2025');
     });
   });
 });

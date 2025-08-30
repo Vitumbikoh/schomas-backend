@@ -17,11 +17,11 @@ export class ExamController {
   @UseGuards(JwtAuthGuard)
   async findAll(
     @Request() req,
-    @Query('searchTerm') searchTerm?: string,
+    @Query('searchText') searchText?: string,
     @Query('class') className?: string,
     @Query('teacherId') teacherId?: string,
     @Query('teacherName') teacherName?: string,
-    @Query('academicYear') academicYear?: string,
+    @Query('Term') Term?: string,
     @Query('schoolId') schoolIdOverride?: string,
   ): Promise<Exam[]> {
     const isSuper = req.user?.role === Role.SUPER_ADMIN;
@@ -39,11 +39,11 @@ export class ExamController {
         email: req.user.email
       } : undefined,
       metadata: { 
-        searchTerm, 
+        searchText, 
         className, 
         teacherId, 
         teacherName, 
-        academicYear, 
+        Term, 
         schoolIdOverride,
         derivedSchoolScope: schoolScope,
         isSuper,
@@ -52,7 +52,7 @@ export class ExamController {
       }
     });
     
-    const results = await this.examService.findByFilters(searchTerm, className, teacherId, teacherName, academicYear, schoolScope, isSuper);
+    const results = await this.examService.findByFilters(searchText, className, teacherId, teacherName, Term, schoolScope, isSuper);
     
     // Log results
     await this.systemLoggingService.logAction({

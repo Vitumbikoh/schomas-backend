@@ -7,9 +7,9 @@ export class AcademicCalendarDto {
 
   @IsString()
   @Matches(/^\d{4}-\d{4}$/, { 
-    message: 'Academic year must be in YYYY-YYYY format' 
+    message: 'Term must be in YYYY-YYYY format' 
   })
-  academicYear: string;
+  term: string;
 
   @IsOptional()
   @IsDateString()

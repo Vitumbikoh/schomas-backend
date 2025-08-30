@@ -6,7 +6,7 @@ import { Exam } from 'src/exams/entities/exam.entity';
 import { Student } from 'src/user/entities/student.entity';
 import { Teacher } from 'src/user/entities/teacher.entity';
 import { School } from 'src/school/entities/school.entity';
-import { AcademicYear } from 'src/settings/entities/academic-year.entity';
+import { Term } from 'src/settings/entities/term.entity';
 
 @Entity()
 export class Grade {
@@ -51,11 +51,11 @@ export class Grade {
   @JoinColumn({ name: 'schoolId' })
   school: School;
 
-  // Academic year tracking
+  // Term tracking
   @Column({ type: 'uuid', nullable: true })
-  academicYearId: string;
+  termId: string;
   
-  @ManyToOne(() => AcademicYear, (academicYear) => academicYear.id, { onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'academicYearId' })
-  academicYear: AcademicYear;
+  @ManyToOne(() => Term, (term) => term.id, { onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'termId' })
+  term: Term;
 }

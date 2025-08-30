@@ -66,4 +66,27 @@ export class SchoolsController {
   activate(@Param('id') id: string) {
     return this.schoolsService.activate(id);
   }
+
+  @Get('credentials/all')
+  getAllSchoolCredentials(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+    @Query('search') search?: string,
+  ) {
+    return this.schoolsService.getAllSchoolCredentials(
+      parseInt(page),
+      parseInt(limit),
+      search,
+    );
+  }
+
+  @Get(':id/credentials')
+  getSchoolCredentials(@Param('id') id: string) {
+    return this.schoolsService.getSchoolCredentials(id);
+  }
+
+  @Patch(':id/credentials/reset-password')
+  resetAdminPassword(@Param('id') id: string) {
+    return this.schoolsService.resetAdminPassword(id);
+  }
 }

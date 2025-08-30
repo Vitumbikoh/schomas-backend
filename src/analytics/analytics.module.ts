@@ -7,7 +7,7 @@ import { Attendance } from '../attendance/entity/attendance.entity';
 import { FeePayment } from '../finance/entities/fee-payment.entity';
 import { Student } from '../user/entities/student.entity';
 import { Teacher } from '../user/entities/teacher.entity';
-import { AcademicYear } from '../settings/entities/academic-year.entity';
+import { Term } from '../settings/entities/term.entity';
 import { Enrollment } from '../enrollment/entities/enrollment.entity';
 import { FeeStructure } from '../finance/entities/fee-structure.entity';
 import { SettingsModule } from '../settings/settings.module';
@@ -25,7 +25,7 @@ import { AnalyticsService } from './analytics.service';
       FeePayment,
       Student,
       Teacher,
-      AcademicYear,
+      Term,
       Enrollment,
       FeeStructure,
     ]),

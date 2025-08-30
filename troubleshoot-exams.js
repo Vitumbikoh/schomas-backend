@@ -126,14 +126,14 @@ async function troubleshootExams() {
      )
      WHERE e."schoolId" IS NULL;
 
-  C. Verify Academic Year Relations:
+  C. Verify Term Relations:
      SELECT 
        e.id, 
        e.title, 
-       e."academicYearId",
-       ay.id as academic_year_exists
+       e."TermId",
+       ay.id as Term_exists
      FROM exam e
-     LEFT JOIN academic_year ay ON e."academicYearId" = ay.id
+     LEFT JOIN Term ay ON e."TermId" = ay.id
      WHERE ay.id IS NULL;
   `);
 

@@ -16,7 +16,7 @@ These endpoints allow school administrators to manage academic calendars with pr
 ```json
 {
   "id": "uuid",
-  "academicYear": "2024-2025",
+  "Term": "2024-2025",
   "startDate": "2024-09-01T00:00:00.000Z",
   "endDate": "2025-06-30T00:00:00.000Z",
   "isActive": true
@@ -42,7 +42,7 @@ These endpoints allow school administrators to manage academic calendars with pr
   "message": "Academic calendar for 2024-2025 is now active",
   "activeCalendar": {
     "id": "uuid",
-    "academicYear": "2024-2025",
+    "Term": "2024-2025",
     "startDate": "2024-09-01T00:00:00.000Z",
     "endDate": "2025-06-30T00:00:00.000Z",
     "isActive": true
@@ -60,7 +60,7 @@ These endpoints allow school administrators to manage academic calendars with pr
 **Request Body**:
 ```json
 {
-  "academicYear": "2024-2025",
+  "Term": "2024-2025",
   "startDate": "2024-09-01",
   "endDate": "2025-06-30",
   "isActive": true
@@ -71,7 +71,7 @@ These endpoints allow school administrators to manage academic calendars with pr
 ```json
 {
   "id": "uuid",
-  "academicYear": "2024-2025",
+  "Term": "2024-2025",
   "startDate": "2024-09-01T00:00:00.000Z",
   "endDate": "2025-06-30T00:00:00.000Z",
   "isActive": true
@@ -90,14 +90,14 @@ These endpoints allow school administrators to manage academic calendars with pr
 [
   {
     "id": "uuid1",
-    "academicYear": "2024-2025",
+    "Term": "2024-2025",
     "startDate": "2024-09-01T00:00:00.000Z",
     "endDate": "2025-06-30T00:00:00.000Z",
     "isActive": true
   },
   {
     "id": "uuid2",
-    "academicYear": "2023-2024",
+    "Term": "2023-2024",
     "startDate": "2023-09-01T00:00:00.000Z",
     "endDate": "2024-06-30T00:00:00.000Z",
     "isActive": false
@@ -131,7 +131,7 @@ These endpoints allow school administrators to manage academic calendars with pr
 ### Database Changes
 - ✅ `academic_calendar` table now includes `schoolId` column
 - ✅ Foreign key relationship to `school` table with CASCADE delete
-- ✅ Removed global unique constraint on `academicYear` (now unique per school)
+- ✅ Removed global unique constraint on `Term` (now unique per school)
 
 ## Usage Example
 
@@ -139,7 +139,7 @@ These endpoints allow school administrators to manage academic calendars with pr
    ```bash
    POST /api/v1/settings/academic-calendar
    {
-     "academicYear": "2024-2025",
+     "Term": "2024-2025",
      "startDate": "2024-09-01",
      "endDate": "2025-06-30",
      "isActive": true
@@ -166,5 +166,5 @@ All calendar activation actions are logged with:
 - Action: `ACADEMIC_CALENDAR_ACTIVATED`
 - Module: `SETTINGS`
 - User information (ID, email, role)
-- Calendar ID and academic year
+- Calendar ID and term
 - School ID for audit purposes

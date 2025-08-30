@@ -24,8 +24,9 @@ export class User {
   @Column({ unique: true })
   username: string;
 
-  @Column({ unique: true })
-  email: string;
+  // Explicit type to avoid reflect-metadata emitting Object for union (string | null)
+  @Column({ type: 'varchar', length: 255, unique: true, nullable: true })
+  email?: string | null;
 
   @Column()
   password: string;

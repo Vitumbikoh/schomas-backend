@@ -20,7 +20,7 @@ import { Attendance } from 'src/attendance/entity/attendance.entity';
 import { ExamService } from 'src/exams/exam.service';
 import { SettingsService } from 'src/settings/settings.service';
 import { Exam } from 'src/exams/entities/exam.entity';
-import { AcademicYear } from 'src/settings/entities/academic-year.entity';
+import { Term } from 'src/settings/entities/term.entity';
 import { SettingsModule } from 'src/settings/settings.module';
 import { ExamModule } from 'src/exams/exam.module';
 import { Grade } from 'src/grades/entity/grade.entity';
@@ -29,7 +29,7 @@ import { LogsModule } from 'src/logs/logs.module';
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom,Attendance, Grade, Exam, AcademicYear]),
+    TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom,Attendance, Grade, Exam, Term]),
     UsersModule,
     AuthModule,
     SettingsModule,
@@ -45,7 +45,6 @@ import { LogsModule } from 'src/logs/logs.module';
     ClassroomService,
    
     ExamService,
-    SettingsService,
   ],
   controllers: [TeacherController],
   exports: [TeachersService],
