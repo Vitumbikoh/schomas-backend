@@ -899,9 +899,41 @@ export class TeachersService {
     const validatedDto = plainToClass(CreateTeacherDto, createTeacherDto);
 
     const hashedPassword = await bcrypt.hash(validatedDto.password, 10);
+  // Auto-generate username if missing using scheme: first10 + last10 (+counter) + @teacher
+    let username = validatedDto.username?.trim().toLowerCase();
+    if (!username) {
+      const norm = (s: string) => (s || '')
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/['`’]/g, '')
+        .replace(/\s+/g, '')
+        .replace(/[^a-zA-Z0-9]/g, '')
+        .toLowerCase();
+      const f = norm(validatedDto.firstName).slice(0, 10);
+      const l = norm(validatedDto.lastName).slice(0, 10);
+      const base = (f + l) || 'teacher';
+  const roleTag = '@teacher';
+  let candidate = base + roleTag;
+      let counter = 2;
+      while (await this.userRepository.findOne({ where: { username: candidate } })) {
+  candidate = `${base}${counter}${roleTag}`;
+        counter++;
+        if (counter > 9999) {
+          candidate = base.slice(0, 12) + Date.now().toString(36) + roleTag;
+          break;
+        }
+      }
+      username = candidate;
+    } else {
+      // ensure uniqueness if provided
+      const existing = await this.userRepository.findOne({ where: { username } });
+      if (existing) {
+        throw new Error('Username already exists');
+      }
+    }
 
     const user = this.userRepository.create({
-      username: validatedDto.username,
+      username,
       email: validatedDto.email,
       password: hashedPassword,
       role: Role.TEACHER,

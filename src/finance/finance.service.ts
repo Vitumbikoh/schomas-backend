@@ -658,15 +658,42 @@ async getParentPayments(
 }
 
   async createFinanceUser(createFinanceDto: CreateFinanceDto, schoolId?: string, superAdmin = false) {
-    const existingUser = await this.userRepository.findOne({
-      where: [
-        { username: createFinanceDto.username },
-        { email: createFinanceDto.email },
-      ],
-    });
+    // Auto-generate username if missing
+    let providedUsername = createFinanceDto.username?.trim().toLowerCase();
+    const norm = (s: string) => (s || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/['`’]/g, '')
+      .replace(/\s+/g, '')
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toLowerCase();
 
-    if (existingUser) {
-      throw new ConflictException('Username or email already exists');
+    if (!providedUsername) {
+      const f = norm(createFinanceDto.firstName).slice(0, 10);
+      const l = norm(createFinanceDto.lastName).slice(0, 10);
+      const base = (f + l) || 'finance';
+      const suffix = '@finance';
+      let candidate = base + suffix;
+      let counter = 2;
+      while (await this.userRepository.findOne({ where: { username: candidate } })) {
+        candidate = `${base}${counter}${suffix}`;
+        counter++;
+        if (counter > 9999) {
+          candidate = base.slice(0, 12) + Date.now().toString(36) + suffix;
+          break;
+        }
+      }
+      providedUsername = candidate;
+    } else {
+      const existingUserName = await this.userRepository.findOne({ where: { username: providedUsername } });
+      if (existingUserName) {
+        throw new ConflictException('Username already exists');
+      }
+    }
+
+    const existingEmail = await this.userRepository.findOne({ where: { email: createFinanceDto.email } });
+    if (existingEmail) {
+      throw new ConflictException('Email already exists');
     }
 
     const hashedPassword = await bcrypt.hash(createFinanceDto.password, 10);
@@ -676,7 +703,7 @@ async getParentPayments(
     }
 
     const user = this.userRepository.create({
-      username: createFinanceDto.username,
+      username: providedUsername,
       email: createFinanceDto.email,
       password: hashedPassword,
       role: Role.FINANCE,

@@ -1,7 +1,17 @@
-import { IsNotEmpty, IsString, IsDateString, IsOptional } from 'class-validator';
-import { CreateUserDto } from './create-user.dto';
+import { IsNotEmpty, IsString, IsDateString, IsOptional, IsEmail } from 'class-validator';
 
-export class CreateParentDto extends CreateUserDto {
+export class CreateParentDto {
+  @IsOptional()
+  @IsString()
+  username?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string; // optional for parent
+
+  @IsNotEmpty()
+  @IsString()
+  password: string;
   @IsNotEmpty()
   @IsString()
   firstName: string;

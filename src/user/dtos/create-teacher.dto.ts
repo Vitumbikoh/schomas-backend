@@ -56,13 +56,12 @@ export class CreateTeacherDto {
   status?: string;
 
   // User Fields (Required)
-  @IsNotEmpty({ message: 'username should not be empty' })
-  @IsString({ message: 'username must be a string' })
-  username: string;
-
   @IsOptional()
+  @IsString({ message: 'username must be a string' })
+  username?: string;
+
   @IsEmail({}, { message: 'email must be a valid email' })
-  email?: string;
+  email: string; // mandatory for teachers
 
   @IsNotEmpty({ message: 'password should not be empty' })
   @IsString({ message: 'password must be a string' })

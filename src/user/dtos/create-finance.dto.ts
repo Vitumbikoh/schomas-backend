@@ -4,12 +4,12 @@ import { Role } from '../../user/enums/role.enum';
 
 export class CreateFinanceDto {
   @IsString()
-  @IsNotEmpty()
-  username: string;
+  @IsOptional()
+  username?: string;
 
   @IsEmail()
-  @IsOptional()
-  email?: string;
+  @IsNotEmpty()
+  email: string; // mandatory for finance
 
   @IsString()
   @IsNotEmpty()

@@ -16,6 +16,7 @@ import { CreateFinanceDto } from './dtos/create-finance.dto';
 import { Role } from './enums/role.enum';
 import * as bcrypt from 'bcrypt';
 import { UpdateUserDto } from 'src/parent/dtos/update-parent.dto';
+import { generateUniqueUsername } from './utils/username.util';
 
 @Injectable()
 export class UsersService {
@@ -79,15 +80,20 @@ export class UsersService {
   }
 
   async createTeacher(createTeacherDto: CreateTeacherDto, schoolId?: string): Promise<Teacher> {
-    const userDto: CreateUserDto = {
-      username: createTeacherDto.username,
-      email: createTeacherDto.email,
+    const username = await generateUniqueUsername(
+      createTeacherDto.firstName,
+      createTeacherDto.lastName,
+      this.userRepository,
+      createTeacherDto.username,
+      '@teacher'
+    );
+    const user = await this.createUser({
+      username,
+      email: createTeacherDto.email, // mandatory
       password: createTeacherDto.password,
       role: Role.TEACHER,
       schoolId: schoolId ?? undefined,
-    } as any;
-
-    const user = await this.createUser(userDto);
+    } as any);
     const teacher = this.teacherRepository.create({
       ...createTeacherDto,
       user,
@@ -117,15 +123,20 @@ export class UsersService {
   }
 
   async createParent(createParentDto: CreateParentDto, schoolId?: string): Promise<Parent> {
-    const userDto: CreateUserDto = {
-      username: createParentDto.username,
-      email: createParentDto.email,
+    const username = await generateUniqueUsername(
+      createParentDto.firstName,
+      createParentDto.lastName,
+      this.userRepository,
+      createParentDto.username,
+      '@parent'
+    );
+    const user = await this.createUser({
+      username,
+      email: createParentDto.email ?? null,
       password: createParentDto.password,
       role: Role.PARENT,
       schoolId: schoolId ?? undefined,
-    } as any;
-
-    const user = await this.createUser(userDto);
+    } as any);
     const parent = this.parentRepository.create({
       ...createParentDto,
       user,
@@ -147,15 +158,20 @@ export class UsersService {
     return this.userRepository.save(user);
   }
   async createFinance(createFinanceDto: CreateFinanceDto, schoolId?: string): Promise<Finance> {
-    const userDto: CreateUserDto = {
-      username: createFinanceDto.username,
-      email: createFinanceDto.email,
+    const username = await generateUniqueUsername(
+      createFinanceDto.firstName,
+      createFinanceDto.lastName,
+      this.userRepository,
+      createFinanceDto.username,
+      '@finance'
+    );
+    const user = await this.createUser({
+      username,
+      email: createFinanceDto.email, // mandatory
       password: createFinanceDto.password,
       role: Role.FINANCE,
       schoolId: schoolId ?? undefined,
-    } as any;
-
-    const user = await this.createUser(userDto);
+    } as any);
     const finance = this.financeRepository.create({
       ...createFinanceDto,
       user,
