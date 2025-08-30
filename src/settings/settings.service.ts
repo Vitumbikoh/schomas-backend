@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, QueryRunner, Repository } from 'typeorm';
+import { DataSource, QueryRunner, Repository, LessThan } from 'typeorm';
 import { UserSettings } from './entities/user-settings.entity';
 import { User } from '../user/entities/user.entity';
 import { SchoolSettings } from './entities/school-settings.entity';
@@ -632,6 +632,25 @@ export class SettingsService {
 
       if (!termToActivate) {
         throw new NotFoundException('Term period not found');
+      }
+
+      // Check if previous terms in this academic calendar are completed
+      if (termToActivate.termNumber > 1) {
+        const previousTerms = await queryRunner.manager.find(Term, {
+          where: {
+            academicCalendar: { id: termToActivate.academicCalendar.id },
+            termNumber: LessThan(termToActivate.termNumber),
+          },
+        });
+
+        const incompletePreviousTerms = previousTerms.filter(term => !term.isCompleted);
+        
+        if (incompletePreviousTerms.length > 0) {
+          const incompleteTermNumbers = incompletePreviousTerms.map(t => t.termNumber).join(', ');
+          throw new BadRequestException(
+            `Cannot activate term ${termToActivate.termNumber}. Previous term(s) ${incompleteTermNumbers} must be completed first.`
+          );
+        }
       }
 
       // First deactivate all other periods in this academic calendar

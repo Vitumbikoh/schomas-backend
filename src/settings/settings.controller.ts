@@ -16,6 +16,7 @@ import {
   InternalServerErrorException,
   BadRequestException,
 } from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { SettingsService } from './settings.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -32,6 +33,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { AcademicCalendarUtils } from './utils/academic-calendar.utils';
 import { CreateTermPeriodDto, TermPeriodDto } from './dtos/term-period.dto';
 
+@ApiTags('settings')
 @Controller('settings')
 export class SettingsController {
   private readonly logger = new Logger(SettingsController.name);
@@ -541,56 +543,6 @@ async createTermPeriod(
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post('term/:id/complete')
-  async completeTerm(
-    @Request() req,
-    @Param('id') TermId: string,
-  ): Promise<{
-    success: boolean;
-    message: string;
-    calendarCompleted?: boolean;
-    nextYearActivated?: boolean;
-  }> {
-    if (req.user.role !== 'ADMIN') {
-      throw new UnauthorizedException('Only school administrators can complete terms');
-    }
-
-    if (!req.user.schoolId) {
-      throw new UnauthorizedException('Administrator must be associated with a school');
-    }
-
-    try {
-      const result = await this.settingsService.completeTerm(TermId, req.user.schoolId);
-
-      // Log the action
-      await this.systemLoggingService.logAction({
-        action: 'Term_COMPLETED',
-        module: 'SETTINGS',
-        level: 'info',
-        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
-        entityId: TermId,
-        entityType: 'Term',
-        metadata: { 
-          description: `Term completed`,
-          schoolId: req.user.schoolId,
-          calendarCompleted: result.calendarCompleted,
-          nextYearActivated: result.nextYearActivated
-        }
-      });
-
-      return result;
-    } catch (error) {
-      this.logger.error(`Error completing term: ${error.message}`, error.stack);
-      
-      if (error instanceof NotFoundException || error instanceof UnauthorizedException || error instanceof BadRequestException) {
-        throw error;
-      }
-      
-      throw new InternalServerErrorException('Failed to complete term');
-    }
-  }
-
-  @UseGuards(JwtAuthGuard)
   @Get('calendar-completion-status')
   async getCalendarCompletionStatus(@Request() req) {
     if (req.user.role !== 'ADMIN') {
@@ -628,6 +580,68 @@ async createTermPeriod(
     } catch (error) {
       this.logger.error(`Error checking calendar activation: ${error.message}`, error.stack);
       throw new InternalServerErrorException('Failed to check calendar activation');
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('periods/term/:id/complete')
+  @ApiOperation({ summary: 'Complete a term and mark it as finished' })
+  @ApiResponse({
+    status: 200,
+    description: 'Term completed successfully',
+    schema: {
+      properties: {
+        success: { type: 'boolean' },
+        message: { type: 'string' },
+        data: { 
+          type: 'object',
+          properties: {
+            termCompleted: { type: 'boolean' },
+            calendarCompleted: { type: 'boolean' },
+            nextYearAdvanced: { type: 'boolean' }
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized - Admin access required' })
+  @ApiResponse({ status: 404, description: 'Term not found or does not belong to school' })
+  async completeTerm(
+    @Request() req,
+    @Param('id', ParseUUIDPipe) termId: string,
+  ) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only school administrators can complete terms');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
+    try {
+      const result = await this.settingsService.completeTerm(termId, req.user.schoolId);
+      
+      await this.systemLoggingService.logAction({
+        action: 'TERM_COMPLETED',
+        module: 'SETTINGS',
+        level: 'info',
+        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+        entityId: termId,
+        entityType: 'Term',
+        newValues: result as any
+      });
+
+      return {
+        success: true,
+        message: 'Term completed successfully',
+        data: result
+      };
+    } catch (error) {
+      this.logger.error(`Error completing term ${termId}: ${error.message}`, error.stack);
+      if (error.message.includes('not found') || error.message.includes('does not belong')) {
+        throw new NotFoundException(error.message);
+      }
+      throw new InternalServerErrorException(`Failed to complete term: ${error.message}`);
     }
   }
 
