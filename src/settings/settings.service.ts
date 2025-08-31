@@ -25,6 +25,7 @@ import {
   PeriodDto,
   UpdateSettingsDto,
 } from './dtos/settings.dto';
+import { AcademicCalendarClosureDto } from './dtos/academic-calendar.dto';
 import { AcademicCalendar } from './entities/academic-calendar.entity';
 import { Period } from './entities/period.entity';
 import { Term } from './entities/term.entity';
@@ -35,6 +36,7 @@ import {
 } from './dtos/term-period.dto';
 import { AcademicCalendarConstraintService } from './services/academic-calendar-constraint.service';
 import { StudentPromotionService } from '../student/services/student-promotion.service';
+import { SystemLoggingService } from '../logs/system-logging.service';
 
 @Injectable()
 export class SettingsService {
@@ -64,6 +66,7 @@ export class SettingsService {
     private dataSource: DataSource,
   private academicCalendarConstraintService: AcademicCalendarConstraintService,
   private studentPromotionService: StudentPromotionService,
+  private systemLoggingService: SystemLoggingService,
     
   ) {}
 
@@ -492,8 +495,8 @@ export class SettingsService {
       const result = {
         id: updatedCalendar.id,
         term: updatedCalendar.term,
-        startDate: updatedCalendar.startDate ? updatedCalendar.startDate.toISOString() : undefined,
-        endDate: updatedCalendar.endDate ? updatedCalendar.endDate.toISOString() : undefined,
+        startDate: updatedCalendar.startDate ? new Date(updatedCalendar.startDate).toISOString() : undefined,
+        endDate: updatedCalendar.endDate ? new Date(updatedCalendar.endDate).toISOString() : undefined,
         isActive: updatedCalendar.isActive,
       };
 
@@ -594,44 +597,91 @@ export class SettingsService {
 
   async getTermPeriods(
     academicCalendarId?: string,
+    schoolId?: string,
   ): Promise<TermPeriodDto[]> {
-    const where: any = {};
-    if (academicCalendarId) {
-      where.academicCalendar = { id: academicCalendarId };
+    if (!schoolId) {
+      throw new UnauthorizedException('School ID is required');
     }
 
-    const Terms = await this.termRepository.find({
-      where,
+    let targetAcademicCalendarId = academicCalendarId;
+
+    this.logger.log(`Getting term periods for schoolId: ${schoolId}, academicCalendarId: ${academicCalendarId}`);
+
+    // If no academicCalendarId is provided, get the active academic calendar for the school
+    if (!academicCalendarId) {
+      const activeAcademicCalendar = await this.academicCalendarRepository.findOne({
+        where: { schoolId, isActive: true },
+        select: ['id'],
+      });
+
+      if (!activeAcademicCalendar) {
+        throw new NotFoundException('No active academic calendar found for your school');
+      }
+
+      targetAcademicCalendarId = activeAcademicCalendar.id;
+      this.logger.log(`Using active academic calendar: ${targetAcademicCalendarId}`);
+    } else {
+      // If academicCalendarId is provided, verify it belongs to the admin's school
+      const academicCalendar = await this.academicCalendarRepository.findOne({
+        where: { id: academicCalendarId, schoolId },
+        select: ['id'],
+      });
+
+      if (!academicCalendar) {
+        throw new NotFoundException('Academic calendar not found for your school');
+      }
+      this.logger.log(`Using provided academic calendar: ${targetAcademicCalendarId}`);
+    }
+
+    const terms = await this.termRepository.find({
+      where: {
+        schoolId,
+        academicCalendar: { id: targetAcademicCalendarId },
+      },
       relations: ['academicCalendar', 'period'],
-      order: { period: { order: 'ASC' } },
+      order: { termNumber: 'ASC', startDate: 'ASC' },
     });
 
-    return Terms.map((ay) => ({
-      id: ay.id,
-      periodId: ay.period.id,
-      periodName: ay.period.name,
-      academicCalendarId: ay.academicCalendar.id,
-      startDate: ay.startDate.toISOString(),
-      endDate: ay.endDate.toISOString(),
-      isCurrent: ay.isCurrent,
-      termNumber: ay.termNumber,
-      term: ay.academicCalendar.term,
+    this.logger.log(`Found ${terms.length} terms for schoolId: ${schoolId}, academicCalendarId: ${targetAcademicCalendarId}`);
+
+    return terms.map((term) => ({
+      id: term.id,
+      schoolId: term.schoolId,
+      periodId: term.period.id,
+      periodName: term.period.name,
+      academicCalendarId: term.academicCalendar.id,
+      startDate: term.startDate.toISOString(),
+      endDate: term.endDate.toISOString(),
+      isCurrent: term.isCurrent,
+      isCompleted: term.isCompleted,
+      termNumber: term.termNumber,
+      term: term.academicCalendar.term,
     }));
   }
 
-  async activateTermPeriod(id: string): Promise<TermPeriodDto> {
+  async activateTermPeriod(id: string, adminUserId: string): Promise<TermPeriodDto> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
+      // Get the admin user to verify school access
+      const adminUser = await this.userRepository.findOne({
+        where: { id: adminUserId },
+        select: ['id', 'schoolId'],
+      });
+
+      if (!adminUser?.schoolId) {
+        throw new UnauthorizedException('Admin must be associated with a school');
+      }
+
       const termToActivate = await queryRunner.manager.findOne(Term, {
-        where: { id },
+        where: { id, schoolId: adminUser.schoolId },
         relations: ['academicCalendar', 'period'],
       });
 
       if (!termToActivate) {
-        throw new NotFoundException('Term period not found');
+        throw new NotFoundException('Term period not found for your school');
       }
 
       // Check if previous terms in this academic calendar are completed
@@ -673,12 +723,14 @@ export class SettingsService {
 
       return {
         id: updatedTerm.id,
+        schoolId: updatedTerm.schoolId,
         periodId: termToActivate.period.id,
         periodName: termToActivate.period.name, // Now matches DTO
         academicCalendarId: termToActivate.academicCalendar.id,
         startDate: updatedTerm.startDate.toISOString(),
         endDate: updatedTerm.endDate.toISOString(),
         isCurrent: updatedTerm.isCurrent,
+        isCompleted: updatedTerm.isCompleted,
         termNumber: updatedTerm.termNumber,
         term: termToActivate.academicCalendar.term,
       };
@@ -770,13 +822,28 @@ export class SettingsService {
   // Add this to your SettingsService class
   async createTermPeriod(
     dto: CreateTermPeriodDto,
+    adminUserId: string,
   ): Promise<TermPeriodDto> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      // Get the active academic calendar
+      // Get the admin user to get their school ID
+      const adminUser = await this.userRepository.findOne({
+        where: { id: adminUserId },
+        select: ['id', 'schoolId', 'role'],
+      });
+
+      if (!adminUser) {
+        throw new NotFoundException('Admin user not found');
+      }
+
+      if (!adminUser.schoolId) {
+        throw new BadRequestException('Admin user must be associated with a school');
+      }
+
+      // Get the active academic calendar for this school
       const activeCalendar = await this.academicCalendarRepository.findOne({
         where: { isActive: true },
       });
@@ -794,22 +861,24 @@ export class SettingsService {
         throw new NotFoundException('Period not found');
       }
 
-      // Check if this period already exists for the academic calendar
+      // Check if this period already exists for the academic calendar and school
       const existingPeriod = await this.termRepository.findOne({
         where: {
           academicCalendar: { id: activeCalendar.id },
           period: { id: dto.periodId },
+          schoolId: adminUser.schoolId,
         },
       });
 
       if (existingPeriod) {
         throw new BadRequestException(
-          'This period already exists for the term',
+          'This period already exists for the term in this school',
         );
       }
 
       // Create the term period
       const TermPeriod = this.termRepository.create({
+        schoolId: adminUser.schoolId,
         academicCalendar: activeCalendar,
         period,
         startDate: new Date(dto.startDate),
@@ -835,12 +904,14 @@ export class SettingsService {
 
       return {
         id: savedPeriod.id,
+        schoolId: savedPeriod.schoolId,
         periodId: savedPeriod.period.id,
         periodName: savedPeriod.period.name, // Now matches DTO
         academicCalendarId: savedPeriod.academicCalendar.id,
         startDate: savedPeriod.startDate.toISOString(),
         endDate: savedPeriod.endDate.toISOString(),
         isCurrent: savedPeriod.isCurrent,
+        isCompleted: savedPeriod.isCompleted,
         termNumber: savedPeriod.termNumber,
         term: savedPeriod.academicCalendar.term,
       };
@@ -856,20 +927,31 @@ export class SettingsService {
   async updateTermPeriod(
     id: string,
     dto: CreateTermPeriodDto,
+    adminUserId: string,
   ): Promise<TermPeriodDto> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
+      // Get the admin user to verify school access
+      const adminUser = await this.userRepository.findOne({
+        where: { id: adminUserId },
+        select: ['id', 'schoolId'],
+      });
+
+      if (!adminUser?.schoolId) {
+        throw new UnauthorizedException('Admin must be associated with a school');
+      }
+
       // Find the term period to update
       const termToUpdate = await queryRunner.manager.findOne(Term, {
-        where: { id },
+        where: { id, schoolId: adminUser.schoolId },
         relations: ['academicCalendar', 'period'],
       });
 
       if (!termToUpdate) {
-        throw new NotFoundException('Term period not found');
+        throw new NotFoundException('Term period not found for your school');
       }
 
       // Update the term period
@@ -897,12 +979,14 @@ export class SettingsService {
 
       return {
         id: updatedPeriod.id,
+        schoolId: updatedPeriod.schoolId,
         periodId: termToUpdate.period.id,
         periodName: termToUpdate.period.name,
         academicCalendarId: termToUpdate.academicCalendar.id,
         startDate: updatedPeriod.startDate.toISOString(),
         endDate: updatedPeriod.endDate.toISOString(),
         isCurrent: updatedPeriod.isCurrent,
+        isCompleted: updatedPeriod.isCompleted,
         termNumber: updatedPeriod.termNumber,
         term: termToUpdate.academicCalendar.term,
       };
@@ -1142,23 +1226,42 @@ async getCurrentTerm(): Promise<{ id: string } | null> {
     }
 }
 
-  async getTerms(academicCalendarId?: string) {
-    // If no calendar id provided, try active calendar
+  async getTerms(academicCalendarId?: string, schoolId?: string) {
+    // If no calendar id provided, try active calendar for the school
     let calendarId = academicCalendarId;
     if (!calendarId) {
-      const active = await this.academicCalendarRepository.findOne({ where: { isActive: true }, select: ['id'] });
+      const whereActive: any = { isActive: true };
+      if (schoolId) {
+        whereActive.schoolId = schoolId;
+      }
+      const active = await this.academicCalendarRepository.findOne({ 
+        where: whereActive, 
+        select: ['id'] 
+      });
       calendarId = active?.id;
     }
-    const where = calendarId ? { academicCalendar: { id: calendarId } } : {};
-    const years = await this.termRepository.find({ where, relations: ['period', 'academicCalendar'], order: { startDate: 'ASC' } });
-    return years.map(y => ({
-      id: y.id,
-      academicCalendarId: y.academicCalendar?.id,
-      periodId: y.period?.id,
-      periodName: y.period?.name,
-      startDate: y.startDate?.toISOString(),
-      endDate: y.endDate?.toISOString(),
-      isCurrent: y.isCurrent,
+    
+    if (!calendarId) {
+      return [];
+    }
+    
+    const terms = await this.termRepository.find({ 
+      where: { academicCalendar: { id: calendarId } }, 
+      relations: ['period', 'academicCalendar'], 
+      order: { termNumber: 'ASC', startDate: 'ASC' } 
+    });
+    
+    return terms.map(term => ({
+      id: term.id,
+      academicCalendarId: term.academicCalendar?.id,
+      periodId: term.period?.id,
+      periodName: term.period?.name,
+      startDate: term.startDate?.toISOString(),
+      endDate: term.endDate?.toISOString(),
+      isCurrent: term.isCurrent,
+      isCompleted: term.isCompleted,
+      termNumber: term.termNumber,
+      term: term.academicCalendar?.term || ''
     }));
   }
 
@@ -1235,5 +1338,346 @@ async getCurrentTerm(): Promise<{ id: string } | null> {
    */
   async canActivateNewCalendar(schoolId: string, newCalendarId: string) {
     return this.academicCalendarConstraintService.validateCalendarActivation(schoolId, newCalendarId);
+  }
+
+  /**
+   * Check if all terms in an academic calendar are completed
+   */
+  async areAllTermsCompleted(academicCalendarId: string, schoolId: string): Promise<{
+    allCompleted: boolean;
+    completedTerms: number;
+    totalTerms: number;
+    incompleteTerms: string[];
+  }> {
+    const terms = await this.termRepository.find({
+      where: {
+        academicCalendar: { id: academicCalendarId },
+        schoolId,
+      },
+      relations: ['period'],
+    });
+
+    const totalTerms = terms.length;
+    const completedTerms = terms.filter(term => term.isCompleted);
+    const incompleteTerms = terms
+      .filter(term => !term.isCompleted)
+      .map(term => `${term.period?.name || 'Unknown Period'} - Term ${term.termNumber}`);
+
+    return {
+      allCompleted: completedTerms.length === totalTerms && totalTerms > 0,
+      completedTerms: completedTerms.length,
+      totalTerms,
+      incompleteTerms,
+    };
+  }
+
+  /**
+   * Get the next academic calendar for a school (chronologically)
+   */
+  async getNextAcademicCalendar(schoolId: string, currentCalendarId: string): Promise<AcademicCalendar | null> {
+    const currentCalendar = await this.academicCalendarRepository.findOne({
+      where: { id: currentCalendarId, schoolId },
+    });
+
+    if (!currentCalendar) {
+      throw new Error('Current academic calendar not found');
+    }
+
+    // Extract year from current term (e.g., "2024-2025" -> 2025)
+    const currentEndYear = parseInt(currentCalendar.term.split('-')[1]);
+
+    // Find calendars for this school with higher end years
+    const nextCalendars = await this.academicCalendarRepository.find({
+      where: { schoolId },
+      order: { term: 'ASC' },
+    });
+
+    // Find the next calendar chronologically
+    for (const calendar of nextCalendars) {
+      const calendarEndYear = parseInt(calendar.term.split('-')[1]);
+      if (calendarEndYear > currentEndYear) {
+        return calendar;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Close an academic calendar and promote students to the next academic year
+   */
+  async closeAcademicCalendar(
+    academicCalendarId: string,
+    adminUserId: string,
+  ): Promise<AcademicCalendarClosureDto> {
+    const admin = await this.userRepository.findOne({
+      where: { id: adminUserId },
+      select: ['id', 'email', 'role', 'schoolId'],
+    });
+
+    if (!admin?.schoolId) {
+      throw new BadRequestException('Admin school information not found');
+    }
+
+    const schoolId = admin.schoolId;
+
+    // Start transaction
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // Get the academic calendar to close
+      const calendarToClose = await queryRunner.manager.findOne(AcademicCalendar, {
+        where: { id: academicCalendarId, schoolId },
+      });
+
+      if (!calendarToClose) {
+        throw new BadRequestException('Academic calendar not found');
+      }
+
+      if (!calendarToClose.isActive) {
+        throw new BadRequestException('Cannot close an inactive academic calendar');
+      }
+
+      if (calendarToClose.isCompleted) {
+        throw new BadRequestException('Academic calendar is already closed');
+      }
+
+      // Check if all terms are completed
+      const termStatus = await this.areAllTermsCompleted(academicCalendarId, schoolId);
+      if (!termStatus.allCompleted) {
+        throw new BadRequestException(
+          `Cannot close academic calendar. ${termStatus.incompleteTerms.length} term(s) are not completed: ${termStatus.incompleteTerms.join(', ')}`
+        );
+      }
+
+      // Check if there's a next academic calendar available
+      const nextCalendar = await this.getNextAcademicCalendar(schoolId, academicCalendarId);
+      if (!nextCalendar) {
+        throw new BadRequestException(
+          'Cannot close academic calendar. No next academic calendar exists. Please create the next academic year before closing the current one.'
+        );
+      }
+
+      // Mark current calendar as completed and inactive
+      await queryRunner.manager.update(
+        AcademicCalendar,
+        { id: academicCalendarId },
+        {
+          isCompleted: true,
+          isActive: false,
+          updatedAt: new Date(),
+        }
+      );
+
+      // Activate the next academic calendar
+      await queryRunner.manager.update(
+        AcademicCalendar,
+        { schoolId, isActive: true },
+        { isActive: false }
+      );
+
+      await queryRunner.manager.update(
+        AcademicCalendar,
+        { id: nextCalendar.id },
+        {
+          isActive: true,
+          updatedAt: new Date(),
+        }
+      );
+
+      // Perform student promotion
+      let promotionResult = {
+        promotedStudents: 0,
+        graduatedStudents: 0,
+        errors: [] as string[],
+      };
+
+      try {
+        this.logger.log(`Starting student promotion for academic calendar closure. School: ${schoolId}`);
+        promotionResult = await this.studentPromotionService.promoteStudentsToNextClass(
+          schoolId,
+          queryRunner,
+        );
+        this.logger.log(
+          `Student promotion completed for calendar closure. Promoted: ${promotionResult.promotedStudents}, Graduated: ${promotionResult.graduatedStudents}, Errors: ${promotionResult.errors.length}`
+        );
+      } catch (promotionError) {
+        this.logger.error(`Student promotion failed during calendar closure:`, promotionError.stack);
+        // Don't fail the entire operation if promotion fails
+        promotionResult.errors.push(`Promotion failed: ${promotionError.message}`);
+      }
+
+      // Commit the transaction
+      await queryRunner.commitTransaction();
+
+      // Log the academic calendar closure
+      await this.systemLoggingService.logAction({
+        action: 'ACADEMIC_CALENDAR_CLOSED',
+        module: 'SETTINGS',
+        level: 'info',
+        performedBy: {
+          id: adminUserId,
+          email: admin.email,
+          role: admin.role,
+        },
+        schoolId,
+        entityId: academicCalendarId,
+        entityType: 'AcademicCalendar',
+        metadata: {
+          closedCalendarId: academicCalendarId,
+          closedCalendarTerm: calendarToClose.term,
+          newActiveCalendarId: nextCalendar.id,
+          newActiveCalendarTerm: nextCalendar.term,
+          promotionResult,
+        },
+      });
+
+      const result: AcademicCalendarClosureDto = {
+        closedCalendarId: academicCalendarId,
+        closedCalendarTerm: calendarToClose.term,
+        newActiveCalendarId: nextCalendar.id,
+        newActiveCalendarTerm: nextCalendar.term,
+        studentsPromoted: promotionResult.promotedStudents,
+        studentsGraduated: promotionResult.graduatedStudents,
+        promotionErrors: promotionResult.errors,
+        completedTerms: termStatus.completedTerms,
+        totalTerms: termStatus.totalTerms,
+        message: `Academic calendar ${calendarToClose.term} has been successfully closed. ${nextCalendar.term} is now active. ${promotionResult.promotedStudents} students promoted, ${promotionResult.graduatedStudents} students graduated.`,
+      };
+
+      return result;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(`Failed to close academic calendar ${academicCalendarId}:`, error.stack);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Preview academic calendar closure (dry run)
+   */
+  async previewAcademicCalendarClosure(
+    academicCalendarId: string,
+    adminUserId: string,
+  ): Promise<{
+    canClose: boolean;
+    reasons: string[];
+    termStatus: {
+      allCompleted: boolean;
+      completedTerms: number;
+      totalTerms: number;
+      incompleteTerms: string[];
+    };
+    nextCalendar: {
+      id: string;
+      term: string;
+    } | null;
+    promotionPreview: {
+      promotions: Array<{
+        studentId: string;
+        studentName: string;
+        currentClass: string;
+        nextClass: string | null;
+        status: 'promote' | 'graduate' | 'error';
+      }>;
+      summary: {
+        totalStudents: number;
+        toPromote: number;
+        toGraduate: number;
+        errors: number;
+      };
+    } | null;
+  }> {
+    const admin = await this.userRepository.findOne({
+      where: { id: adminUserId },
+      select: ['id', 'schoolId'],
+    });
+
+    if (!admin?.schoolId) {
+      throw new BadRequestException('Admin school information not found');
+    }
+
+    const schoolId = admin.schoolId;
+    const reasons: string[] = [];
+    let canClose = true;
+
+    // Get the academic calendar
+    const calendar = await this.academicCalendarRepository.findOne({
+      where: { id: academicCalendarId, schoolId },
+    });
+
+    if (!calendar) {
+      reasons.push('Academic calendar not found');
+      canClose = false;
+    }
+
+    if (calendar && !calendar.isActive) {
+      reasons.push('Cannot close an inactive academic calendar');
+      canClose = false;
+    }
+
+    if (calendar && calendar.isCompleted) {
+      reasons.push('Academic calendar is already closed');
+      canClose = false;
+    }
+
+    // Check term completion status
+    const termStatus = await this.areAllTermsCompleted(academicCalendarId, schoolId);
+    if (!termStatus.allCompleted) {
+      reasons.push(`${termStatus.incompleteTerms.length} term(s) are not completed: ${termStatus.incompleteTerms.join(', ')}`);
+      canClose = false;
+    }
+
+    // Check for next calendar
+    let nextCalendar: { id: string; term: string } | null = null;
+    try {
+      const nextCal = await this.getNextAcademicCalendar(schoolId, academicCalendarId);
+      if (nextCal) {
+        nextCalendar = { id: nextCal.id, term: nextCal.term };
+      } else {
+        reasons.push('No next academic calendar exists. Please create the next academic year before closing the current one.');
+        canClose = false;
+      }
+    } catch (error) {
+      reasons.push('Error checking next academic calendar');
+      canClose = false;
+    }
+
+    // Get promotion preview if possible
+    let promotionPreview: {
+      promotions: Array<{
+        studentId: string;
+        studentName: string;
+        currentClass: string;
+        nextClass: string | null;
+        status: 'promote' | 'graduate' | 'error';
+      }>;
+      summary: {
+        totalStudents: number;
+        toPromote: number;
+        toGraduate: number;
+        errors: number;
+      };
+    } | null = null;
+    if (canClose) {
+      try {
+        promotionPreview = await this.studentPromotionService.previewPromotion(schoolId);
+      } catch (error) {
+        this.logger.error('Failed to generate promotion preview:', error.stack);
+        reasons.push('Unable to preview student promotions');
+      }
+    }
+
+    return {
+      canClose,
+      reasons,
+      termStatus,
+      nextCalendar,
+      promotionPreview,
+    };
   }
 }

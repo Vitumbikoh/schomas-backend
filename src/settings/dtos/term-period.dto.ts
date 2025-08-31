@@ -6,6 +6,9 @@ export class TermPeriodDto {
   id: string;
 
   @IsUUID()
+  schoolId: string;
+
+  @IsUUID()
   periodId: string;
 
   periodName: string;
@@ -21,6 +24,9 @@ export class TermPeriodDto {
 
   @IsBoolean()
   isCurrent: boolean;
+
+  @IsBoolean()
+  isCompleted: boolean;
 
   @IsInt()
   @Min(1)

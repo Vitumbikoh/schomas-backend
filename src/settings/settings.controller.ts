@@ -16,7 +16,7 @@ import {
   InternalServerErrorException,
   BadRequestException,
 } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiResponse, ApiTags, ApiQuery, ApiParam } from '@nestjs/swagger';
 import { SettingsService } from './settings.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -32,6 +32,8 @@ import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { AcademicCalendarUtils } from './utils/academic-calendar.utils';
 import { CreateTermPeriodDto, TermPeriodDto } from './dtos/term-period.dto';
+import { User } from '../user/entities/user.entity';
+import { AcademicCalendarClosureDto } from './dtos/academic-calendar.dto';
 
 @ApiTags('settings')
 @Controller('settings')
@@ -46,7 +48,10 @@ export class SettingsController {
     private readonly academicCalendarRepository: Repository<AcademicCalendar>,
     @InjectRepository(Period)
     private readonly periodRepository: Repository<Period>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
   ) {}
+
 
   @UseGuards(JwtAuthGuard)
   @Get()
@@ -381,7 +386,7 @@ async createTermPeriod(
   if (req.user.role !== 'ADMIN') {
     throw new UnauthorizedException('Only admins can create term periods');
   }
-  const created = await this.settingsService.createTermPeriod(dto);
+  const created = await this.settingsService.createTermPeriod(dto, req.user.sub);
   await this.systemLoggingService.logAction({
     action: 'Term_PERIOD_CREATED',
     module: 'SETTINGS',
@@ -396,6 +401,39 @@ async createTermPeriod(
 
   @UseGuards(JwtAuthGuard)
   @Get('periods/term')
+  @ApiOperation({ 
+    summary: 'Get all terms for the admin\'s school and active/specified academic calendar',
+    description: 'Returns terms filtered by the logged-in admin\'s school. If academicCalendarId is provided, returns terms for that specific calendar (must belong to admin\'s school). If not provided, returns terms for the active academic calendar of the admin\'s school.'
+  })
+  @ApiQuery({
+    name: 'academicCalendarId',
+    required: false,
+    description: 'Optional academic calendar ID. If not provided, uses the active academic calendar for the admin\'s school.',
+    type: 'string',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'List of terms retrieved successfully',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          schoolId: { type: 'string' },
+          periodId: { type: 'string' },
+          periodName: { type: 'string' },
+          academicCalendarId: { type: 'string' },
+          startDate: { type: 'string' },
+          endDate: { type: 'string' },
+          isCurrent: { type: 'boolean' },
+          isCompleted: { type: 'boolean' },
+          termNumber: { type: 'number' },
+          term: { type: 'string' }
+        }
+      }
+    }
+  })
   async getTermPeriods(
     @Request() req,
     @Query('academicCalendarId') academicCalendarId?: string,
@@ -403,7 +441,18 @@ async createTermPeriod(
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can access term periods');
     }
-    return this.settingsService.getTermPeriods(academicCalendarId);
+    
+    // Get admin's school ID
+    const adminUser = await this.userRepository.findOne({
+      where: { id: req.user.sub },
+      select: ['schoolId'],
+    });
+
+    if (!adminUser?.schoolId) {
+      throw new UnauthorizedException('Admin must be associated with a school');
+    }
+
+    return this.settingsService.getTermPeriods(academicCalendarId, adminUser.schoolId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -415,7 +464,7 @@ async createTermPeriod(
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can activate term periods');
     }
-    const updated = await this.settingsService.activateTermPeriod(id);
+    const updated = await this.settingsService.activateTermPeriod(id, req.user.sub);
     await this.systemLoggingService.logAction({
       action: 'Term_PERIOD_ACTIVATED',
       module: 'SETTINGS',
@@ -438,7 +487,7 @@ async createTermPeriod(
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can update term periods');
     }
-    const updated = await this.settingsService.updateTermPeriod(id, updateDto);
+    const updated = await this.settingsService.updateTermPeriod(id, updateDto, req.user.sub);
     await this.systemLoggingService.logAction({
       action: 'TERM_PERIOD_UPDATED',
       module: 'SETTINGS',
@@ -454,6 +503,29 @@ async createTermPeriod(
   // List terms (period instances) for a calendar (or active calendar if none provided)
   @UseGuards(JwtAuthGuard)
   @Get('terms')
+  @ApiOperation({ summary: 'Get all terms in the active academic calendar' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of terms retrieved successfully',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          academicCalendarId: { type: 'string' },
+          periodId: { type: 'string' },
+          periodName: { type: 'string' },
+          startDate: { type: 'string' },
+          endDate: { type: 'string' },
+          isCurrent: { type: 'boolean' },
+          isCompleted: { type: 'boolean' },
+          termNumber: { type: 'number' },
+          term: { type: 'string' }
+        }
+      }
+    }
+  })
   async listTerms(
     @Request() req,
     @Query('academicCalendarId') academicCalendarId?: string,
@@ -461,7 +533,7 @@ async createTermPeriod(
     if (!['ADMIN','FINANCE'].includes(req.user.role)) {
       throw new UnauthorizedException('Only admins or finance can access terms');
     }
-    return this.settingsService.getTerms(academicCalendarId);
+    return this.settingsService.getTerms(academicCalendarId, req.user.schoolId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -647,4 +719,90 @@ async createTermPeriod(
 
   // Student Promotion Endpoints
 
+  // Academic Calendar Closure Endpoints
+
+  @UseGuards(JwtAuthGuard)
+  @Get('academic-calendar/:id/closure-preview')
+  @ApiOperation({ summary: 'Preview academic calendar closure' })
+  @ApiParam({ name: 'id', description: 'Academic calendar ID' })
+  @ApiResponse({ status: 200, description: 'Academic calendar closure preview' })
+  @ApiResponse({ status: 400, description: 'Invalid request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Academic calendar not found' })
+  async previewAcademicCalendarClosure(
+    @Request() req,
+    @Param('id') academicCalendarId: string,
+  ) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only school administrators can preview academic calendar closure');
+    }
+
+    try {
+      const preview = await this.settingsService.previewAcademicCalendarClosure(
+        academicCalendarId,
+        req.user.id,
+      );
+
+      return {
+        success: true,
+        message: 'Academic calendar closure preview generated successfully',
+        data: preview,
+      };
+    } catch (error) {
+      this.logger.error(`Error previewing academic calendar closure ${academicCalendarId}: ${error.message}`, error.stack);
+      if (error.message.includes('not found')) {
+        throw new NotFoundException(error.message);
+      }
+      if (error.message.includes('Cannot close') || error.message.includes('already closed')) {
+        throw new BadRequestException(error.message);
+      }
+      throw new InternalServerErrorException(`Failed to preview academic calendar closure: ${error.message}`);
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('close-academic-calendar/:id')
+  @ApiOperation({ summary: 'Close academic calendar (complete current, activate next, promote students)' })
+  @ApiParam({ name: 'id', description: 'Academic calendar ID' })
+  @ApiResponse({ status: 200, description: 'Academic calendar closed successfully', type: AcademicCalendarClosureDto })
+  @ApiResponse({ status: 400, description: 'Invalid request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Academic calendar not found' })
+  async closeAcademicCalendar(
+    @Request() req,
+    @Param('id', new ParseUUIDPipe()) academicCalendarId: string,
+  ): Promise<AcademicCalendarClosureDto> {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only school administrators can close academic calendars');
+    }
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must belong to a school');
+    }
+    try {
+      const result = await this.settingsService.closeAcademicCalendar(academicCalendarId, req.user.sub || req.user.id);
+      await this.systemLoggingService.logAction({
+        action: 'ACADEMIC_CALENDAR_CLOSED',
+        module: 'SETTINGS',
+        level: 'info',
+        performedBy: { id: req.user.sub || req.user.id, email: req.user.email, role: req.user.role },
+        entityId: academicCalendarId,
+        entityType: 'AcademicCalendar',
+        newValues: result as any,
+      });
+      return result;
+    } catch (error) {
+      this.logger.error(`Error closing academic calendar ${academicCalendarId}: ${error.message}`, error.stack);
+      if (error.message.includes('not found')) {
+        throw new NotFoundException(error.message);
+      }
+      if (error.message.includes('Cannot close') || error.message.includes('already closed')) {
+        throw new BadRequestException(error.message);
+      }
+      throw new InternalServerErrorException('Failed to close academic calendar');
+    }
+  }
+
+  // POST /academic-calendar/:id/close (deprecated)
+  // Previously used to close an academic calendar. Use PATCH /settings/close-academic-calendar/:id instead.
 }

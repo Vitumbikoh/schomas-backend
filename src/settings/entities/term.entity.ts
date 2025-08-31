@@ -1,11 +1,20 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { AcademicCalendar } from './academic-calendar.entity';
 import { Period } from './period.entity';
+import { School } from '../../school/entities/school.entity';
 
 @Entity()
 export class Term {
     @PrimaryGeneratedColumn('uuid')
     id: string;
+
+    // Multi-tenancy: Each term belongs to a specific school
+    @Column({ type: 'uuid' })
+    schoolId: string;
+
+    @ManyToOne(() => School, { onDelete: 'CASCADE' })
+    @JoinColumn({ name: 'schoolId' })
+    school: School;
 
     @ManyToOne(() => AcademicCalendar, { eager: true })
     @JoinColumn()

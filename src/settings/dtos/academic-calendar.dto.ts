@@ -23,3 +23,16 @@ export class AcademicCalendarDto {
   @IsBoolean()
   isActive?: boolean;
 }
+
+export class AcademicCalendarClosureDto {
+  closedCalendarId: string;
+  closedCalendarTerm: string;
+  newActiveCalendarId: string | null;
+  newActiveCalendarTerm: string | null;
+  studentsPromoted: number;
+  studentsGraduated: number;
+  promotionErrors: string[];
+  completedTerms: number;
+  totalTerms: number;
+  message: string;
+}
