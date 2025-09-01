@@ -173,11 +173,14 @@ export class AcademicCalendarConstraintService {
     // Check if all years are completed
     const calendarCompleted = completedYears >= calendar.maxYears;
     if (calendarCompleted) {
-      calendar.isCompleted = true;
-      calendar.isActive = false; // Deactivate when completed
-      
+      // NOTE: Do NOT mark the calendar inactive or completed here.
+      // The calendar should remain active until the explicit closure process
+      // (closeAcademicCalendar) is invoked. This preserves the ability to run
+      // closure routines like student promotion and proper activation of the
+      // next calendar. We only update the completedYearsCount so downstream
+      // logic can see that all terms are finished.
       this.logger.log(
-        `Academic calendar "${calendar.term}" completed all ${calendar.maxYears} years and has been deactivated`
+        `Academic calendar "${calendar.term}" has all ${calendar.maxYears} terms finished and is pending formal closure.`
       );
     }
 
@@ -187,8 +190,8 @@ export class AcademicCalendarConstraintService {
       yearCompleted: true,
       calendarCompleted,
       message: calendarCompleted 
-        ? `Term ${term.termNumber} completed. Calendar "${calendar.term}" has completed all ${calendar.maxYears} years.`
-        : `Term ${term.termNumber} completed. Calendar "${calendar.term}" has ${completedYears}/${calendar.maxYears} years completed.`,
+        ? `Term ${term.termNumber} completed. All ${calendar.maxYears} terms are finished. Calendar "${calendar.term}" remains active until it is formally closed.`
+        : `Term ${term.termNumber} completed. Calendar "${calendar.term}" has ${completedYears}/${calendar.maxYears} terms completed.`,
     };
   }
 

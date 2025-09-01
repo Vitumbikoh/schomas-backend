@@ -378,6 +378,7 @@ export class SettingsService {
       startDate: calendar.startDate?.toISOString(),
       endDate: calendar.endDate?.toISOString(),
       isActive: calendar.isActive,
+      isCompleted: calendar.isCompleted,
     };
   }
 
@@ -392,6 +393,7 @@ export class SettingsService {
       startDate: calendar.startDate?.toISOString(),
       endDate: calendar.endDate?.toISOString(),
       isActive: calendar.isActive,
+      isCompleted: calendar.isCompleted,
     }));
   }
 

@@ -22,6 +22,11 @@ export class AcademicCalendarDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  // Added field to expose completion status in API responses
+  @IsOptional()
+  @IsBoolean()
+  isCompleted?: boolean;
 }
 
 export class AcademicCalendarClosureDto {

@@ -183,6 +183,7 @@ export class SettingsController {
         startDate: savedCalendar.startDate?.toISOString(),
         endDate: savedCalendar.endDate?.toISOString(),
         isActive: savedCalendar.isActive,
+        isCompleted: savedCalendar.isCompleted,
       };
       await this.systemLoggingService.logAction({
         action: 'ACADEMIC_CALENDAR_CREATED',
@@ -229,6 +230,7 @@ export class SettingsController {
       term: academicCalendar.term,
       startDate: academicCalendar.startDate?.toISOString(),
       endDate: academicCalendar.endDate?.toISOString(),
+      isCompleted: academicCalendar.isCompleted,
     };
   }
 
@@ -321,6 +323,7 @@ export class SettingsController {
         ? new Date(calendar.endDate).toISOString()
         : undefined,
       isActive: calendar.isActive,
+      isCompleted: calendar.isCompleted,
     }));
   }
   @UseGuards(JwtAuthGuard)
