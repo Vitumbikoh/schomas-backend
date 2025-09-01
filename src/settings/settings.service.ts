@@ -1268,6 +1268,39 @@ async getCurrentTerm(): Promise<{ id: string } | null> {
   }
 
   /**
+   * Enter exam period for the current term (or specified term)
+   */
+  async enterExamPeriod(termId: string, schoolId: string) {
+    const term = await this.termRepository.findOne({ where: { id: termId, schoolId }, relations: ['academicCalendar'] });
+    if (!term) throw new NotFoundException('Term not found');
+    if (!term.isCurrent) throw new BadRequestException('Only the current term can enter exam period');
+    if (term.inExamPeriod) return { success: true, message: 'Term already in exam period' };
+    if (term.isCompleted) throw new BadRequestException('Cannot start exam period on a completed term');
+
+    term.inExamPeriod = true;
+    term.examPeriodStartedAt = new Date();
+    await this.termRepository.save(term);
+    return { success: true, message: 'Exam period started', termId: term.id, startedAt: term.examPeriodStartedAt };
+  }
+
+  /**
+   * Publish results for a term after validation (placeholder validation)
+   */
+  async publishTermResults(termId: string, schoolId: string) {
+    const term = await this.termRepository.findOne({ where: { id: termId, schoolId }, relations: ['academicCalendar'] });
+    if (!term) throw new NotFoundException('Term not found');
+    if (!term.inExamPeriod) throw new BadRequestException('Term has not entered exam period');
+    if (term.resultsPublished) return { success: true, message: 'Results already published' };
+    if (term.isCompleted) throw new BadRequestException('Cannot publish results for a completed term');
+
+    // TODO: Add real validation: ensure all exams are graded
+    term.resultsPublished = true;
+    term.resultsPublishedAt = new Date();
+    await this.termRepository.save(term);
+    return { success: true, message: 'Results published', termId: term.id, publishedAt: term.resultsPublishedAt };
+  }
+
+  /**
    * Complete an term and advance to next year or complete calendar
    */
   async completeTerm(TermId: string, schoolId: string): Promise<{

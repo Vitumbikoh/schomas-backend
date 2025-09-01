@@ -44,4 +44,17 @@ export class Term {
 
     @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
     updatedAt: Date;
+
+    // Exam lifecycle flags
+    @Column({ default: false })
+    inExamPeriod: boolean;
+
+    @Column({ type: 'timestamp', nullable: true })
+    examPeriodStartedAt: Date | null;
+
+    @Column({ default: false })
+    resultsPublished: boolean;
+
+    @Column({ type: 'timestamp', nullable: true })
+    resultsPublishedAt: Date | null;
 }

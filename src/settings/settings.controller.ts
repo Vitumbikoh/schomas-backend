@@ -266,6 +266,57 @@ export class SettingsController {
     return this.settingsService.getPeriods(academicCalendarId);
   }
 
+  // --- Term Exam Lifecycle ---
+  @UseGuards(JwtAuthGuard)
+  @Post('terms/:termId/enter-exam-period')
+  async enterExamPeriod(
+    @Request() req,
+    @Param('termId', ParseUUIDPipe) termId: string,
+  ) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can start exam period');
+    }
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Missing school scope');
+    }
+    const result = await this.settingsService.enterExamPeriod(termId, req.user.schoolId);
+    await this.systemLoggingService.logAction({
+      action: 'TERM_ENTER_EXAM_PERIOD',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityId: termId,
+      entityType: 'Term',
+      newValues: result as any,
+    });
+    return result;
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('terms/:termId/publish-results')
+  async publishTermResults(
+    @Request() req,
+    @Param('termId', ParseUUIDPipe) termId: string,
+  ) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can publish results');
+    }
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Missing school scope');
+    }
+    const result = await this.settingsService.publishTermResults(termId, req.user.schoolId);
+    await this.systemLoggingService.logAction({
+      action: 'TERM_RESULTS_PUBLISHED',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityId: termId,
+      entityType: 'Term',
+      newValues: result as any,
+    });
+    return result;
+  }
+
   @UseGuards(JwtAuthGuard)
   @Patch('periods/:id')
   async updatePeriod(

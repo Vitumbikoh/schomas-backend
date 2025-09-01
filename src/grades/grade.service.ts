@@ -342,6 +342,7 @@ export class GradeService {
       .createQueryBuilder('grade')
       .leftJoinAndSelect('grade.course', 'course')
       .leftJoinAndSelect('grade.class', 'class')
+      .leftJoinAndSelect('grade.term', 'term')
       .where('grade.student = :studentId', { studentId: student.id });
 
     if (classId) {
@@ -353,9 +354,12 @@ export class GradeService {
       });
     }
 
-    const grades = await query.getMany();
+  const grades = await query.getMany();
 
-    const results = grades.map((grade) => ({
+  // If any term referenced has not published results, hide those grades
+  const visibleGrades = grades.filter(g => !g.termId || g.term?.resultsPublished);
+
+  const results = visibleGrades.map((grade) => ({
       gradeId: grade.gradeId,
       examTitle: grade.course.name,
       subject: grade.course.name,
@@ -376,7 +380,8 @@ export class GradeService {
       },
       results,
       overallGPA: this.calculateGPA(results),
-      totalExams: results.length,
+  totalExams: results.length,
+  hiddenResults: grades.length - visibleGrades.length,
     };
   }
 
@@ -395,12 +400,14 @@ export class GradeService {
     const grades = await this.gradeRepository.find({
       where: { 
         student: { id: student.id },
-        schoolId: student.schoolId, // Add schoolId filtering
+        schoolId: student.schoolId,
       },
-      relations: ['course', 'class'],
+      relations: ['course', 'class', 'term'],
     });
 
-    const results = grades.map((grade) => ({
+    const visibleGrades = grades.filter(g => !g.termId || g.term?.resultsPublished);
+
+  const results = visibleGrades.map((grade) => ({
       gradeId: grade.gradeId,
       examTitle: grade.course.name,
       subject: grade.course.name,
@@ -421,7 +428,8 @@ export class GradeService {
       },
       results,
       overallGPA: this.calculateGPA(results),
-      totalExams: results.length,
+  totalExams: results.length,
+  hiddenResults: grades.length - visibleGrades.length,
     };
   }
 
