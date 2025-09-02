@@ -84,10 +84,10 @@ export class StudentPromotionService {
           dryRun,
         };
       }
-      // current term context for enrollment operations
+  // current term context for enrollment operations
   // fetch current term directly to avoid service circular dependency
-  const currentTerm = await this.termRepository.findOne({ where: { isCurrent: true }, select: ['id'] });
-  const termId = currentTerm?.id || null;
+  let currentTerm = await this.termRepository.findOne({ where: { isCurrent: true }, select: ['id'] });
+  let termId = currentTerm?.id || null;
       // fetch enrollments (active only) with their courses
       const currentEnrollments = await manager.find(Enrollment, {
         where: { studentId },
@@ -124,17 +124,41 @@ export class StudentPromotionService {
           }
         }
         // add new enrollments
+        // Determine effective termId for new enrollments (fallback chain):
+        // 1. Current active term (isCurrent)
+        // 2. Any termId from previous enrollments (last snapshot)
+        // 3. Latest term for the school (by startDate desc / createdAt desc)
+        if (!termId) {
+          const previousTermId = previousSnapshot.find(s => s.termId)?.termId || null;
+          if (previousTermId) {
+            termId = previousTermId;
+          } else {
+            const latestTerm = await manager.findOne(Term, {
+              where: { schoolId },
+              order: { startDate: 'DESC' },
+            });
+            termId = latestTerm?.id || null;
+          }
+          if (!termId) {
+            this.logger.warn(`No term context found for student ${student.studentId} during promotion; new course enrollments will be skipped.`);
+          }
+        }
+
         for (const course of coursesToAdd) {
+          if (!termId) {
+            // Skip adding new enrollment if we cannot satisfy NOT NULL constraint
+            continue;
+          }
           const enrollment = manager.create(Enrollment, {
             courseId: course.id,
             studentId: student.id,
             enrollmentDate: new Date(),
             status: 'active',
-            termId: termId || undefined,
+            termId: termId,
             schoolId,
           });
-          await manager.save(enrollment);
-          await manager.increment(Course, { id: course.id }, 'enrollmentCount', 1);
+            await manager.save(enrollment);
+            await manager.increment(Course, { id: course.id }, 'enrollmentCount', 1);
         }
         // build new snapshot after changes
         const newEnrollments = await manager.find(Enrollment, { where: { studentId }, relations: { course: true } });
@@ -198,13 +222,31 @@ export class StudentPromotionService {
 
     try {
       // Get all classes for this school ordered by numerical level
-      const classes = await queryRunner.manager.find(Class, {
+      let classes = await queryRunner.manager.find(Class, {
         where: { schoolId },
         order: { numericalName: 'ASC' },
       });
 
+      // Fallback: legacy data may have classes with NULL schoolId but students referencing them while student rows have schoolId
       if (classes.length === 0) {
-        this.logger.warn(`No classes found for school: ${schoolId}`);
+        this.logger.warn(`No classes found with schoolId=${schoolId}. Attempting legacy fallback via students->class relation.`);
+        const studentsForFallback = await queryRunner.manager.find(Student, { where: { schoolId }, relations: ['class'] });
+        const derivedClasses = studentsForFallback
+          .map(s => s.class)
+          .filter(c => !!c) as Class[];
+        // De-duplicate by id
+        const classMap = new Map<string, Class>();
+        for (const c of derivedClasses) {
+          if (!classMap.has(c.id)) classMap.set(c.id, c);
+        }
+        classes = Array.from(classMap.values()).sort((a, b) => a.numericalName - b.numericalName);
+        if (classes.length) {
+          this.logger.warn(`Fallback recovered ${classes.length} classes for promotion (ids: ${classes.map(c => c.id).join(', ')})`);
+        }
+      }
+
+      if (classes.length === 0) {
+        this.logger.warn(`Promotion aborted: still no classes resolvable for school ${schoolId}`);
         return { promotedStudents: 0, graduatedStudents: 0, errors: [] };
       }
 
@@ -341,10 +383,23 @@ export class StudentPromotionService {
     this.logger.log(`Previewing promotion for school: ${schoolId}`);
 
     // Get all classes for this school ordered by numerical level
-    const classes = await this.classRepository.find({
+    let classes = await this.classRepository.find({
       where: { schoolId },
       order: { numericalName: 'ASC' },
     });
+
+    if (classes.length === 0) {
+      // Fallback similar to promote operation: derive from students' current classes (legacy null schoolId on classes)
+      const studentsForFallback = await this.studentRepository.find({ where: { schoolId }, relations: ['class'] });
+      const classMap = new Map<string, Class>();
+      for (const s of studentsForFallback) {
+        if (s.class && !classMap.has(s.class.id)) classMap.set(s.class.id, s.class);
+      }
+      classes = Array.from(classMap.values()).sort((a, b) => a.numericalName - b.numericalName);
+      if (classes.length) {
+        this.logger.warn(`previewPromotion fallback recovered ${classes.length} classes (ids: ${classes.map(c => c.id).join(', ')})`);
+      }
+    }
 
     if (classes.length === 0) {
       return {

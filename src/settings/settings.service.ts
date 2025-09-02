@@ -1439,17 +1439,38 @@ async getCurrentTerm(): Promise<{ id: string } | null> {
   }
 
   private toHolidayDto(h: TermHoliday): TermHolidayDto {
+    const toIso = (value: any): string => {
+      if (!value) return '';
+      // Already Date instance
+      if (value instanceof Date) return value.toISOString();
+      // If it's a string (likely from DATE column), parse safely
+      if (typeof value === 'string') {
+        // If it already looks like YYYY-MM-DD (no time), keep as is to avoid TZ shift
+        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(value + 'T00:00:00Z').toISOString();
+        // Try Date parse
+        const d = new Date(value);
+        if (!isNaN(d.getTime())) return d.toISOString();
+        return value; // fallback raw
+      }
+      // Attempt construct
+      try {
+        const d = new Date(value);
+        if (!isNaN(d.getTime())) return d.toISOString();
+      } catch {}
+      return '';
+    };
+
     return {
       id: h.id,
       termId: h.termId,
       schoolId: h.schoolId,
       name: h.name,
-      startDate: h.startDate.toISOString(),
-      endDate: h.endDate.toISOString(),
-      isCurrent: h.isCurrent,
-      isCompleted: h.isCompleted,
-      createdAt: h.createdAt.toISOString(),
-      updatedAt: h.updatedAt.toISOString(),
+      startDate: toIso(h.startDate),
+      endDate: toIso(h.endDate),
+      isCurrent: !!h.isCurrent,
+      isCompleted: !!h.isCompleted,
+      createdAt: toIso(h.createdAt),
+      updatedAt: toIso(h.updatedAt),
     };
   }
 
