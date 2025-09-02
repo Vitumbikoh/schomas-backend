@@ -36,6 +36,8 @@ import {
 } from './dtos/term-period.dto';
 import { AcademicCalendarConstraintService } from './services/academic-calendar-constraint.service';
 import { StudentPromotionService } from '../student/services/student-promotion.service';
+import { TermHoliday } from './entities/term-holiday.entity';
+import { CreateTermHolidayDto, UpdateTermHolidayDto, TermHolidayDto } from './dtos/term-holiday.dto';
 import { SystemLoggingService } from '../logs/system-logging.service';
 
 @Injectable()
@@ -61,8 +63,10 @@ export class SettingsService {
     private academicCalendarRepository: Repository<AcademicCalendar>,
     @InjectRepository(Period)
     private periodRepository: Repository<Period>,
-    @InjectRepository(Term)
-    private termRepository: Repository<Term>,
+  @InjectRepository(Term)
+  private termRepository: Repository<Term>,
+  @InjectRepository(TermHoliday)
+  private termHolidayRepository: Repository<TermHoliday>,
     private dataSource: DataSource,
   private academicCalendarConstraintService: AcademicCalendarConstraintService,
   private studentPromotionService: StudentPromotionService,
@@ -1373,6 +1377,80 @@ async getCurrentTerm(): Promise<{ id: string } | null> {
    */
   async canActivateNewCalendar(schoolId: string, newCalendarId: string) {
     return this.academicCalendarConstraintService.validateCalendarActivation(schoolId, newCalendarId);
+  }
+
+  // ---------------- Term Holidays -----------------
+  async createTermHoliday(termId: string, schoolId: string, dto: CreateTermHolidayDto, adminId: string): Promise<TermHolidayDto> {
+    const term = await this.termRepository.findOne({ where: { id: termId, schoolId } });
+    if (!term) throw new NotFoundException('Term not found for your school');
+
+    if (dto.isCurrent) {
+      // Deactivate existing current holiday(s) for school
+      await this.termHolidayRepository.update({ schoolId, isCurrent: true }, { isCurrent: false });
+    }
+    const entity = this.termHolidayRepository.create({
+      termId,
+      schoolId,
+      name: dto.name,
+      startDate: new Date(dto.startDate),
+      endDate: new Date(dto.endDate),
+      isCurrent: dto.isCurrent ?? false,
+    });
+    const saved = await this.termHolidayRepository.save(entity);
+    return this.toHolidayDto(saved);
+  }
+
+  async listTermHolidays(termId: string, schoolId: string): Promise<TermHolidayDto[]> {
+    const holidays = await this.termHolidayRepository.find({ where: { termId, schoolId }, order: { startDate: 'ASC' } });
+    return holidays.map(h => this.toHolidayDto(h));
+  }
+
+  async updateTermHoliday(id: string, schoolId: string, dto: UpdateTermHolidayDto): Promise<TermHolidayDto> {
+    const holiday = await this.termHolidayRepository.findOne({ where: { id, schoolId } });
+    if (!holiday) throw new NotFoundException('Holiday not found');
+    if (dto.isCurrent) {
+      await this.termHolidayRepository.update({ schoolId, isCurrent: true }, { isCurrent: false });
+    }
+    if (dto.name !== undefined) holiday.name = dto.name;
+    if (dto.startDate !== undefined) holiday.startDate = new Date(dto.startDate);
+    if (dto.endDate !== undefined) holiday.endDate = new Date(dto.endDate);
+    if (dto.isCurrent !== undefined) holiday.isCurrent = dto.isCurrent;
+    if (dto.isCompleted !== undefined) holiday.isCompleted = dto.isCompleted;
+    const saved = await this.termHolidayRepository.save(holiday);
+    return this.toHolidayDto(saved);
+  }
+
+  async activateTermHoliday(id: string, schoolId: string): Promise<TermHolidayDto> {
+    const holiday = await this.termHolidayRepository.findOne({ where: { id, schoolId } });
+    if (!holiday) throw new NotFoundException('Holiday not found');
+    await this.termHolidayRepository.update({ schoolId, isCurrent: true }, { isCurrent: false });
+    holiday.isCurrent = true;
+    const saved = await this.termHolidayRepository.save(holiday);
+    return this.toHolidayDto(saved);
+  }
+
+  async completeTermHoliday(id: string, schoolId: string): Promise<TermHolidayDto> {
+    const holiday = await this.termHolidayRepository.findOne({ where: { id, schoolId } });
+    if (!holiday) throw new NotFoundException('Holiday not found');
+    holiday.isCompleted = true;
+    holiday.isCurrent = false;
+    const saved = await this.termHolidayRepository.save(holiday);
+    return this.toHolidayDto(saved);
+  }
+
+  private toHolidayDto(h: TermHoliday): TermHolidayDto {
+    return {
+      id: h.id,
+      termId: h.termId,
+      schoolId: h.schoolId,
+      name: h.name,
+      startDate: h.startDate.toISOString(),
+      endDate: h.endDate.toISOString(),
+      isCurrent: h.isCurrent,
+      isCompleted: h.isCompleted,
+      createdAt: h.createdAt.toISOString(),
+      updatedAt: h.updatedAt.toISOString(),
+    };
   }
 
   /**

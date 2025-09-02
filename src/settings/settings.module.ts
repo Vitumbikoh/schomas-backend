@@ -17,6 +17,7 @@ import { Period } from './entities/period.entity';
 import { Term } from './entities/term.entity';
 import { Class } from '../classes/entity/class.entity';
 import { AcademicCalendarConstraintService } from './services/academic-calendar-constraint.service';
+import { TermHoliday } from './entities/term-holiday.entity';
 import { StudentsModule } from '../student/student.module';
 
 @Module({
@@ -31,7 +32,8 @@ import { StudentsModule } from '../student/student.module';
       Finance,
       AcademicCalendar,
       Period,
-      Term,
+  Term,
+  TermHoliday,
       Class
     ]),
     AuthModule,

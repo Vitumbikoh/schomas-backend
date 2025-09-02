@@ -34,6 +34,7 @@ import { AcademicCalendarUtils } from './utils/academic-calendar.utils';
 import { CreateTermPeriodDto, TermPeriodDto } from './dtos/term-period.dto';
 import { User } from '../user/entities/user.entity';
 import { AcademicCalendarClosureDto } from './dtos/academic-calendar.dto';
+import { CreateTermHolidayDto, UpdateTermHolidayDto } from './dtos/term-holiday.dto';
 
 @ApiTags('settings')
 @Controller('settings')
@@ -769,6 +770,104 @@ async createTermPeriod(
       }
       throw new InternalServerErrorException(`Failed to complete term: ${error.message}`);
     }
+  }
+
+  // -------- Term Holiday Endpoints ---------
+  @UseGuards(JwtAuthGuard)
+  @Post('terms/:termId/holidays')
+  async createTermHoliday(
+    @Request() req,
+    @Param('termId', ParseUUIDPipe) termId: string,
+    @Body() dto: CreateTermHolidayDto,
+  ) {
+    if (req.user.role !== 'ADMIN') throw new UnauthorizedException('Only admins can create term holidays');
+    if (!req.user.schoolId) throw new UnauthorizedException('Missing school');
+    const created = await this.settingsService.createTermHoliday(termId, req.user.schoolId, dto, req.user.sub);
+    await this.systemLoggingService.logAction({
+      action: 'TERM_HOLIDAY_CREATED',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityId: created.id,
+      entityType: 'TermHoliday',
+      newValues: created as any,
+    });
+    return created;
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('terms/:termId/holidays')
+  async listTermHolidays(
+    @Request() req,
+    @Param('termId', ParseUUIDPipe) termId: string,
+  ) {
+    if (req.user.role !== 'ADMIN') throw new UnauthorizedException('Only admins can view term holidays');
+    if (!req.user.schoolId) throw new UnauthorizedException('Missing school');
+    return this.settingsService.listTermHolidays(termId, req.user.schoolId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('holidays/:id')
+  async updateTermHoliday(
+    @Request() req,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateTermHolidayDto,
+  ) {
+    if (req.user.role !== 'ADMIN') throw new UnauthorizedException('Only admins can update term holidays');
+    if (!req.user.schoolId) throw new UnauthorizedException('Missing school');
+    const updated = await this.settingsService.updateTermHoliday(id, req.user.schoolId, dto);
+    await this.systemLoggingService.logAction({
+      action: 'TERM_HOLIDAY_UPDATED',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityId: updated.id,
+      entityType: 'TermHoliday',
+      newValues: updated as any,
+    });
+    return updated;
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('holidays/:id/activate')
+  async activateTermHoliday(
+    @Request() req,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    if (req.user.role !== 'ADMIN') throw new UnauthorizedException('Only admins can activate term holidays');
+    if (!req.user.schoolId) throw new UnauthorizedException('Missing school');
+    const activated = await this.settingsService.activateTermHoliday(id, req.user.schoolId);
+    await this.systemLoggingService.logAction({
+      action: 'TERM_HOLIDAY_ACTIVATED',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityId: activated.id,
+      entityType: 'TermHoliday',
+      newValues: activated as any,
+    });
+    return activated;
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('holidays/:id/complete')
+  async completeTermHoliday(
+    @Request() req,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    if (req.user.role !== 'ADMIN') throw new UnauthorizedException('Only admins can complete term holidays');
+    if (!req.user.schoolId) throw new UnauthorizedException('Missing school');
+    const completed = await this.settingsService.completeTermHoliday(id, req.user.schoolId);
+    await this.systemLoggingService.logAction({
+      action: 'TERM_HOLIDAY_COMPLETED',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityId: completed.id,
+      entityType: 'TermHoliday',
+      newValues: completed as any,
+    });
+    return completed;
   }
 
   // Student Promotion Endpoints

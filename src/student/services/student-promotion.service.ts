@@ -219,10 +219,24 @@ export class StudentPromotionService {
       }
 
       // Get all students in this school with their current classes
-      const students = await queryRunner.manager.find(Student, {
+      let students = await queryRunner.manager.find(Student, {
         where: { schoolId },
         relations: ['class'],
       });
+
+      // Fallback: if no students returned (some legacy rows might have null schoolId but class belongs to school)
+      if (students.length === 0) {
+        const classIds = (await queryRunner.manager.find(Class, { where: { schoolId }, select: ['id'] })).map(c => c.id);
+        if (classIds.length) {
+          students = await queryRunner.manager.find(Student, {
+            where: classIds.map(cid => ({ classId: cid })),
+            relations: ['class'],
+          });
+          // Filter to ensure class.schoolId matches
+          students = students.filter(s => s.class && classIds.includes(s.class.id));
+          this.logger.warn(`Promotion fallback used: fetched ${students.length} students via class linkage for school ${schoolId}`);
+        }
+      }
 
       let promotedCount = 0;
       let graduatedCount = 0;
