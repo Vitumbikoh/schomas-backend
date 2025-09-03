@@ -66,10 +66,22 @@ export class GradeController {
     @Param('studentId') studentId: string,
     @Request() req,
     @Query('classId') classId?: string,
-    @Query('Term') Term?: string,
+    // legacy query params retained (Term/period) but new ones added for clarity
+    @Query('termId') termId?: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
+    @Query('Term') Term?: string, // deprecated: year based filter
     @Query('period') period?: string
   ) {
-    return this.gradeService.getStudentGrades(studentId, req.user.sub);
+    // Pass through filtering arguments so only grades belonging to the specified class/term/calendar are returned
+    return this.gradeService.getStudentGrades(
+      studentId,
+      req.user.sub,
+      classId,
+      termId,
+      academicCalendarId,
+      Term,
+      period,
+    );
   }
 //getting students
   @UseGuards(JwtAuthGuard)
