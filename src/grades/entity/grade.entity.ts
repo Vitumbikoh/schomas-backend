@@ -45,7 +45,7 @@ export class Grade {
 
   // Multi-tenant scope
   @Column({ type: 'uuid', nullable: true })
-  schoolId: string;
+  schoolId?: string | null;
   
   @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'schoolId' })

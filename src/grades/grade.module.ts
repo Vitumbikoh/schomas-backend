@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { GradeService } from './grade.service';
 import { Grade } from './entity/grade.entity';
+import { GradeFormat } from './entity/grade-format.entity';
 import { User } from '../user/entities/user.entity';
 import { Course } from '../course/entities/course.entity';
 import { Class } from '../classes/entity/class.entity';
@@ -16,7 +17,8 @@ import { ConfigModule } from 'src/config/config.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
-      Grade,
+  Grade,
+  GradeFormat,
       User,
       Course,
       Class,

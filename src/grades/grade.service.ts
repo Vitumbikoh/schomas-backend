@@ -17,12 +17,16 @@ import { Grade } from './entity/grade.entity';
 import { Term } from 'src/settings/entities/term.entity';
 import { AcademicCalendar } from 'src/settings/entities/academic-calendar.entity';
 import { GradesReportQueryDto } from './dtos/grades-report-query.dto';
+import { GradeFormat } from './entity/grade-format.entity';
+import { IsNull } from 'typeorm';
 
 @Injectable()
 export class GradeService {
   constructor(
     @InjectRepository(Grade)
     private gradeRepository: Repository<Grade>,
+  @InjectRepository(GradeFormat)
+  private gradeFormatRepository: Repository<GradeFormat>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
     @InjectRepository(Course)
@@ -138,6 +142,8 @@ export class GradeService {
       gradeRecord.assessmentType = assessmentType;
       gradeRecord.grade = String(gradeValue);
       gradeRecord.date = new Date();
+  // multi-tenant context
+  gradeRecord.schoolId = classEntity.schoolId || course.schoolId || user.schoolId || undefined;
 
       gradeRecords.push(gradeRecord);
     }
@@ -277,7 +283,7 @@ export class GradeService {
         marksObtained: marks,
         totalMarks: 100,
         percentage: marks,
-        grade: this.calculateLetterGrade(marks),
+        grade: 'TEMP', // placeholder, replaced later
         date: grade.date,
         examType: grade.assessmentType,
       });
@@ -286,8 +292,8 @@ export class GradeService {
       studentResult.totalPossible += 100;
     });
 
-    const results = Array.from(studentResultsMap.values()).map(
-      (studentResult) => {
+    const results = await Promise.all(Array.from(studentResultsMap.values()).map(
+      async (studentResult) => {
         const totalMarks = studentResult.results.reduce(
           (sum, exam) => sum + exam.marksObtained,
           0,
@@ -299,17 +305,24 @@ export class GradeService {
         const averageScore =
           totalPossible > 0 ? (totalMarks / totalPossible) * 100 : 0;
 
+        // Resolve dynamic letter grades
+        for (const r of studentResult.results) {
+          r.grade = await this.calculateLetterGradeDynamic(r.percentage, schoolId);
+        }
+
+        const overallGPA = await this.calculateGPA(studentResult.results, schoolId);
+
         return {
           ...studentResult,
           totalMarks,
           totalPossible,
           averageScore,
-          overallGPA: this.calculateGPA(studentResult.results),
+          overallGPA,
           totalExams: studentResult.results.length,
           remarks: this.getRemarks(averageScore),
         };
       },
-    );
+    ));
 
     return {
       classInfo: {
@@ -366,17 +379,17 @@ export class GradeService {
   // If any term referenced has not published results, hide those grades
   const visibleGrades = grades.filter(g => !g.termId || g.term?.resultsPublished);
 
-  const results = visibleGrades.map((grade) => ({
+  const results = await Promise.all(visibleGrades.map(async (grade) => ({
       gradeId: grade.gradeId,
       examTitle: grade.course.name,
       subject: grade.course.name,
       marksObtained: parseFloat(grade.grade) || 0,
       totalMarks: 100,
       percentage: parseFloat(grade.grade) || 0,
-      grade: this.calculateLetterGrade(parseFloat(grade.grade) || 0),
+      grade: await this.calculateLetterGradeDynamic(parseFloat(grade.grade) || 0, grade.schoolId),
       date: grade.date,
       examType: grade.assessmentType,
-    }));
+    })));
 
     return {
       student: {
@@ -386,7 +399,7 @@ export class GradeService {
         studentId: student.studentId,
       },
       results,
-      overallGPA: this.calculateGPA(results),
+  overallGPA: await this.calculateGPA(results, student.schoolId),
   totalExams: results.length,
   hiddenResults: grades.length - visibleGrades.length,
     };
@@ -414,17 +427,17 @@ export class GradeService {
 
     const visibleGrades = grades.filter(g => !g.termId || g.term?.resultsPublished);
 
-  const results = visibleGrades.map((grade) => ({
+  const results = await Promise.all(visibleGrades.map(async (grade) => ({
       gradeId: grade.gradeId,
       examTitle: grade.course.name,
       subject: grade.course.name,
       marksObtained: parseFloat(grade.grade) || 0,
       totalMarks: 100,
       percentage: parseFloat(grade.grade) || 0,
-      grade: this.calculateLetterGrade(parseFloat(grade.grade) || 0),
+      grade: await this.calculateLetterGradeDynamic(parseFloat(grade.grade) || 0, grade.schoolId),
       date: grade.date,
       examType: grade.assessmentType,
-    }));
+    })));
 
     return {
       student: {
@@ -434,7 +447,7 @@ export class GradeService {
         studentId: student.studentId,
       },
       results,
-      overallGPA: this.calculateGPA(results),
+  overallGPA: await this.calculateGPA(results, student.schoolId),
   totalExams: results.length,
   hiddenResults: grades.length - visibleGrades.length,
     };
@@ -448,7 +461,24 @@ export class GradeService {
     return 'Needs Improvement';
   }
 
-  private calculateLetterGrade(percentage: number): string {
+  private async resolveGradeFormats(schoolId?: string | null): Promise<GradeFormat[]> {
+    // Try school-specific active formats first
+    let formats: GradeFormat[] = [];
+    if (schoolId) {
+      formats = await this.gradeFormatRepository.find({ where: { schoolId, isActive: true }, order: { minPercentage: 'DESC' } });
+    }
+    if (formats.length === 0) {
+      formats = await this.gradeFormatRepository.find({ where: { schoolId: IsNull(), isActive: true }, order: { minPercentage: 'DESC' } });
+    }
+    return formats;
+  }
+
+  private async calculateLetterGradeDynamic(percentage: number, schoolId?: string | null): Promise<string> {
+    const formats = await this.resolveGradeFormats(schoolId);
+    for (const f of formats) {
+      if (percentage >= f.minPercentage && percentage <= f.maxPercentage) return f.grade;
+    }
+    // Fallback simple scale
     if (percentage >= 90) return 'A';
     if (percentage >= 80) return 'B';
     if (percentage >= 70) return 'C';
@@ -456,16 +486,19 @@ export class GradeService {
     return 'F';
   }
 
-  private calculateGPA(grades: any[]): number {
+  private async calculateGPA(grades: any[], schoolId?: string | null): Promise<number> {
     if (grades.length === 0) return 0;
-    const total = grades.reduce((sum, grade) => {
-      const percentage = grade.percentage || 0;
-      if (percentage >= 90) return sum + 4;
-      if (percentage >= 80) return sum + 3;
-      if (percentage >= 70) return sum + 2;
-      if (percentage >= 60) return sum + 1;
-      return sum;
-    }, 0);
+    const formats = await this.resolveGradeFormats(schoolId);
+    const findGpa = (percentage: number): number => {
+      const fmt = formats.find(f => percentage >= f.minPercentage && percentage <= f.maxPercentage);
+      if (fmt) return Number(fmt.gpa);
+      if (percentage >= 90) return 4;
+      if (percentage >= 80) return 3;
+      if (percentage >= 70) return 2;
+      if (percentage >= 60) return 1;
+      return 0;
+    };
+    const total = grades.reduce((sum, g) => sum + findGpa(g.percentage || 0), 0);
     return total / grades.length;
   }
 
@@ -602,7 +635,7 @@ export class GradeService {
         marksObtained: marks,
         totalMarks: 100,
         percentage: marks,
-        grade: this.calculateLetterGrade(marks),
+        grade: 'TEMP',
         date: grade.date,
         examType: grade.assessmentType,
         termId: grade.termId,
@@ -617,7 +650,6 @@ export class GradeService {
     studentsMap.forEach((entry) => {
       const termObjects = Array.from(entry.terms.values()).map(t => {
         t.averagePercentage = t.totalPossible > 0 ? (t.totalMarks / t.totalPossible) * 100 : 0;
-        t.gpa = this.calculateGPA(t.assessments);
         return t;
       });
 
@@ -633,7 +665,7 @@ export class GradeService {
           totalMarks,
           totalPossible,
           averagePercentage,
-          gpa: this.calculateGPA(allAssessments),
+          gpa: 0, // filled later
           remarks: this.getRemarks(averagePercentage),
         };
       }
@@ -644,6 +676,22 @@ export class GradeService {
         combined,
       });
     });
+
+    // Resolve dynamic grades & GPA post processing
+    for (const student of responseStudents) {
+      for (const term of (student.terms || [])) {
+        for (const a of term.assessments) {
+          a.grade = await this.calculateLetterGradeDynamic(a.percentage, schoolId);
+        }
+        term.gpa = await this.calculateGPA(term.assessments, schoolId);
+      }
+      if (student.combined) {
+        for (const a of student.combined.assessments) {
+          a.grade = await this.calculateLetterGradeDynamic(a.percentage, schoolId);
+        }
+        student.combined.gpa = await this.calculateGPA(student.combined.assessments, schoolId);
+      }
+    }
 
     return {
       metadata: {

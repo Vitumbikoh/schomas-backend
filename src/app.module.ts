@@ -18,6 +18,7 @@ import { ReportsModule } from './reports/reports.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { LearningMaterialsModule } from './learning-materials/learning-materials.module';
 import { GradeModule } from './grades/grade.module';
+import { GradeFormatModule } from './grades/grade-format.module';
 import { ActivitiesModule } from './activity/activity.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { SuperAdminsModule } from './super-admins/super-admins.module';
@@ -44,7 +45,8 @@ import { ProfileModule } from './profile/profile.module';
     ReportsModule,
     AttendanceModule,
     LearningMaterialsModule,
-    GradeModule, 
+  GradeModule,
+  GradeFormatModule,
     ActivitiesModule,
     AnalyticsModule,
     SuperAdminsModule,
