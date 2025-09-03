@@ -14,6 +14,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Grade } from './entity/grade.entity';
+import { Term } from 'src/settings/entities/term.entity';
+import { AcademicCalendar } from 'src/settings/entities/academic-calendar.entity';
+import { GradesReportQueryDto } from './dtos/grades-report-query.dto';
 
 @Injectable()
 export class GradeService {
@@ -30,6 +33,10 @@ export class GradeService {
     private teacherRepository: Repository<Teacher>,
     @InjectRepository(Student)
     private studentRepository: Repository<Student>,
+    @InjectRepository(Term)
+    private termRepository: Repository<Term>,
+    @InjectRepository(AcademicCalendar)
+    private academicCalendarRepository: Repository<AcademicCalendar>,
   ) {}
 
   async createGrades(
@@ -460,5 +467,195 @@ export class GradeService {
       return sum;
     }, 0);
     return total / grades.length;
+  }
+
+  /**
+   * Flexible multi-student / multi-term / academic calendar report
+   */
+  async getGradesReport(
+    query: GradesReportQueryDto,
+    requestingUserId: string,
+    schoolId: string,
+  ): Promise<any> {
+    // Basic auth presence check
+    const user = await this.userRepository.findOne({ where: { id: requestingUserId } });
+    if (!user) throw new UnauthorizedException('Requesting user not found');
+
+    const {
+      studentIds = [],
+      classId,
+      termIds = [],
+      academicCalendarId,
+      termNumbers = [],
+      combineTerms = false,
+      includeTermBreakdown = true,
+      aggregateTerms = false,
+      includeUnpublished = false,
+    } = query;
+
+    const effectiveCombine = combineTerms || aggregateTerms;
+
+    // Derive effective term IDs if academic calendar specified
+    let effectiveTermIds = [...termIds];
+    let academicCalendar = null as AcademicCalendar | null;
+    if (academicCalendarId) {
+      academicCalendar = await this.academicCalendarRepository.findOne({ where: { id: academicCalendarId, schoolId } });
+      if (!academicCalendar) throw new BadRequestException('Academic calendar not found for school');
+      if (effectiveTermIds.length === 0) {
+        const termWhere: any = { schoolId, academicCalendar: { id: academicCalendarId } };
+        const calendarTerms = await this.termRepository.find({ where: termWhere });
+        const filtered = termNumbers.length > 0 ? calendarTerms.filter(t => termNumbers.includes(t.termNumber)) : calendarTerms;
+        effectiveTermIds = filtered.map(t => t.id);
+      }
+    }
+
+    if (effectiveTermIds.length === 0) {
+      throw new BadRequestException('You must specify termIds or an academicCalendarId (optionally with termNumbers).');
+    }
+
+    // Resolve students (support both internal UUID and external studentId code).
+    let resolvedStudentIds: string[] = [];
+    if (studentIds.length > 0) {
+      const students = await this.studentRepository.find({ where: [
+        { id: In(studentIds) },
+        { studentId: In(studentIds) },
+      ] });
+      resolvedStudentIds = students.map(s => s.id);
+      if (resolvedStudentIds.length === 0) {
+        throw new BadRequestException('No matching students found for provided identifiers');
+      }
+    }
+
+    // If class specified and no specific students requested, get all class students
+    if (classId && resolvedStudentIds.length === 0) {
+      const classEntity = await this.classRepository.findOne({ where: { id: classId }, relations: ['students'] });
+      if (!classEntity) throw new NotFoundException('Class not found');
+      resolvedStudentIds = classEntity.students.map(s => s.id);
+    }
+
+    // Query grades
+    const qb = this.gradeRepository.createQueryBuilder('grade')
+      .leftJoinAndSelect('grade.student', 'student')
+      .leftJoinAndSelect('grade.course', 'course')
+      .leftJoinAndSelect('grade.class', 'class')
+      .leftJoinAndSelect('grade.term', 'term')
+      .where('grade.schoolId = :schoolId', { schoolId })
+      .andWhere('grade.termId IN (:...termIds)', { termIds: effectiveTermIds });
+
+    if (resolvedStudentIds.length > 0) {
+      qb.andWhere('student.id IN (:...studentIds)', { studentIds: resolvedStudentIds });
+    }
+    if (classId) {
+      qb.andWhere('class.id = :classId', { classId });
+    }
+
+    const rawGrades = await qb.getMany();
+
+    // Hide grades for unpublished terms
+    const fetchedTerms = await this.termRepository.find({ where: { id: In(effectiveTermIds) } });
+    const publishedTermIds = new Set(
+      fetchedTerms.filter(t => t.resultsPublished).map(t => t.id)
+    );
+    const isPrivilegedViewer = ['ADMIN', 'SUPER_ADMIN'].includes((user as any).role);
+    const grades = (includeUnpublished || isPrivilegedViewer)
+      ? rawGrades
+      : rawGrades.filter(g => !g.termId || publishedTermIds.has(g.termId));
+
+    // Grouping structures
+    interface TermGroup { termId: string; termNumber?: number; assessments: any[]; totalMarks: number; totalPossible: number; averagePercentage: number; gpa: number; }
+    const studentsMap = new Map<string, { student: any; terms: Map<string, TermGroup> }>();
+
+    for (const grade of grades) {
+      const sid = grade.student.id;
+      if (!studentsMap.has(sid)) {
+        studentsMap.set(sid, {
+          student: {
+            id: grade.student.id,
+            studentId: grade.student.studentId,
+            firstName: grade.student.firstName,
+            lastName: grade.student.lastName,
+            classId: grade.class?.id || null,
+            className: grade.class?.name || null,
+          },
+          terms: new Map(),
+        });
+      }
+      const studentEntry = studentsMap.get(sid)!;
+      const tId = grade.termId || 'unassigned';
+      if (!studentEntry.terms.has(tId)) {
+        studentEntry.terms.set(tId, {
+          termId: tId,
+            termNumber: grade.term?.termNumber,
+            assessments: [],
+            totalMarks: 0,
+            totalPossible: 0,
+            averagePercentage: 0,
+            gpa: 0,
+        });
+      }
+      const termGroup = studentEntry.terms.get(tId)!;
+      const marks = parseFloat(grade.grade) || 0;
+      termGroup.assessments.push({
+        gradeId: grade.gradeId,
+        examTitle: grade.course?.name,
+        subject: grade.course?.name,
+        marksObtained: marks,
+        totalMarks: 100,
+        percentage: marks,
+        grade: this.calculateLetterGrade(marks),
+        date: grade.date,
+        examType: grade.assessmentType,
+        termId: grade.termId,
+        termNumber: grade.term?.termNumber,
+      });
+      termGroup.totalMarks += marks;
+      termGroup.totalPossible += 100;
+    }
+
+    // Finalize term stats
+    const responseStudents: any[] = [];
+    studentsMap.forEach((entry) => {
+      const termObjects = Array.from(entry.terms.values()).map(t => {
+        t.averagePercentage = t.totalPossible > 0 ? (t.totalMarks / t.totalPossible) * 100 : 0;
+        t.gpa = this.calculateGPA(t.assessments);
+        return t;
+      });
+
+      let combined: any = null;
+  if (effectiveCombine && termObjects.length > 0) {
+        const allAssessments = termObjects.flatMap(t => t.assessments);
+        const totalMarks = allAssessments.reduce((s,a)=>s+a.marksObtained,0);
+        const totalPossible = allAssessments.length * 100;
+        const averagePercentage = totalPossible > 0 ? (totalMarks / totalPossible) * 100 : 0;
+        combined = {
+          termIds: termObjects.map(t=>t.termId),
+          assessments: allAssessments,
+          totalMarks,
+          totalPossible,
+          averagePercentage,
+          gpa: this.calculateGPA(allAssessments),
+          remarks: this.getRemarks(averagePercentage),
+        };
+      }
+
+      responseStudents.push({
+        student: entry.student,
+        terms: includeTermBreakdown ? termObjects : undefined,
+        combined,
+      });
+    });
+
+    return {
+      metadata: {
+        academicCalendarId: academicCalendar?.id || academicCalendarId || null,
+        termIds: effectiveTermIds,
+  combineTerms: effectiveCombine,
+        includeTermBreakdown,
+  includeUnpublished: includeUnpublished || isPrivilegedViewer,
+        totalStudents: responseStudents.length,
+        generatedAt: new Date().toISOString(),
+      },
+      students: responseStudents,
+    };
   }
 }

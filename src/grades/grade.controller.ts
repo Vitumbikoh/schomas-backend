@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { GradeService } from './grade.service';
 import { CreateGradeDto } from './dtos/grade.dto';
+import { GradesReportQueryDto } from './dtos/grades-report-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('grades')
@@ -76,4 +77,11 @@ export class GradeController {
 async getStudentOwnGrades(@Request() req) {
   return this.gradeService.getStudentOwnGrades(req.user.sub);
 }
+
+  // Flexible reporting endpoint
+  @UseGuards(JwtAuthGuard)
+  @Get('report')
+  async getGradesReport(@Query() query: GradesReportQueryDto, @Request() req) {
+    return this.gradeService.getGradesReport(query, req.user.sub, req.user.schoolId);
+  }
 }
