@@ -24,6 +24,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { SuperAdminsModule } from './super-admins/super-admins.module';
 import { SchoolModule } from './school/school.module';
 import { ProfileModule } from './profile/profile.module';
+import { RoutesModule } from './routes/routes.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { ProfileModule } from './profile/profile.module';
     SuperAdminsModule,
     SchoolModule,
     ProfileModule,
+  RoutesModule,
   ],
 })
 export class AppModule {}

@@ -26,7 +26,9 @@
     "seed:superadmin": "ts-node -r tsconfig-paths/register src/scripts/create-super-admin.ts",
     "backfill:user-settings": "ts-node -r tsconfig-paths/register src/scripts/backfill-user-settings.ts",
     "fix:user-settings": "ts-node -r tsconfig-paths/register src/scripts/fix-user-settings-orphans.ts",
-    "repair:user-settings": "ts-node src/scripts/repair-user-settings.ts"
+    "repair:user-settings": "ts-node src/scripts/repair-user-settings.ts",
+    "generate:routes": "ts-node -r tsconfig-paths/register src/scripts/generate-routes.ts",
+    "build:with-routes": "npm run generate:routes && nest build"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.12",
