@@ -110,10 +110,32 @@ export class SchoolsService {
   }
 
   findAll(search?: string) {
+    // Return schools enriched with aggregated counts of students & teachers
+    // Using raw query builder with LEFT JOINs and grouped counts for efficiency.
+    const qb = this.repo.createQueryBuilder('school')
+      .leftJoin(User, 'stu', 'stu."schoolId" = school.id AND stu.role = :studentRole', { studentRole: Role.STUDENT })
+      .leftJoin(User, 'tch', 'tch."schoolId" = school.id AND tch.role = :teacherRole', { teacherRole: Role.TEACHER })
+      .select('school.id', 'id')
+      .addSelect('school.name', 'name')
+      .addSelect('school.code', 'code')
+      .addSelect('school.status', 'status')
+      .addSelect('school.metadata', 'metadata')
+      .addSelect('school.createdAt', 'createdAt')
+      .addSelect('school.updatedAt', 'updatedAt')
+      .addSelect('COUNT(DISTINCT stu.id)', 'students')
+      .addSelect('COUNT(DISTINCT tch.id)', 'teachers')
+      .groupBy('school.id')
+      .orderBy('school.createdAt', 'DESC');
+
     if (search) {
-      return this.repo.find({ where: [{ name: ILike(`%${search}%`) }, { code: ILike(`%${search}%`) }] });
+      qb.where('school.name ILIKE :search OR school.code ILIKE :search', { search: `%${search}%` });
     }
-    return this.repo.find();
+
+    return qb.getRawMany().then(rows => rows.map(r => ({
+      ...r,
+      students: parseInt(r.students, 10) || 0,
+      teachers: parseInt(r.teachers, 10) || 0,
+    })));
   }
 
   async findOne(id: string) {

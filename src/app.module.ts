@@ -25,6 +25,7 @@ import { SuperAdminsModule } from './super-admins/super-admins.module';
 import { SchoolModule } from './school/school.module';
 import { ProfileModule } from './profile/profile.module';
 import { RoutesModule } from './routes/routes.module';
+import { SystemModule } from './system/system.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { RoutesModule } from './routes/routes.module';
     SchoolModule,
     ProfileModule,
   RoutesModule,
+  SystemModule,
   ],
 })
 export class AppModule {}
