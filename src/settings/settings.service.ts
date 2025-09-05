@@ -849,13 +849,13 @@ export class SettingsService {
         throw new BadRequestException('Admin user must be associated with a school');
       }
 
-      // Get the active academic calendar for this school
+      // Get the active academic calendar for this admin's school
       const activeCalendar = await this.academicCalendarRepository.findOne({
-        where: { isActive: true },
+        where: { isActive: true, schoolId: adminUser.schoolId },
       });
 
       if (!activeCalendar) {
-        throw new BadRequestException('No active academic calendar found');
+        throw new BadRequestException('No active academic calendar found for your school');
       }
 
       // Get the period
@@ -874,6 +874,7 @@ export class SettingsService {
           period: { id: dto.periodId },
           schoolId: adminUser.schoolId,
         },
+        relations: ['period', 'academicCalendar'],
       });
 
       if (existingPeriod) {

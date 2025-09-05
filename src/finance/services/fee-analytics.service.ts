@@ -46,6 +46,8 @@ export interface FeeAnalytics {
     byMonth: Array<{ month: string; amount: number; count: number }>;
     byFeeType: Array<{ feeType: string; totalPaid: number; percentage: number }>;
   };
+  noData?: boolean;
+  message?: string;
 }
 
 @Injectable()
@@ -77,7 +79,18 @@ export class FeeAnalyticsService {
       }
 
       if (!currentTerm) {
-        throw new Error('No term found');
+        // Graceful response when there is no current term configured
+        return {
+          Term: { id: '', name: 'No current term', period: '' },
+          totalStudents: 0,
+          totalEnrolledStudents: 0,
+          feeStructure: { totalExpectedAmount: 0, mandatoryFees: 0, optionalFees: 0, feeTypes: [] },
+          paymentSummary: { totalPaid: 0, totalOutstanding: 0, totalExpected: 0, paymentPercentage: 0 },
+          studentPaymentStatus: [],
+          paymentTrends: { byMonth: [], byFeeType: [] },
+          noData: true,
+          message: 'No current term configured. Set up a term to view fee analytics.'
+        };
       }
 
       this.logger.log(`Analyzing fees for term: ${currentTerm.id}`);
@@ -156,8 +169,19 @@ export class FeeAnalyticsService {
       };
 
     } catch (error) {
-      this.logger.error('Failed to generate fee analytics', error.stack);
-      throw new Error(`Failed to generate fee analytics: ${error.message}`);
+      this.logger.error('Failed to generate fee analytics', (error as any)?.stack);
+      // Return a safe, friendly payload rather than 500 for known soft failures
+      return {
+        Term: { id: '', name: 'Unavailable', period: '' },
+        totalStudents: 0,
+        totalEnrolledStudents: 0,
+        feeStructure: { totalExpectedAmount: 0, mandatoryFees: 0, optionalFees: 0, feeTypes: [] },
+        paymentSummary: { totalPaid: 0, totalOutstanding: 0, totalExpected: 0, paymentPercentage: 0 },
+        studentPaymentStatus: [],
+        paymentTrends: { byMonth: [], byFeeType: [] },
+        noData: true,
+        message: 'Failed to generate fee analytics. Please try again later.'
+      };
     }
   }
 
