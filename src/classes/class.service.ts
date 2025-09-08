@@ -23,19 +23,29 @@ export class ClassService {
       throw new BadRequestException('Numerical name must be a non-negative number');
     }
   
-    // Check for duplicates (case-insensitive)
-    const existingClass = await this.classRepository
+    // Check for duplicates within the same school (case-insensitive on name)
+    const trimmedName = name.trim();
+    const qb = this.classRepository
       .createQueryBuilder('class')
-      .where('LOWER(class.name) = LOWER(:name)', { name })
-      .orWhere('class.numericalName = :numericalName', { numericalName })
-      .getOne();
+      .andWhere('(LOWER(class.name) = LOWER(:name) OR class.numericalName = :numericalName)', {
+        name: trimmedName,
+        numericalName,
+      });
+
+    if (schoolId) {
+      qb.andWhere('class.schoolId = :schoolId', { schoolId });
+    } else {
+      qb.andWhere('class.schoolId IS NULL');
+    }
+
+    const existingClass = await qb.getOne();
   
     if (existingClass) {
       throw new BadRequestException('Class name or numerical name already exists');
     }
   
     const newClass = this.classRepository.create({
-      name: name.trim(),
+      name: trimmedName,
       numericalName,
       description: description?.trim(),
       schoolId: schoolId || undefined,

@@ -1,8 +1,10 @@
 import { Schedule } from 'src/schedule/entity/schedule.entity';
 import { Student } from 'src/user/entities/student.entity';
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, OneToMany, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, OneToMany, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { School } from 'src/school/entities/school.entity';
 
+@Index('UQ_class_name_school', ['schoolId', 'name'], { unique: true })
+@Index('UQ_class_num_school', ['schoolId', 'numericalName'], { unique: true })
 @Entity('classes')
 export class Class {
   @PrimaryGeneratedColumn('uuid')
