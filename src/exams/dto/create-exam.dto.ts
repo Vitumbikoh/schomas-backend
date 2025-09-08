@@ -34,8 +34,7 @@ export class CreateExamDto {
   @IsUUID()
   classId?: string;
 
-  @IsOptional()
-  @IsUUID()
+  // teacherId comes from JWT; controller will set it. Keep type but no validation decorators.
   teacherId?: string;
 
   @IsOptional()
