@@ -102,8 +102,8 @@ export class GradeService {
 
     // Validate assessment type
     const validAssessmentTypes = [
-      'midperiod',
-      'endperiod',
+      'midterm',
+      'endterm',
       'quiz',
       'assignment',
       'practical',
