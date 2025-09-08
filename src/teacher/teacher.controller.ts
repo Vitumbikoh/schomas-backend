@@ -23,6 +23,7 @@ import { CreateTeacherDto } from 'src/user/dtos/create-teacher.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
 import { UsersService } from 'src/user/user.service';
 import { SubmitGradesDto } from 'src/exams/dto/submit-grades.dto';
+import { BadRequestException } from '@nestjs/common';
 import { ExamService } from 'src/exams/exam.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
 
@@ -468,6 +469,7 @@ export class TeacherController {
         pageNum,
         limitNum,
         search,
+        shouldIncludeExams,
       );
       console.log(`Total courses found: ${total}`);
 
@@ -492,6 +494,45 @@ export class TeacherController {
         throw error;
       }
       throw new ForbiddenException('Failed to fetch courses: ' + error.message);
+    }
+  }
+
+  @Get('my-exams')
+  @Roles(Role.TEACHER)
+  async getMyExams(
+    @Request() req,
+    @Query('courseId') courseId: string,
+  ) {
+    try {
+      const userId = req.user?.sub;
+      if (!userId) {
+        throw new ForbiddenException('Invalid user authentication');
+      }
+      const teacher = await this.teacherService.findOneByUserId(userId);
+      if (!teacher) {
+        throw new NotFoundException('Your teacher record was not found');
+      }
+      if (!courseId) {
+        throw new BadRequestException('courseId is required');
+      }
+
+      const exams = await this.examService.findByCourseAndTeacher(
+        courseId,
+        teacher.id,
+        teacher.schoolId,
+        false,
+      );
+
+      return { success: true, exams };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new ForbiddenException('Failed to fetch exams: ' + error.message);
     }
   }
 

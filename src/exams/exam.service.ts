@@ -229,8 +229,10 @@ export class ExamService {
 
     let results = await query.getMany();
 
-    // Enhanced fallback logic for better data retrieval
-    if (!superAdmin && schoolId && results.length === 0) {
+  // Enhanced fallback logic for better data retrieval
+  // IMPORTANT: Do not drop the Term filter when a Term was explicitly provided.
+  // Only apply fallback when no Term filter was requested.
+  if (!superAdmin && schoolId && results.length === 0 && (!Term || Term === 'All Years')) {
       // Try without term filter if no results
       const fallbackQuery = this.examRepository
         .createQueryBuilder('exam')
@@ -263,13 +265,13 @@ export class ExamService {
 
       results = await fallbackQuery.getMany();
       
-      if (this.systemLoggingService && results.length > 0) {
+    if (this.systemLoggingService && results.length > 0) {
         await this.systemLoggingService.logAction({
           action: 'EXAMS_FALLBACK_SUCCESS',
           module: 'EXAMS',
           level: 'info',
           schoolId,
-          metadata: { fallbackResultCount: results.length, reason: 'Term filter removed' }
+      metadata: { fallbackResultCount: results.length, reason: 'No Term filter requested; removed only non-term constraints during fallback' }
         });
       }
     }
