@@ -10,6 +10,7 @@ import { Class } from '../../classes/entity/class.entity';
 import { Teacher } from '../../user/entities/teacher.entity';
 import { Course } from '../../course/entities/course.entity';
 import { Term } from '../../settings/entities/term.entity';
+import { AcademicCalendar } from '../../settings/entities/academic-calendar.entity';
 import { School } from 'src/school/entities/school.entity';
 
 @Entity()
@@ -20,8 +21,6 @@ export class Exam {
   @Column({ nullable: false })
   title: string;
 
-  @Column({ nullable: false })
-  subject: string;
 
   @ManyToOne(() => Class)
   @JoinColumn({ name: 'classId' })
@@ -39,6 +38,14 @@ export class Exam {
 
   @Column({ type: 'uuid' })
   TermId: string;
+
+  // Store the academic calendar context for the exam (redundant but useful for querying)
+  @Column({ type: 'uuid', nullable: true })
+  academicCalendarId?: string | null;
+
+  @ManyToOne(() => AcademicCalendar, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'academicCalendarId' })
+  academicCalendar?: AcademicCalendar | null;
 
   @Column({ type: 'integer', nullable: false })
   totalMarks: number;

@@ -7,6 +7,7 @@ import { Exam } from './entities/exam.entity';
 import { Class } from '../classes/entity/class.entity';
 import { Teacher } from '../user/entities/teacher.entity';
 import { Course } from '../course/entities/course.entity';
+import { AcademicCalendar } from '../settings/entities/academic-calendar.entity';
 import { User } from '../user/entities/user.entity';
 import { SettingsService } from '../settings/settings.service'; // Add this import
 import { Term } from 'src/settings/entities/term.entity';
@@ -25,6 +26,8 @@ export class ExamService {
     private courseRepository: Repository<Course>,
     @InjectRepository(Term) // Add this injection
     private termRepository: Repository<Term>,
+  @InjectRepository(AcademicCalendar)
+  private academicCalendarRepository: Repository<AcademicCalendar>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
     private settingsService: SettingsService, // Add this
@@ -58,8 +61,8 @@ export class ExamService {
   async create(createExamDto: CreateExamDto, schoolId?: string, superAdmin = false): Promise<Exam> {
     const { classId, teacherId, courseId, ...examData } = createExamDto;
 
-    // Get current term automatically
-    const Term = await this.settingsService.getCurrentTerm();
+  // Get current term automatically
+  const Term = await this.settingsService.getCurrentTerm();
     if (!Term) {
       throw new NotFoundException('No current term found');
     }
@@ -99,6 +102,13 @@ export class ExamService {
 
     const derivedSchoolId = schoolId || teacher.schoolId || course.schoolId || classEntity.schoolId || null;
 
+    // Also get active academic calendar for context (after deriving school scope)
+    let activeCalendarId: string | undefined;
+    if (derivedSchoolId) {
+      const active = await this.academicCalendarRepository.findOne({ where: { schoolId: derivedSchoolId, isActive: true }, select: ['id'] });
+      activeCalendarId = active?.id;
+    }
+
     if (!superAdmin) {
       if (!derivedSchoolId) {
         throw new BadRequestException('Missing school scope');
@@ -130,6 +140,7 @@ export class ExamService {
       teacher: teacher,
       course: course,
       TermId: Term.id,
+      academicCalendarId: activeCalendarId,
       schoolId: derivedSchoolId,
     });
 
@@ -188,7 +199,7 @@ export class ExamService {
     if (searchText) {
       // Use andWhere so we don't overwrite previous where clauses (schoolId constraint)
       query.andWhere(
-        '(exam.title ILIKE :searchText OR exam.subject ILIKE :searchText OR course.name ILIKE :searchText)',
+        '(exam.title ILIKE :searchText OR course.name ILIKE :searchText)',
         { searchText: `%${searchText}%` },
       );
     }
@@ -246,7 +257,7 @@ export class ExamService {
       // Apply same filters except term
       if (searchText) {
         fallbackQuery.andWhere(
-          '(exam.title ILIKE :searchText OR exam.subject ILIKE :searchText OR course.name ILIKE :searchText)',
+          '(exam.title ILIKE :searchText OR course.name ILIKE :searchText)',
           { searchText: `%${searchText}%` },
         );
       }

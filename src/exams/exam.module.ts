@@ -15,10 +15,11 @@ import { TeachersModule } from 'src/teacher/teacher.module';
 import { LogsModule } from '../logs/logs.module';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
+import { AcademicCalendar } from '../settings/entities/academic-calendar.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Exam, Class, Teacher, Course, Term]),
+  TypeOrmModule.forFeature([Exam, Class, Teacher, Course, Term, AcademicCalendar]),
     forwardRef(() => ClassModule),
     forwardRef(() => UsersModule),
     forwardRef(() => CourseModule),

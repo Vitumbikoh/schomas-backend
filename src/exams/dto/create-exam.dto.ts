@@ -31,10 +31,6 @@ export class CreateExamDto {
   instructions?: string;
 
   @IsNotEmpty()
-  @IsString()
-  subject: string;
-
-  @IsNotEmpty()
   @IsUUID()
   classId: string;
 

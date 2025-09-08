@@ -101,7 +101,7 @@ export class ExamController {
       level: 'info',
       entityId: created.id,
       entityType: 'Exam',
-      newValues: { id: created.id, title: created.title, courseId: created.course?.id, classId: created.class?.id, date: created.date, status: created.status },
+  newValues: { id: created.id, title: created.title, courseId: created.course?.id, classId: created.class?.id, date: created.date, status: created.status },
       metadata: { description: 'Exam created', schoolId: created.schoolId }
     });
     return created;
