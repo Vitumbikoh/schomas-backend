@@ -30,13 +30,13 @@ export class CreateExamDto {
   @IsString()
   instructions?: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsUUID()
-  classId: string;
+  classId?: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsUUID()
-  teacherId: string;
+  teacherId?: string;
 
   @IsOptional()
   status?: 'upcoming' | 'administered' | 'graded' = 'upcoming';

@@ -94,6 +94,10 @@ export class ExamController {
   async create(@Request() req, @Body() createExamDto: CreateExamDto, @Query('schoolId') schoolIdOverride?: string): Promise<Exam> {
     const isSuper = req.user?.role === Role.SUPER_ADMIN;
     const schoolScope = isSuper ? (schoolIdOverride || req.user?.schoolId) : req.user?.schoolId;
+    // If teacherId not provided by client, infer from authenticated user
+    if (!createExamDto.teacherId && (req.user?.sub || req.user?.id)) {
+      createExamDto.teacherId = (req.user.sub || req.user.id);
+    }
     const created = await this.examService.create(createExamDto, schoolScope, isSuper);
     await this.systemLoggingService.logAction({
       action: 'EXAM_CREATED',

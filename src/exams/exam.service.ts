@@ -59,7 +59,7 @@ export class ExamService {
   }
 
   async create(createExamDto: CreateExamDto, schoolId?: string, superAdmin = false): Promise<Exam> {
-    const { classId, teacherId, courseId, ...examData } = createExamDto;
+    let { classId, teacherId, courseId, ...examData } = createExamDto;
 
   // Get current term automatically
   const Term = await this.settingsService.getCurrentTerm();
@@ -67,38 +67,46 @@ export class ExamService {
       throw new NotFoundException('No current term found');
     }
 
-    const classEntity = await this.classRepository.findOne({
-      where: { id: classId },
+    // Load course first so we can infer class/teacher if needed
+    const course = await this.courseRepository.findOne({
+      where: { id: courseId },
+      relations: ['class', 'teacher'],
     });
+    if (!course) {
+      throw new NotFoundException(`Course with ID ${courseId} not found`);
+    }
+
+    // Infer classId from course when missing
+    if (!classId) {
+      classId = course.classId || course.class?.id;
+    }
+
+    const classEntity = await this.classRepository.findOne({ where: { id: classId } });
     if (!classEntity) {
       throw new NotFoundException(`Class with ID ${classId} not found`);
     }
 
-    // Try to find teacher by userId first, then by id for backward compatibility
-    let teacher = await this.teacherRepository.findOne({
-      where: { userId: teacherId },
-      relations: ['user'],
-    });
-    
-    if (!teacher) {
-      teacher = await this.teacherRepository.findOne({
-        where: { id: teacherId },
-        relations: ['user'],
-      });
+    // Infer teacherId from course if missing
+    if (!teacherId) {
+      teacherId = course.teacherId || course.teacher?.id;
     }
-    
+
+    // Try to find teacher by userId first, then by id for backward compatibility
+    let teacher = teacherId
+      ? await this.teacherRepository.findOne({ where: { userId: teacherId }, relations: ['user'] })
+      : null;
+
+    if (!teacher && teacherId) {
+      teacher = await this.teacherRepository.findOne({ where: { id: teacherId }, relations: ['user'] });
+    }
+
     if (!teacher) {
       throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
     }
 
   // We'll infer school scope after loading all related entities
 
-    const course = await this.courseRepository.findOne({
-      where: { id: courseId },
-    });
-    if (!course) {
-      throw new NotFoundException(`Course with ID ${courseId} not found`);
-    }
+  // course already loaded above
 
     const derivedSchoolId = schoolId || teacher.schoolId || course.schoolId || classEntity.schoolId || null;
 
