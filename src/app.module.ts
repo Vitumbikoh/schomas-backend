@@ -26,6 +26,7 @@ import { SchoolModule } from './school/school.module';
 import { ProfileModule } from './profile/profile.module';
 import { RoutesModule } from './routes/routes.module';
 import { SystemModule } from './system/system.module';
+import { AggregationModule } from './aggregation/aggregation.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { SystemModule } from './system/system.module';
     ProfileModule,
   RoutesModule,
   SystemModule,
+  AggregationModule,
   ],
 })
 export class AppModule {}
