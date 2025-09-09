@@ -536,6 +536,38 @@ export class TeacherController {
     }
   }
 
+  @Get('my-exams/all')
+  @Roles(Role.TEACHER)
+  async getAllMyExams(
+    @Request() req,
+    @Query('termId') termId?: string,
+  ) {
+    try {
+      const userId = req.user?.sub;
+      if (!userId) throw new ForbiddenException('Invalid user authentication');
+      const teacher = await this.teacherService.findOneByUserId(userId);
+      if (!teacher) throw new NotFoundException('Your teacher record was not found');
+
+      const exams = await this.examService.findAllForTeacherByTerm(
+        teacher.id,
+        termId,
+        teacher.schoolId,
+        false,
+      );
+
+      return { success: true, exams };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new ForbiddenException('Failed to fetch exams: ' + error.message);
+    }
+  }
+
   @Get('my-classes')
   @Roles(Role.TEACHER)
   async getMyClasses(@Request() req) {

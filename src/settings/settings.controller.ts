@@ -585,8 +585,8 @@ async createTermPeriod(
     @Request() req,
     @Query('academicCalendarId') academicCalendarId?: string,
   ) {
-    if (!['ADMIN','FINANCE'].includes(req.user.role)) {
-      throw new UnauthorizedException('Only admins or finance can access terms');
+    if (!['ADMIN','FINANCE','TEACHER'].includes(req.user.role)) {
+      throw new UnauthorizedException('Only admins, finance or teacher can access terms');
     }
     return this.settingsService.getTerms(academicCalendarId, req.user.schoolId);
   }

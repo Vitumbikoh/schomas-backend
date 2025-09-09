@@ -495,6 +495,30 @@ async getExamCountByCourse(courseIds: string[], schoolId?: string, superAdmin = 
     return results;
   }
 
+  async findAllForTeacherByTerm(teacherId: string, termId?: string, schoolId?: string, superAdmin = false): Promise<Exam[]> {
+    const qb = this.examRepository
+      .createQueryBuilder('exam')
+      .leftJoinAndSelect('exam.course', 'course')
+      .leftJoinAndSelect('exam.teacher', 'teacher')
+      .leftJoinAndSelect('exam.class', 'class')
+      .leftJoinAndSelect('exam.Term', 'Term')
+      .where('(exam.teacherId = :teacherId OR teacher.userId = :teacherId)', { teacherId });
+
+    if (termId) {
+      qb.andWhere('exam."TermId" = :termId', { termId });
+    }
+
+    if (!superAdmin) {
+      if (!schoolId) return [];
+      qb.andWhere('exam."schoolId" = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.andWhere('exam."schoolId" = :schoolId', { schoolId });
+    }
+
+    qb.orderBy('exam.date', 'DESC');
+    return qb.getMany();
+  }
+
   // Attempt to backfill missing schoolId on legacy exam rows using related entities
   private async backfillExamSchoolIds(schoolId: string) {
     try {
