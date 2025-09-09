@@ -21,10 +21,10 @@ import { Classroom } from 'src/classroom/entity/classroom.entity';
 import { SettingsModule } from 'src/settings/settings.module';
 import { ExamService } from 'src/exams/exam.service';
 import { Exam } from 'src/exams/entities/exam.entity';
-import { Grade } from 'src/grades/entity/grade.entity';
 import { TeachersModule } from 'src/teacher/teacher.module';
 import { FinanceModule } from 'src/finance/finance.module';
 import { LogsModule } from 'src/logs/logs.module';
+import { AggregationModule } from 'src/aggregation/aggregation.module';
 
 @Module({
   imports: [
@@ -40,13 +40,13 @@ import { LogsModule } from 'src/logs/logs.module';
       Attendance,
       Schedule,
       Classroom,
-      Exam,
-      Grade
+  Exam
     ]),
     SettingsModule,
     TeachersModule,
     FinanceModule,
-    LogsModule
+  LogsModule,
+  AggregationModule
   ],
   controllers: [ReportsController],
   providers: [

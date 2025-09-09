@@ -19,6 +19,8 @@ import { AcademicCalendar } from 'src/settings/entities/academic-calendar.entity
 import { GradesReportQueryDto } from './dtos/grades-report-query.dto';
 import { GradeFormat } from './entity/grade-format.entity';
 import { IsNull } from 'typeorm';
+import { AggregationService } from '../aggregation/aggregation.service';
+import { Exam } from '../exams/entities/exam.entity';
 
 @Injectable()
 export class GradeService {
@@ -41,12 +43,15 @@ export class GradeService {
     private termRepository: Repository<Term>,
     @InjectRepository(AcademicCalendar)
     private academicCalendarRepository: Repository<AcademicCalendar>,
+    @InjectRepository(Exam)
+    private examRepository: Repository<Exam>,
+    private aggregationService: AggregationService,
   ) {}
 
   async createGrades(
     createGradeDto: CreateGradeDto,
     userId: string,
-  ): Promise<Grade[]> {
+  ): Promise<any> {
     // Validate input structure
     if (!createGradeDto || typeof createGradeDto !== 'object') {
       throw new BadRequestException('Invalid request payload');
@@ -100,6 +105,18 @@ export class GradeService {
       throw new BadRequestException('Invalid course or teacher not assigned');
     }
 
+    // Get all enrolled student IDs for this course
+    const enrolledStudentIds =
+      course.enrollments?.map((e) => e.student.studentId) || [];
+
+    // Get current term
+    const currentTerm = await this.termRepository.findOne({
+      where: { isCurrent: true },
+    });
+    if (!currentTerm) {
+      throw new BadRequestException('No current term found');
+    }
+
     // Validate assessment type
     const validAssessmentTypes = [
       'midterm',
@@ -112,12 +129,37 @@ export class GradeService {
       throw new BadRequestException('Invalid assessment type');
     }
 
-    // Get all enrolled student IDs for this course
-    const enrolledStudentIds =
-      course.enrollments?.map((e) => e.student.studentId) || [];
+    // Find existing exam for this course/assessment type combination
+    let exam = await this.examRepository.findOne({
+      where: {
+        course: { id: courseId },
+        examType: assessmentType,
+        TermId: currentTerm.id,
+        teacher: { id: teacher.id },
+      },
+    });
 
-    // Create grade records
-    const gradeRecords: Grade[] = [];
+    // If no exam exists, create a placeholder exam
+    if (!exam) {
+      exam = this.examRepository.create({
+        title: `${assessmentType} - ${course.name}`,
+        examType: assessmentType,
+        course: course,
+        teacher: teacher,
+        class: classEntity,
+        TermId: currentTerm.id,
+        totalMarks: 100, // Default total marks
+        status: 'graded' as const,
+        schoolId: teacher.schoolId,
+        date: new Date().toISOString().split('T')[0], // Format as YYYY-MM-DD
+        duration: '60 minutes', // Default duration
+        studentsEnrolled: enrolledStudentIds.length,
+      });
+      exam = await this.examRepository.save(exam);
+    }
+
+    // Process grades via aggregation service
+    const results: any[] = [];
     for (const [studentId, gradeValue] of Object.entries(grades)) {
       // Check if student is enrolled in course
       if (!enrolledStudentIds.includes(studentId)) {
@@ -126,7 +168,7 @@ export class GradeService {
         );
       }
 
-      // Fetch Student entity by studentId
+      // Validate student exists
       const student = await this.studentRepository.findOne({
         where: { studentId },
       });
@@ -134,22 +176,58 @@ export class GradeService {
         throw new BadRequestException(`Invalid student ID: ${studentId}`);
       }
 
-      const gradeRecord = new Grade();
-      gradeRecord.student = student; // Set the Student entity directly
-      // gradeRecord.teacher = teacher; // Set the Teacher entity
-      gradeRecord.course = course;
-      gradeRecord.class = classEntity;
-      gradeRecord.assessmentType = assessmentType;
-      gradeRecord.grade = String(gradeValue);
-      gradeRecord.date = new Date();
-  // multi-tenant context
-  gradeRecord.schoolId = classEntity.schoolId || course.schoolId || user.schoolId || undefined;
+      // Record grade via aggregation service (must pass teacher.userId for compatibility)
+      try {
+        const result = await this.aggregationService.recordExamGrade(
+          {
+            examId: exam.id,
+            studentId: studentId,
+            rawScore: Number(gradeValue),
+          },
+          teacher.userId, // IMPORTANT: aggregation expects userId primarily
+          teacher.schoolId,
+        );
+        results.push(result);
+      } catch (error) {
+        console.warn(`Failed to record grade for student ${studentId}:`, error);
+        throw new BadRequestException(
+          `Failed to record grade for student ${studentId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        );
+      }
 
-      gradeRecords.push(gradeRecord);
+      // Sync into legacy Grade table so the existing exam results views (ExamResults.tsx) still show data
+      try {
+        // Find existing legacy grade row (by exam + student) if any
+        let legacy = await this.gradeRepository.findOne({ where: { exam: { id: exam.id }, student: { studentId } }, relations: ['exam','student','course','class'] });
+        if(!legacy){
+          legacy = this.gradeRepository.create({
+            grade: String(gradeValue),
+            assessmentType: exam.examType,
+            student: { id: (await this.studentRepository.findOne({ where: { studentId } }))!.id } as any,
+            teacher: teacher as any,
+            course: course as any,
+            class: classEntity as any,
+            exam: exam as any,
+            schoolId: teacher.schoolId,
+            termId: exam.TermId,
+          });
+        } else {
+          legacy.grade = String(gradeValue);
+          legacy.assessmentType = exam.examType;
+          legacy.termId = exam.TermId;
+        }
+        await this.gradeRepository.save(legacy);
+      } catch(syncErr){
+        // Non-fatal; log only
+        console.warn('[GradeService] Failed syncing legacy Grade table', syncErr);
+      }
     }
 
-    // Save to database
-    return this.gradeRepository.save(gradeRecords);
+    return {
+      examId: exam.id,
+      gradesRecorded: results.length,
+      results: results,
+    };
   }
 
   async getAllClasses(schoolId?: string): Promise<Class[]> {
@@ -201,6 +279,8 @@ export class GradeService {
     classId: string,
     userId: string,
     schoolId?: string,
+    termId?: string,
+    academicCalendarId?: string,
     Term?: string,
     period?: string,
   ): Promise<any> {
@@ -232,7 +312,7 @@ export class GradeService {
       });
     });
 
-    const query = this.gradeRepository
+  const query = this.gradeRepository
       .createQueryBuilder('grade')
       .leftJoinAndSelect('grade.student', 'student')
       .leftJoinAndSelect('grade.course', 'course')
@@ -247,6 +327,13 @@ export class GradeService {
       query.andWhere('EXTRACT(YEAR FROM grade.date) = :year', {
         year: Term.split('-')[0],
       });
+    }
+
+    if (termId) {
+      query.andWhere('grade.termId = :tid', { tid: termId });
+    }
+    if (academicCalendarId) {
+      query.leftJoin('grade.term', 'tTerm').andWhere('tTerm.academicCalendarId = :acal', { acal: academicCalendarId });
     }
 
     const grades = await query.getMany();
@@ -292,7 +379,7 @@ export class GradeService {
       studentResult.totalPossible += 100;
     });
 
-    const results = await Promise.all(Array.from(studentResultsMap.values()).map(
+  let results = await Promise.all(Array.from(studentResultsMap.values()).map(
       async (studentResult) => {
         const totalMarks = studentResult.results.reduce(
           (sum, exam) => sum + exam.marksObtained,
@@ -323,6 +410,79 @@ export class GradeService {
         };
       },
     ));
+
+    // Fallback / augmentation using aggregated exam_result when:
+    // 1. No legacy grades found for this class & a termId is supplied, OR
+    // 2. Explicit aggregated context (termId provided) even if some grades exist – merge aggregated finals as summary rows
+    if ((results.length === 0 && termId) || termId) {
+      try {
+        // Collect courseIds for this class
+        const courseIds = (await this.courseRepository.find({ where: { classId: classEntity.id } })).map(c=> c.id);
+        const aggregatedByStudent: Record<string, { totals:number; entries:number; finals:any[] }> = {};
+        for (const cid of courseIds) {
+          const agg = await this.aggregationService.getResultsForCourseTerm(cid, termId!);
+          for (const row of agg) {
+            if (!aggregatedByStudent[row.studentId]) aggregatedByStudent[row.studentId] = { totals:0, entries:0, finals: [] };
+            const pct = row.finalPercentage? parseFloat(row.finalPercentage): null;
+            if (pct!=null){
+              aggregatedByStudent[row.studentId].totals += pct;
+              aggregatedByStudent[row.studentId].entries += 1;
+            }
+            aggregatedByStudent[row.studentId].finals.push(row);
+          }
+        }
+
+        // Create student lookup from actual class students
+        const studentLookup = new Map<string, any>();
+        classEntity.students.forEach(student => {
+          studentLookup.set(student.id, student);
+        });
+
+        // Merge into results map (create student rows if missing)
+        const resultsByStudentId = new Map(results.map(r=> [r.student.studentId, r]));
+        for (const [studentUuid, aggData] of Object.entries(aggregatedByStudent)) {
+          const avg = aggData.entries>0? (aggData.totals/aggData.entries): 0;
+          const studentInfo = studentLookup.get(studentUuid);
+          if (!studentInfo) continue; // Skip if student not in class
+          
+          if (!resultsByStudentId.has(studentInfo.studentId)) {
+            results.push({
+              student: { 
+                id: studentInfo.id, 
+                studentId: studentInfo.studentId, 
+                firstName: studentInfo.firstName, 
+                lastName: studentInfo.lastName 
+              },
+              results: [],
+              totalMarks: avg, // interpret as avg for compatibility
+              totalPossible: 100,
+              averageScore: avg,
+              overallGPA: await this.calculateGPA([{ percentage: avg, grade: await this.calculateLetterGradeDynamic(avg, schoolId) } as any], schoolId),
+              totalExams: aggData.entries,
+              remarks: this.getRemarks(avg),
+              aggregatedFinals: aggData.finals,
+              aggregated: true,
+            });
+          } else {
+            const existing = resultsByStudentId.get(studentInfo.studentId)!;
+            existing.aggregatedFinals = aggData.finals;
+            existing.aggregated = true;
+            // Optionally update average if no legacy grades
+            if (existing.totalExams === 0) {
+              existing.averageScore = avg;
+              existing.totalMarks = avg;
+              existing.totalPossible = 100;
+              existing.overallGPA = await this.calculateGPA([{ percentage: avg, grade: await this.calculateLetterGradeDynamic(avg, schoolId) } as any], schoolId);
+              existing.remarks = this.getRemarks(avg);
+            }
+          }
+        }
+      } catch (e) {
+        // Non-fatal; log server side
+        // eslint-disable-next-line no-console
+        console.warn('[GradeService] Aggregated fallback failed', e);
+      }
+    }
 
     return {
       classInfo: {

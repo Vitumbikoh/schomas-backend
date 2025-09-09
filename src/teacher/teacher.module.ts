@@ -23,18 +23,19 @@ import { Exam } from 'src/exams/entities/exam.entity';
 import { Term } from 'src/settings/entities/term.entity';
 import { SettingsModule } from 'src/settings/settings.module';
 import { ExamModule } from 'src/exams/exam.module';
-import { Grade } from 'src/grades/entity/grade.entity';
 import { LogsModule } from 'src/logs/logs.module';
+import { AggregationModule } from 'src/aggregation/aggregation.module';
 
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom,Attendance, Grade, Exam, Term]),
+  TypeOrmModule.forFeature([Teacher, User, Course, Class, Schedule, Classroom,Attendance, Exam, Term]),
     UsersModule,
     AuthModule,
   forwardRef(() => SettingsModule),
     ExamModule,
-    LogsModule,
+  LogsModule,
+  AggregationModule,
   ],
   providers: [
     TeachersService,

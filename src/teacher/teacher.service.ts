@@ -21,9 +21,9 @@ import { Class } from 'src/classes/entity/class.entity';
 import { Attendance } from 'src/attendance/entity/attendance.entity';
 import { format } from 'date-fns';
 import { SubmitGradesDto } from 'src/exams/dto/submit-grades.dto';
+import { AggregationService } from '../aggregation/aggregation.service';
 import { ExamService } from 'src/exams/exam.service';
 import { Exam } from 'src/exams/entities/exam.entity';
-import { Grade } from 'src/grades/entity/grade.entity';
 import { Student } from 'src/user/entities/student.entity';
 import { SettingsService } from 'src/settings/settings.service';
 
@@ -45,8 +45,8 @@ export class TeachersService {
     private readonly examService: ExamService,
     @InjectRepository(Exam)
     private readonly examRepository: Repository<Exam>,
-    @InjectRepository(Grade)
-    private readonly gradeRepository: Repository<Grade>,
+  // Removed Grade repository – migration to aggregation tables
+  private readonly aggregationService: AggregationService,
     @InjectRepository(Student)
     private readonly studentRepository: Repository<Student>,
     private readonly settingsService: SettingsService,
@@ -1198,39 +1198,60 @@ async submitExamGrades(
     where: { studentId: In(studentIds) },
   });
 
-  const gradeRecords: Grade[] = [];
+  // Legacy gradeRecords removed; using aggregation exam_grade only
+  console.log(`[DEBUG] Processing ${Object.keys(submitGradesDto.grades).length} grades for exam ${exam.id}`);
+  
+  const errors: string[] = [];
+  const successfulGrades: string[] = [];
   
   for (const [studentId, gradeValue] of Object.entries(submitGradesDto.grades)) {
     const student = students.find(s => s.studentId === studentId);
     if (!student) {
       console.warn(`Student with ID ${studentId} not found`);
+      errors.push(`Student ${studentId} not found`);
       continue;
     }
 
-    const grade = new Grade();
-    grade.student = student;
-    grade.teacher = teacher;
-    grade.grade = gradeValue.toString();
-    grade.assessmentType = exam.examType;
-    grade.exam = exam;
-    grade.course = exam.course;
-    grade.class = exam.class;
-    // Add multi-tenancy and term tracking
-    grade.schoolId = teacher.schoolId;
-    grade.termId = Term.id;
-    gradeRecords.push(grade);
+    // Persist into aggregation exam_grade table (idempotent create/update handled there)
+    try {
+      console.log(`[DEBUG] Recording grade for student ${studentId}: ${gradeValue} points`);
+      console.log(`[DEBUG] Calling aggregationService.recordExamGrade with:`, {
+        dto: { examId: exam.id, studentId, rawScore: Number(gradeValue) },
+        teacherUserId: teacher.userId, // Pass userId not teacher.id
+        schoolId: teacher.schoolId
+      });
+      const result = await this.aggregationService.recordExamGrade(
+        { examId: exam.id, studentId, rawScore: Number(gradeValue) }, 
+        teacher.userId, // This should be userId, not teacher.id
+        teacher.schoolId
+      );
+      console.log(`[DEBUG] Successfully recorded grade for student ${studentId}:`, result);
+      successfulGrades.push(studentId);
+    } catch (e) {
+      const errorMsg = `recordExamGrade failed for student ${studentId}: ${(e as Error).message}`;
+      console.error('[Aggregation]', errorMsg, e);
+      errors.push(errorMsg);
+      // Don't throw here - collect all errors and handle them at the end
+    }
+  }
+  
+  console.log(`[DEBUG] Grade processing complete. Successful: ${successfulGrades.length}, Errors: ${errors.length}`);
+  
+  // If we have errors, throw them
+  if (errors.length > 0 && successfulGrades.length === 0) {
+    throw new BadRequestException(`Failed to record any grades: ${errors.join('; ')}`);
+  } else if (errors.length > 0) {
+    console.warn(`[WARNING] Some grades failed to record: ${errors.join('; ')}`);
   }
 
-  if (gradeRecords.length === 0) {
+  if (Object.keys(submitGradesDto.grades).length === 0) {
     throw new BadRequestException('No valid student IDs found');
   }
-
-  await this.gradeRepository.save(gradeRecords);
   await this.examRepository.update(exam.id, { status: 'graded' });
 
   return {
     examId: exam.id,
-    gradesSubmitted: gradeRecords.length,
+  gradesSubmitted: Object.keys(submitGradesDto.grades).length,
     totalMarks: exam.totalMarks,
     invalidStudentIds: studentIds.filter(id => !students.some(s => s.studentId === id)),
   };

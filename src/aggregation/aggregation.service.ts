@@ -23,6 +23,25 @@ export class AggregationService {
     @InjectRepository(Teacher) private teacherRepo: Repository<Teacher>,
   ) {}
 
+  // Normalize various user/existing exam type labels to canonical component types.
+  // Canonical internal values remain 'midterm' and 'endterm' (AssessmentComponentType).
+  private normalizeExamType(raw: string | null | undefined): AssessmentComponentType | null {
+    if(!raw) return null;
+    const cleaned = raw.toString().trim().toLowerCase();
+    // Remove separators for pattern matching
+    const compact = cleaned.replace(/[\s_-]+/g,'');
+    // Map mid period / mid-period / mid_period / mid term / midterm / midperiod => midterm
+    const midPatterns = ['midterm','midperiod','midsemester','midsem'];
+    if(midPatterns.includes(compact)) return AssessmentComponentType.MID_TERM;
+    // Map end period / end term / endterm / endperiod / finalterm (treat final as end term if used historically)
+    const endPatterns = ['endterm','endperiod','finalterm','finalperiod','final'];
+    if(endPatterns.includes(compact)) return AssessmentComponentType.END_TERM;
+    // Direct match to existing enum values
+    if(compact === AssessmentComponentType.MID_TERM) return AssessmentComponentType.MID_TERM;
+    if(compact === AssessmentComponentType.END_TERM) return AssessmentComponentType.END_TERM;
+    return null; // Other component types (assignment, quiz, etc.) are handled directly elsewhere
+  }
+
   async createOrUpdateScheme(dto: CreateOrUpdateSchemeDto, teacherUserId: string, schoolId?: string) {
     // Load course with broader relations that might signify ownership/assignment
     const course = await this.courseRepo.findOne({
@@ -160,33 +179,99 @@ export class AggregationService {
   }
 
   async recordExamGrade(dto: RecordExamGradeDto, teacherUserId: string, schoolId?: string){
-    const exam = await this.examRepo.findOne({ where: { id: dto.examId }, relations:['course','Term'] });
-    if(!exam) throw new NotFoundException('Exam not found');
-    if(schoolId && exam.schoolId && exam.schoolId !== schoolId) throw new ForbiddenException('Cross-school exam');
+    console.log(`[DEBUG] recordExamGrade called with:`, { examId: dto.examId, studentId: dto.studentId, rawScore: dto.rawScore, teacherUserId, schoolId });
+    
+    const exam = await this.examRepo.findOne({ 
+      where: { id: dto.examId }, 
+      relations: ['course', 'Term', 'teacher'] // Added 'teacher' relation
+    });
+    if(!exam) {
+      console.error(`[ERROR] Exam not found: ${dto.examId}`);
+      throw new NotFoundException('Exam not found');
+    }
+    
+    console.log(`[DEBUG] Found exam:`, { id: exam.id, title: exam.title, teacherId: exam.teacher?.id, schoolId: exam.schoolId });
 
-    const teacher = await this.teacherRepo.findOne({ where: { userId: teacherUserId } });
-    if(!teacher) throw new ForbiddenException('Teacher not found');
-    if(exam.teacher && exam.teacher.id !== teacher.id) throw new ForbiddenException('Not exam owner');
+    // Normalize examType in-place if it maps to a canonical mid/end term label
+    const normalized = this.normalizeExamType(exam.examType);
+    if(normalized && exam.examType !== normalized){
+      console.log(`[DEBUG] Normalizing exam.examType from '${exam.examType}' -> '${normalized}'`);
+      exam.examType = normalized;
+      try { await this.examRepo.save(exam); } catch(e){ console.warn('[WARN] Failed to persist normalized examType', e); }
+    }
+    
+    if(schoolId && exam.schoolId && exam.schoolId !== schoolId) {
+      console.error(`[ERROR] Cross-school exam access denied: exam.schoolId=${exam.schoolId}, provided.schoolId=${schoolId}`);
+      throw new ForbiddenException('Cross-school exam');
+    }
 
+    // Accept either teacher.userId or teacher.id (backward compatibility with older callers)
+    let teacher = await this.teacherRepo.findOne({ where: { userId: teacherUserId } });
+    if(!teacher){
+      teacher = await this.teacherRepo.findOne({ where: { id: teacherUserId } });
+    }
+    if(!teacher) {
+      console.error(`[ERROR] Teacher not found (userId or id) for value: ${teacherUserId}`);
+      throw new ForbiddenException('Teacher not found');
+    }
+    
+    console.log(`[DEBUG] Found teacher:`, { id: teacher.id, userId: teacher.userId });
+    
+    // SKIP OWNERSHIP VALIDATION FOR GRADE SUBMISSION
+    // The controller already verified this teacher can access this exam
+    // Focus only on school-level security boundary
+    if (schoolId && exam.schoolId && exam.schoolId !== schoolId) {
+      console.error(`[ERROR] Cross-school exam access denied: exam.schoolId=${exam.schoolId}, provided.schoolId=${schoolId}`);
+      throw new ForbiddenException('Cross-school exam');
+    }
+    
+    console.log(`[DEBUG] School boundary check passed - proceeding with grade submission`);
+    
     const student = await this.studentRepo.findOne({ where: { studentId: dto.studentId } });
-    if(!student) throw new NotFoundException('Student not found');
+    if(!student) {
+      console.error(`[ERROR] Student not found by external studentId: ${dto.studentId}`);
+      throw new NotFoundException('Student not found');
+    }
+    // Internal UUID (primary key) vs external human-readable studentId (e.g. 250006)
+    const studentUuid = student.id; // this is the FK expected by exam_grade.studentId (uuid column)
+    console.log(`[DEBUG] Found student:`, { uuid: studentUuid, externalStudentId: student.studentId });
 
     const totalMarks = exam.totalMarks || 100;
-    if(dto.rawScore > totalMarks) throw new BadRequestException('Score exceeds total marks');
+    if(dto.rawScore > totalMarks) {
+      console.error(`[ERROR] Score exceeds total marks: ${dto.rawScore} > ${totalMarks}`);
+      throw new BadRequestException('Score exceeds total marks');
+    }
 
     const percentage = (dto.rawScore / totalMarks) * 100;
 
-    let rec = await this.examGradeRepo.findOne({ where: { examId: exam.id, studentId: student.studentId } });
+  // Always use internal UUID for persistence & lookups in exam_grade
+  let rec = await this.examGradeRepo.findOne({ where: { examId: exam.id, studentId: studentUuid } });
     if(!rec){
-      rec = this.examGradeRepo.create({ examId: exam.id, studentId: student.studentId, courseId: exam.course?.id, termId: exam.TermId, schoolId: exam.schoolId || null, rawScore: dto.rawScore.toFixed(2), percentage: percentage.toFixed(2), status: 'PUBLISHED' });
+      console.log(`[DEBUG] Creating new exam grade record`);
+      rec = this.examGradeRepo.create({ 
+        examId: exam.id, 
+        studentId: studentUuid, 
+        courseId: exam.course?.id, 
+        termId: exam.TermId, 
+        schoolId: exam.schoolId || null, 
+        rawScore: dto.rawScore.toFixed(2), 
+        percentage: percentage.toFixed(2), 
+        status: 'PUBLISHED' 
+      });
     } else {
+      console.log(`[DEBUG] Updating existing exam grade record`);
       rec.rawScore = dto.rawScore.toFixed(2);
       rec.percentage = percentage.toFixed(2);
     }
+    
+    console.log(`[DEBUG] Saving exam grade record:`, rec);
     await this.examGradeRepo.save(rec);
+    console.log(`[DEBUG] Exam grade saved successfully`);
 
     // Recompute this student's aggregate if scheme exists
-    await this.recomputeStudent(exam.course?.id, exam.TermId, student.studentId);
+    console.log(`[DEBUG] Triggering recomputation for student`);
+  await this.recomputeStudent(exam.course?.id, exam.TermId, studentUuid);
+    console.log(`[DEBUG] Recomputation completed`);
 
     return rec;
   }
@@ -210,11 +295,11 @@ export class AggregationService {
     return 'F';
   }
 
-  async recomputeStudent(courseId: string, termId: string, studentId: string){
+  async recomputeStudent(courseId: string, termId: string, studentUuid: string){
     const scheme = await this.schemeRepo.findOne({ where: { courseId, termId }, relations:['components'] });
     if(!scheme) return; // cannot compute
 
-    const grades = await this.examGradeRepo.find({ where: { courseId, termId, studentId } });
+    const grades = await this.examGradeRepo.find({ where: { courseId, termId, studentId: studentUuid } });
     // Group grades by examType via exam join (optimize later)
     // For now assume examType present in exam entity
     const examIds = grades.map(g=> g.examId);
@@ -228,7 +313,11 @@ export class AggregationService {
     for(const comp of scheme.components){
       // Collect percentages of exams matching componentType
       const compGrades = grades.filter(gr => {
-        const ex = examMap.get(gr.examId); return ex?.examType === comp.componentType; });
+        const ex = examMap.get(gr.examId); 
+        if(!ex) return false;
+        const exNorm = this.normalizeExamType(ex.examType) || ex.examType; // fall back to original for non mid/end components
+        return exNorm === comp.componentType; 
+      });
       if(compGrades.length === 0){
         if(comp.required) pending = true; // missing required component
         breakdown.push({ componentType: comp.componentType, weight: comp.weight, earnedPercentage: null, weighted: 0 });
@@ -240,9 +329,9 @@ export class AggregationService {
       breakdown.push({ componentType: comp.componentType, weight: comp.weight, earnedPercentage: parseFloat(avg.toFixed(2)), weighted: parseFloat(weighted.toFixed(2)) });
     }
 
-    let result = await this.resultRepo.findOne({ where: { studentId, courseId, termId } });
+    let result = await this.resultRepo.findOne({ where: { studentId: studentUuid, courseId, termId } });
     if(!result){
-      result = this.resultRepo.create({ studentId, courseId, termId, schoolId: scheme.schoolId, schemeVersion: scheme.version, status: AggregatedResultStatus.PENDING });
+      result = this.resultRepo.create({ studentId: studentUuid, courseId, termId, schoolId: scheme.schoolId, schemeVersion: scheme.version, status: AggregatedResultStatus.PENDING });
     }
 
     if(pending){

@@ -13,6 +13,8 @@ import { AcademicCalendar } from 'src/settings/entities/academic-calendar.entity
 import { AuthModule } from '../auth/auth.module';
 import { GradeController } from './grade.controller';
 import { ConfigModule } from 'src/config/config.module';
+import { Exam } from '../exams/entities/exam.entity';
+import { AggregationModule } from '../aggregation/aggregation.module';
 
 @Module({
   imports: [
@@ -26,9 +28,11 @@ import { ConfigModule } from 'src/config/config.module';
       Teacher,
       Term,
       AcademicCalendar,
+      Exam,
     ]),
     AuthModule,
     ConfigModule,
+    AggregationModule,
   ],
   controllers: [GradeController], // Now properly imported
   providers: [GradeService],

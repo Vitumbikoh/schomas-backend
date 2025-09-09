@@ -48,6 +48,8 @@ export class GradeController {
   async getClassGrades(
     @Param('classId') classId: string,
     @Request() req,
+    @Query('termId') termId?: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
     @Query('Term') Term?: string,
     @Query('period') period?: string
   ) {
@@ -55,6 +57,8 @@ export class GradeController {
       classId, 
       req.user.sub, 
       req.user.schoolId, // Pass the user's schoolId
+      termId,
+      academicCalendarId,
       Term, 
       period
     );
