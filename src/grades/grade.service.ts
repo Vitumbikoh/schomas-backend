@@ -21,6 +21,7 @@ import { GradeFormat } from './entity/grade-format.entity';
 import { IsNull } from 'typeorm';
 import { AggregationService } from '../aggregation/aggregation.service';
 import { Exam } from '../exams/entities/exam.entity';
+import { ExamResultAggregate } from '../aggregation/entities/exam-result-aggregate.entity';
 
 @Injectable()
 export class GradeService {
@@ -45,6 +46,8 @@ export class GradeService {
     private academicCalendarRepository: Repository<AcademicCalendar>,
     @InjectRepository(Exam)
     private examRepository: Repository<Exam>,
+    @InjectRepository(ExamResultAggregate)
+    private examResultRepository: Repository<ExamResultAggregate>,
     private aggregationService: AggregationService,
   ) {}
 
@@ -747,82 +750,97 @@ export class GradeService {
       resolvedStudentIds = classEntity.students.map(s => s.id);
     }
 
-    // Query grades
-    const qb = this.gradeRepository.createQueryBuilder('grade')
-      .leftJoinAndSelect('grade.student', 'student')
-      .leftJoinAndSelect('grade.course', 'course')
-      .leftJoinAndSelect('grade.class', 'class')
-      .leftJoinAndSelect('grade.term', 'term')
-      .where('grade.schoolId = :schoolId', { schoolId })
-      .andWhere('grade.termId IN (:...termIds)', { termIds: effectiveTermIds });
+    // Query exam results instead of grades
+    const qb = this.examResultRepository.createQueryBuilder('examResult')
+      .leftJoinAndSelect('examResult.student', 'student')
+      .leftJoinAndSelect('examResult.course', 'course')
+      .leftJoinAndSelect('examResult.term', 'term')
+      .leftJoinAndSelect('examResult.school', 'school')
+      .where('examResult.schoolId = :schoolId', { schoolId })
+      .andWhere('examResult.termId IN (:...termIds)', { termIds: effectiveTermIds });
 
     if (resolvedStudentIds.length > 0) {
       qb.andWhere('student.id IN (:...studentIds)', { studentIds: resolvedStudentIds });
     }
     if (classId) {
-      qb.andWhere('class.id = :classId', { classId });
+      // Get students in the class and filter by them
+      const classEntity = await this.classRepository.findOne({ 
+        where: { id: classId }, 
+        relations: ['students'] 
+      });
+      if (classEntity) {
+        const classStudentIds = classEntity.students.map(s => s.id);
+        qb.andWhere('student.id IN (:...classStudentIds)', { classStudentIds });
+      }
     }
 
-    const rawGrades = await qb.getMany();
+    const rawResults = await qb.getMany();
 
-    // Hide grades for unpublished terms
+    // Hide results for unpublished terms
     const fetchedTerms = await this.termRepository.find({ where: { id: In(effectiveTermIds) } });
     const publishedTermIds = new Set(
       fetchedTerms.filter(t => t.resultsPublished).map(t => t.id)
     );
     const isPrivilegedViewer = ['ADMIN', 'SUPER_ADMIN'].includes((user as any).role);
-    const grades = (includeUnpublished || isPrivilegedViewer)
-      ? rawGrades
-      : rawGrades.filter(g => !g.termId || publishedTermIds.has(g.termId));
+    const examResults = (includeUnpublished || isPrivilegedViewer)
+      ? rawResults
+      : rawResults.filter(r => !r.termId || publishedTermIds.has(r.termId));
 
     // Grouping structures
     interface TermGroup { termId: string; termNumber?: number; assessments: any[]; totalMarks: number; totalPossible: number; averagePercentage: number; gpa: number; }
     const studentsMap = new Map<string, { student: any; terms: Map<string, TermGroup> }>();
 
-    for (const grade of grades) {
-      const sid = grade.student.id;
+    for (const examResult of examResults) {
+      const sid = examResult.student.id;
       if (!studentsMap.has(sid)) {
+        // Get the student's class information from enrollment or other means
+        const studentClass = await this.classRepository
+          .createQueryBuilder('class')
+          .innerJoin('class.students', 'student')
+          .where('student.id = :studentId', { studentId: sid })
+          .getOne();
+
         studentsMap.set(sid, {
           student: {
-            id: grade.student.id,
-            studentId: grade.student.studentId,
-            firstName: grade.student.firstName,
-            lastName: grade.student.lastName,
-            classId: grade.class?.id || null,
-            className: grade.class?.name || null,
+            id: examResult.student.id,
+            studentId: examResult.student.studentId,
+            firstName: examResult.student.firstName,
+            lastName: examResult.student.lastName,
+            classId: studentClass?.id || null,
+            className: studentClass?.name || null,
           },
           terms: new Map(),
         });
       }
       const studentEntry = studentsMap.get(sid)!;
-      const tId = grade.termId || 'unassigned';
+      const tId = examResult.termId || 'unassigned';
       if (!studentEntry.terms.has(tId)) {
         studentEntry.terms.set(tId, {
           termId: tId,
-            termNumber: grade.term?.termNumber,
-            assessments: [],
-            totalMarks: 0,
-            totalPossible: 0,
-            averagePercentage: 0,
-            gpa: 0,
+          termNumber: examResult.term?.termNumber,
+          assessments: [],
+          totalMarks: 0,
+          totalPossible: 0,
+          averagePercentage: 0,
+          gpa: 0,
         });
       }
       const termGroup = studentEntry.terms.get(tId)!;
-      const marks = parseFloat(grade.grade) || 0;
+      const percentage = parseFloat(examResult.finalPercentage || '0') || 0;
       termGroup.assessments.push({
-        gradeId: grade.gradeId,
-        examTitle: grade.course?.name,
-        subject: grade.course?.name,
-        marksObtained: marks,
+        gradeId: examResult.id,
+        examTitle: examResult.course?.name,
+        subject: examResult.course?.name,
+        marksObtained: percentage, // Using percentage as marks for now
         totalMarks: 100,
-        percentage: marks,
-        grade: 'TEMP',
-        date: grade.date,
-        examType: grade.assessmentType,
-        termId: grade.termId,
-        termNumber: grade.term?.termNumber,
+        percentage: percentage,
+        grade: examResult.finalGradeCode || 'TEMP',
+        date: examResult.updatedAt,
+        examType: 'EXAM',
+        termId: examResult.termId,
+        termNumber: examResult.term?.termNumber,
       });
-      termGroup.totalMarks += marks;
+      termGroup.totalMarks += percentage;
       termGroup.totalPossible += 100;
     }
 

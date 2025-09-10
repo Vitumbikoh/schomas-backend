@@ -83,4 +83,23 @@ export class AnalyticsController {
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
     return this.analyticsService.getDashboardSummary(effectiveSchoolId, isSuper);
   }
+
+  @Get('teacher-performance')
+  async teacherPerformance(
+    @Request() req,
+    @Query('termId') termId?: string,
+    @Query('schoolId') schoolIdFilter?: string,
+    @Query('limit') limit?: string,
+    @Query('passThreshold') passThreshold?: string,
+  ) {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
+    return this.analyticsService.getTeacherPerformance({
+      termId,
+      schoolId: effectiveSchoolId,
+      superAdmin: isSuper,
+      passThreshold: passThreshold ? parseFloat(passThreshold) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
+  }
 }

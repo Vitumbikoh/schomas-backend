@@ -215,6 +215,26 @@ export class FinanceController {
     );
   }
 
+  @Get('fee-types')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'List active fee types for current or provided term' })
+  async listActiveFeeTypes(
+    @Request() req,
+    @Query('termId') termId?: string,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    const items = await this.studentFeeExpectationService.getFeeStructureForTerm(
+      termId || undefined,
+      superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
+      superAdmin,
+    );
+    // Map unique feeType values (only active)
+    const active = Array.isArray(items) ? items.filter((i:any)=> i.isActive) : [];
+    const uniqueTypes = Array.from(new Set(active.map((i:any)=> i.feeType?.trim()))).filter(Boolean);
+    return { feeTypes: uniqueTypes };
+  }
+
   @Put('fee-structure/:id')
   @Roles(Role.ADMIN, Role.FINANCE)
   @ApiOperation({ summary: 'Update a fee structure item' })

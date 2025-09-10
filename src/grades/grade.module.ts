@@ -15,6 +15,7 @@ import { GradeController } from './grade.controller';
 import { ConfigModule } from 'src/config/config.module';
 import { Exam } from '../exams/entities/exam.entity';
 import { AggregationModule } from '../aggregation/aggregation.module';
+import { ExamResultAggregate } from '../aggregation/entities/exam-result-aggregate.entity';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { AggregationModule } from '../aggregation/aggregation.module';
       Term,
       AcademicCalendar,
       Exam,
+      ExamResultAggregate,
     ]),
     AuthModule,
     ConfigModule,

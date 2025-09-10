@@ -579,6 +579,7 @@ export class FinanceService {
       transactions: transactions.map((t) => ({
         ...t,
         studentName: t.student ? `${t.student.firstName} ${t.student.lastName}` : 'Unknown',
+  studentId: t.student ? t.student.studentId : undefined,
         paymentDate: t.paymentDate?.toISOString(),
         processedByName: t.processedBy?.user?.username || t.processedByAdmin?.username || 'Unknown',
         term: t.term ? `${t.term.academicCalendar.term} - ${t.term.period.name}` : 'N/A',
@@ -913,7 +914,15 @@ async getParentPayments(
   async getPaymentById(id: string) {
     return this.paymentRepository.findOne({
       where: { id },
-      relations: ['student', 'processedBy', 'processedByAdmin', 'term'],
+      relations: [
+        'student', 
+        'processedBy', 
+        'processedByAdmin', 
+        'term', 
+        'term.academicCalendar', 
+        'term.period',
+        'school'
+      ],
     });
   }
 

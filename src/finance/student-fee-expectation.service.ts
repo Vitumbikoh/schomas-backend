@@ -15,7 +15,8 @@ export class StudentFeeExpectationService {
     @InjectRepository(Term) private termRepo: Repository<Term>,
   ) {}
 
-  async getFeeStructureForTerm(termId: string, schoolId?: string, superAdmin = false) {
+  async getFeeStructureForTerm(termId: string | undefined, schoolId?: string, superAdmin = false) {
+    if (!termId) return [];
     const where: any = { termId };
     if (!superAdmin) {
       if (schoolId) where.schoolId = schoolId; else return [];
@@ -141,7 +142,7 @@ export class StudentFeeExpectationService {
       const totalPaid = paidMap[student.id] || 0;
       const outstanding = Math.max(0, totalExpected - totalPaid);
       const isOverdue = pastEnd && outstanding > 0;
-      return { studentId: student.id, studentName: `${student.firstName} ${student.lastName}`, termId, totalExpected, totalPaid, outstanding, paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0, status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'), isOverdue, overdueAmount: isOverdue ? outstanding : 0 };
+      return { studentId: student.id, humanId: student.studentId, studentName: `${student.firstName} ${student.lastName}`, termId, totalExpected, totalPaid, outstanding, paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0, status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'), isOverdue, overdueAmount: isOverdue ? outstanding : 0 };
     });
     return statuses.sort((a, b) => b.outstanding - a.outstanding);
   }

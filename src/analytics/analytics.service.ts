@@ -346,4 +346,87 @@ export class AnalyticsService {
       feePaymentPercentage,
     };
   }
+
+  /**
+   * Compute performance metrics per teacher based on student grades.
+   * Metrics:
+   *  - avgGrade: Average numeric grade across all their submitted grades
+   *  - passRate: % of grades >= passThreshold (default 50)
+   *  - studentCount: Distinct students taught (from grades submitted)
+   *  - gradeCount: Total grade records
+   * Optional filtering by term (current term if not provided) and school (multi-tenant scope).
+   */
+  async getTeacherPerformance(options: { termId?: string; schoolId?: string; superAdmin?: boolean; passThreshold?: number; limit?: number } = {}) {
+    const { termId, schoolId, superAdmin = false, passThreshold = 50, limit } = options;
+
+    // Resolve term (current if none supplied)
+    let effectiveTermId = termId;
+    if (!effectiveTermId) {
+      const current = await this.getCurrentTermDetails();
+      effectiveTermId = current?.id;
+    }
+
+    // Base query – join teacher via grade.teacher relation
+    const qb = this.gradeRepo.createQueryBuilder('g')
+      .leftJoin('g.teacher', 't')
+      .leftJoin('g.student', 's')
+      .select('t.id', 'teacherId')
+      .addSelect('t.firstName', 'firstName')
+      .addSelect('t.lastName', 'lastName')
+      // Use correct primary key column gradeId
+      .addSelect('COUNT(g.gradeId)', 'gradeCount')
+      // Distinct students via joined student table id
+      .addSelect('COUNT(DISTINCT s.id)', 'studentCount')
+      .addSelect('AVG(CAST(g.grade as float))', 'avgGrade')
+      .addSelect(`SUM(CASE WHEN CAST(g.grade as float) >= :passThreshold THEN 1 ELSE 0 END)`, 'passCount')
+      .groupBy('t.id');
+
+    // School scoping via student.schoolId (most reliable multi-tenant link)
+    if (!superAdmin) {
+      if (!schoolId) return { metadata: { termId: effectiveTermId || null, total: 0 }, teachers: [], topPerformer: null };
+      qb.where('s.schoolId = :schoolId', { schoolId });
+    } else if (schoolId) {
+      qb.where('s.schoolId = :schoolId', { schoolId });
+    }
+
+    if (effectiveTermId) {
+      qb.andWhere('g.termId = :termId', { termId: effectiveTermId });
+    }
+
+    qb.setParameter('passThreshold', passThreshold);
+
+    const raw = await qb.getRawMany();
+    const teachers = raw.map(r => {
+      const avg = parseFloat(parseFloat(r.avgGrade || '0').toFixed(2));
+      const gradeCount = parseInt(r.gradeCount, 10) || 0;
+      const passCount = parseInt(r.passCount, 10) || 0;
+      const passRate = gradeCount ? parseFloat(((passCount / gradeCount) * 100).toFixed(2)) : 0;
+      return {
+        teacherId: r.teacherId,
+        firstName: r.firstName,
+        lastName: r.lastName,
+        gradeCount,
+        studentCount: parseInt(r.studentCount, 10) || 0,
+        avgGrade: avg,
+        passRate,
+      };
+    }).filter(t => t.teacherId); // filter out null teacher rows (if any grade rows lack teacher)
+
+    // Sort by avgGrade desc then passRate desc
+    teachers.sort((a,b)=> (b.avgGrade - a.avgGrade) || (b.passRate - a.passRate));
+
+    const limited = typeof limit === 'number' ? teachers.slice(0, limit) : teachers;
+    const topPerformer = limited[0] || null;
+
+    return {
+      metadata: {
+        termId: effectiveTermId || null,
+        total: teachers.length,
+        generatedAt: new Date().toISOString(),
+        passThreshold,
+      },
+      topPerformer,
+      teachers: limited,
+    };
+  }
 }
