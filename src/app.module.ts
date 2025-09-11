@@ -28,6 +28,7 @@ import { RoutesModule } from './routes/routes.module';
 import { SystemModule } from './system/system.module';
 import { AggregationModule } from './aggregation/aggregation.module';
 import { BillingModule } from './billing/billing.module';
+import { LibraryModule } from './library/library.module';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { BillingModule } from './billing/billing.module';
   SystemModule,
   AggregationModule,
   BillingModule,
+  LibraryModule,
   ],
 })
 export class AppModule {}
