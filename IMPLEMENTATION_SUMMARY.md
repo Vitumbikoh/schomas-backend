@@ -89,28 +89,12 @@ GET /fee-analytics/summary/:TermId - Payment summary overview
 
 ### 4. System-Wide Logging Enhancement
 **File**: `src/logs/system-logging.service.ts`
-- Comprehensive logging service for all major system operations
-- Module-specific logging methods
-- Error tracking with stack traces
-- Performance monitoring with duration tracking
 
 **Enhanced Log Entity Structure**:
 ```typescript
-- action: string (descriptive action name)
-- module: string (system module identifier)
-- level: 'info' | 'warn' | 'error' | 'debug'
-- performedBy: user information object
-- entityId: related entity identifier
-- entityType: entity type classification
-- oldValues: before-change state tracking
-- newValues: after-change state tracking
-- metadata: additional context information
-- ipAddress: request origin tracking
-- userAgent: client information
-- duration: performance monitoring
-- errorMessage: error details
-- stackTrace: debugging information
 ```
+### Logging & Monitoring
+ Existing manual logging through `SystemLoggingService` now complemented by automatic CUD entity logging via TypeORM subscriber `ActivitySubscriber` (excludes SUPER_ADMIN actions and associates logs with `schoolId`). Request context captured using AsyncLocalStorage middleware.
 
 **Module-Specific Logging Methods**:
 ```typescript

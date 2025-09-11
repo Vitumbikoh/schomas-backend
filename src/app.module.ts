@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { FinanceModule } from './finance/finance.module';
@@ -29,6 +29,7 @@ import { SystemModule } from './system/system.module';
 import { AggregationModule } from './aggregation/aggregation.module';
 import { BillingModule } from './billing/billing.module';
 import { LibraryModule } from './library/library.module';
+import { RequestContextMiddleware } from './common/request-context/request-context.middleware';
 
 @Module({
   imports: [
@@ -64,4 +65,8 @@ import { LibraryModule } from './library/library.module';
   LibraryModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestContextMiddleware).forRoutes('*');
+  }
+}
