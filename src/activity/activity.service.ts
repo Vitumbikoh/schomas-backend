@@ -38,10 +38,6 @@ export class ActivitiesService {
     // Take only the requested limit after filtering
     const filteredLogs = logs.slice(0, limit);
 
-    return filteredLogs.map(log => ({
-      ...log,
-      // Transform action values if needed
-      action: log.action.toLowerCase().replace('_', ' '),
-    }));
+    return filteredLogs;
   }
 }
