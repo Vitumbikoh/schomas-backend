@@ -1,0 +1,11 @@
+firstName,lastName,password,email,username,phoneNumber,address,dateOfBirth,gender,gradeLevel,class,parentId
+John,Doe,Password123!,john.doe@example.com,,1234567890,123 Main St,5/14/2012,Male,Form 1,Form one,
+Mary,Kamau,Password123!,mary.kamau@example.com,,2.547E+11,Nairobi,9/1/2011,Female,Form 2,Form two,
+Ali,Hassan,Password123!,ali.hassan@example.com,,2.547E+11,Mombasa,2/10/2013,Male,Form 2,Form two,
+Grace,Wanjiru,Password123!,grace.wanjiru@example.com,,2.547E+11,Nakuru,11/23/2012,Female,Form 1,Form one,
+Peter,Otieno,Password123!,peter.otieno@example.com,,2.547E+11,Kisumu,3/5/2011,Male,Form 2,Form two,
+Linda,Achieng,Password123!,linda.achieng@example.com,,2.547E+11,Eldoret,7/18/2013,Female,Form 2,Form two,
+Brian,Mwangi,Password123!,brian.mwangi@example.com,,2.547E+11,Thika,9/30/2012,Male,Form 1,Form one,
+Faith,Njeri,Password123!,faith.njeri@example.com,,2.547E+11,Nyeri,12/12/2011,Female,Form 2,Form two,
+Samuel,Kibet,Password123!,samuel.kibet@example.com,,2.547E+11,Kericho,1/22/2013,Male,Form 1,Form one,
+Naomi,Chebet,Password123!,naomi.chebet@example.com,,2.547E+11,Bomet,4/8/2012,Female,Form 1,Form one,
