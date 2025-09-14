@@ -16,6 +16,7 @@ import { TeachersService } from '../teacher/teacher.service';
 import { CourseService } from '../course/course.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { FinanceService } from '../finance/finance.service';
+import { SettingsService } from '../settings/settings.service';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { FeePayment } from '../finance/entities/fee-payment.entity';
 import { ReportsMapperService } from './reports-mapper.service';
@@ -33,6 +34,7 @@ export class ReportsController {
     private readonly courseService: CourseService,
     private readonly enrollmentService: EnrollmentService,
     private readonly financeService: FinanceService,
+    private readonly settingsService: SettingsService,
     private readonly reportsMapper: ReportsMapperService,
   ) {}
 
@@ -101,6 +103,10 @@ export class ReportsController {
       const targetSchoolId = superAdmin ? (req.query.schoolId as string) : user.schoolId;
 
       this.logger.debug(`Reports fetch start schoolId=${targetSchoolId} superAdmin=${superAdmin}`);
+      
+      // Fetch school information for report branding
+      const schoolInfo = await this.safeFetch('schoolInfo', () => this.settingsService.getSchoolInfo(targetSchoolId));
+
       // StudentsService.findAll signature: findAll(options?: FindManyOptions<Student>, schoolId?: string, superAdmin = false)
       // Previous call passed plain where object (bug) causing incorrect query builder usage and potential runtime issues.
       const students = await this.safeFetch('students', () => this.studentsService.findAll({ where: studentWhere }, targetSchoolId, superAdmin));
@@ -196,6 +202,7 @@ export class ReportsController {
   enrollments: safeArr(filteredEnrollments).map(e => this.reportsMapper.mapEnrollment(e)),
   feePayments: safeArr(filteredPayments).map(p => this.reportsMapper.mapPayment(p)),
         recentActivities,
+        schoolInfo: schoolInfo || null, // Add school information for report branding
       };
       return dto;
     } catch (error) {

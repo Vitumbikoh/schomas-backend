@@ -20,6 +20,7 @@ import { Class } from 'src/classes/entity/class.entity';
 import { Course } from 'src/course/entities/course.entity';
 import { Grade } from 'src/grades/entity/grade.entity';
 import { School } from '../../school/entities/school.entity';
+import { Borrowing } from '../../library/entities/borrowing.entity';
 @Entity()
 export class Student extends BaseEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -84,6 +85,9 @@ export class Student extends BaseEntity {
 
   @ManyToMany(() => Course, (course) => course.students)
   courses: Course[];
+
+  @OneToMany(() => Borrowing, (borrowing) => borrowing.student)
+  borrowings: Borrowing[];
 
    @Column({ nullable: true })
   termId: string;

@@ -1815,4 +1815,43 @@ async getCurrentTerm(): Promise<{ id: string } | null> {
       promotionPreview,
     };
   }
+
+  /**
+   * Get school information including both school entity and school settings
+   * Used for reports and other school-specific data
+   */
+  async getSchoolInfo(schoolId: string): Promise<{ school: any; settings: SchoolSettings | null }> {
+    if (!schoolId) {
+      return { school: null, settings: null };
+    }
+
+    try {
+      // Get school basic info from school entity
+      const school = await this.dataSource.getRepository('School').findOne({
+        where: { id: schoolId }
+      });
+
+      // Get school settings
+      let settings = await this.schoolSettingsRepository.findOne({
+        where: { schoolId },
+      });
+
+      // Create default settings if they don't exist
+      if (!settings) {
+        settings = await this.schoolSettingsRepository.save({
+          schoolId,
+          schoolName: school?.name || '',
+          schoolEmail: '',
+          schoolPhone: '',
+          schoolAddress: '',
+          schoolAbout: '',
+        } as Partial<SchoolSettings>);
+      }
+
+      return { school, settings };
+    } catch (error) {
+      this.logger.error(`Failed to get school info for ${schoolId}:`, error);
+      return { school: null, settings: null };
+    }
+  }
 }

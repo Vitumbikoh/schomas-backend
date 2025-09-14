@@ -107,4 +107,8 @@ export interface ComprehensiveReportDTO {
   enrollments: EnrollmentsReportItem[];
   feePayments: FeePaymentsReportItem[];
   recentActivities: Array<{ id: string; type: string; description: string; date: string }>; 
+  schoolInfo?: {
+    school?: any;    // School entity
+    settings?: any;  // SchoolSettings entity (can be null)
+  } | null;
 }
