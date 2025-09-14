@@ -182,7 +182,9 @@ export class EnrollmentService {
     const qb = this.enrollmentRepository
       .createQueryBuilder('enrollment')
       .leftJoinAndSelect('enrollment.student', 'student')
-      .leftJoinAndSelect('enrollment.course', 'course');
+      .leftJoinAndSelect('enrollment.course', 'course')
+      .leftJoinAndSelect('course.class', 'courseClass')
+      // Removed invalid join 'enrollment.class' (Enrollment entity has no direct class relation)
     if (!superAdmin) {
       qb.where('enrollment.schoolId = :schoolId', { schoolId });
     } else if (schoolId) {
@@ -198,6 +200,7 @@ export class EnrollmentService {
       .createQueryBuilder('enrollment')
       .leftJoinAndSelect('enrollment.student', 'student')
       .leftJoinAndSelect('enrollment.course', 'course')
+      .leftJoinAndSelect('course.class', 'courseClass')
       .leftJoinAndSelect('enrollment.Term', 'Term')
       .orderBy('enrollment.createdAt', 'DESC');
     if (!superAdmin) {
@@ -221,6 +224,8 @@ export class EnrollmentService {
       .createQueryBuilder('enrollment')
       .leftJoinAndSelect('enrollment.student', 'student')
       .leftJoinAndSelect('enrollment.course', 'course')
+      .leftJoinAndSelect('course.class', 'courseClass')
+      // Removed invalid join 'enrollment.class' (Enrollment entity has no class relation)
       .orderBy('enrollment.createdAt', 'DESC')
       .take(limit);
     if (!superAdmin) {

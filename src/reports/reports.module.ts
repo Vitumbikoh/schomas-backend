@@ -25,6 +25,7 @@ import { TeachersModule } from 'src/teacher/teacher.module';
 import { FinanceModule } from 'src/finance/finance.module';
 import { LogsModule } from 'src/logs/logs.module';
 import { AggregationModule } from 'src/aggregation/aggregation.module';
+import { ReportsMapperService } from './reports-mapper.service';
 
 @Module({
   imports: [
@@ -57,7 +58,8 @@ import { AggregationModule } from 'src/aggregation/aggregation.module';
     UsersService,
     ScheduleService,
     ParentsService,
-    ExamService
+    ExamService,
+    ReportsMapperService
   ],
 })
 export class ReportsModule {}

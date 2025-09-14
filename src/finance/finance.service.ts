@@ -882,6 +882,7 @@ async getParentPayments(
     const qb = this.paymentRepository
       .createQueryBuilder('payment')
       .leftJoinAndSelect('payment.student', 'student')
+      .leftJoinAndSelect('student.class', 'studentClass')
       .leftJoinAndSelect('payment.processedBy', 'processedBy')
       .leftJoinAndSelect('payment.processedByAdmin', 'processedByAdmin')
       .leftJoinAndSelect('payment.term', 'term')

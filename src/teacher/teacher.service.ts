@@ -146,7 +146,9 @@ export class TeachersService {
     const skip = (page - 1) * limit;
     const qb = this.teacherRepository
       .createQueryBuilder('teacher')
-      .leftJoinAndSelect('teacher.user', 'user');
+      .leftJoinAndSelect('teacher.user', 'user')
+      // Removed leftJoin on non-existent relation 'assignedClass' to prevent TypeORM relation error
+      // .leftJoinAndSelect('teacher.assignedClass', 'assignedClass');
 
     if (!superAdmin) {
       if (!schoolId) return [[], 0];
