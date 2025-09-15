@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { MoreThan, Repository } from 'typeorm';
 import { Schedule } from './entity/schedule.entity';
@@ -7,6 +7,8 @@ import { Teacher } from 'src/user/entities/teacher.entity';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
 import { Class } from 'src/classes/entity/class.entity';
 import { getDayName } from 'src/common/utils/date-utils';
+import { CreateScheduleDto, UpdateScheduleDto, WeeklyTimetableResponse } from './dtos/schedule.dto';
+import * as XLSX from 'xlsx';
 
 @Injectable()
 export class ScheduleService {
@@ -23,19 +25,59 @@ export class ScheduleService {
     private readonly classRepository: Repository<Class>,
   ) {}
 
- async create(createScheduleDto: {
-  classId: string;
-  date: Date;
-  startTime: Date;
-  endTime: Date;
-  courseId: string;
-  teacherId: string;
-  classroomId: string;
-  isActive?: boolean;
-}): Promise<Schedule> {
-    // Convert string dates to Date objects if needed
-  const dateObj = new Date(createScheduleDto.date);
-  const dayName = getDayName(dateObj);
+  // Utilities
+  private toTime(value: string | Date): string {
+    if (!value) return '00:00:00';
+    if (value instanceof Date) {
+      return value.toTimeString().slice(0, 8);
+    }
+    // normalize HH:mm to HH:mm:00
+    return value.length === 5 ? `${value}:00` : value;
+  }
+
+  private ensureSameSchoolOrThrow(entity: { schoolId?: string | null }, schoolId?: string | null, what = 'entity') {
+    if (schoolId && entity && entity.schoolId && entity.schoolId !== schoolId) {
+      throw new ForbiddenException(`${what} belongs to a different school`);
+    }
+  }
+
+  private async validateConflict(params: {
+    schoolId: string;
+    classId: string;
+    teacherId: string;
+    classroomId?: string;
+    day: string;
+    startTime: string; // HH:mm:ss
+    endTime: string;   // HH:mm:ss
+    excludeId?: string;
+  }) {
+    const { schoolId, classId, teacherId, classroomId, day, startTime, endTime, excludeId } = params;
+
+    // time overlap predicate
+    const qb = this.scheduleRepository
+      .createQueryBuilder('s')
+  .where('s.schoolId = :schoolId', { schoolId })
+      .andWhere('s.day = :day', { day })
+      .andWhere('NOT (s.endTime <= :startTime OR s.startTime >= :endTime)', { startTime, endTime });
+
+    if (excludeId) qb.andWhere('s.id != :excludeId', { excludeId });
+
+    // conflicts: same class, same teacher, optional room
+    const [classClash, teacherClash, roomClash] = await Promise.all([
+  qb.clone().andWhere('s.classId = :classId', { classId }).getOne(),
+  qb.clone().andWhere('s.teacherId = :teacherId', { teacherId }).getOne(),
+  classroomId ? qb.clone().andWhere('s.classroomId = :classroomId', { classroomId }).getOne() : Promise.resolve(null),
+    ]);
+
+    if (classClash) throw new BadRequestException('This class is already booked in the selected time period.');
+    if (teacherClash) throw new BadRequestException('This teacher is already booked in the selected time period.');
+    if (roomClash) throw new BadRequestException('This room is already booked in the selected time period.');
+  }
+
+ async create(createScheduleDto: CreateScheduleDto, schoolId?: string): Promise<Schedule> {
+    if (!schoolId) throw new BadRequestException('schoolId is required');
+    const referenceDate = createScheduleDto.date ? new Date(createScheduleDto.date) : new Date();
+    const dayName = createScheduleDto.day || getDayName(referenceDate);
     const course = await this.courseRepository.findOne({
       where: { id: createScheduleDto.courseId },
     });
@@ -50,11 +92,14 @@ export class ScheduleService {
       throw new NotFoundException('Teacher not found');
     }
 
-    const classroom = await this.classroomRepository.findOne({
-      where: { id: createScheduleDto.classroomId },
-    });
-    if (!classroom) {
-      throw new NotFoundException('Classroom not found');
+    let classroom: Classroom | null = null;
+    if (createScheduleDto.classroomId) {
+      classroom = await this.classroomRepository.findOne({
+        where: { id: createScheduleDto.classroomId },
+      });
+      if (!classroom) {
+        throw new NotFoundException('Classroom not found');
+      }
     }
 
     const classEntity = await this.classRepository.findOne({
@@ -64,37 +109,37 @@ export class ScheduleService {
       throw new NotFoundException('Class not found');
     }
 
-    // Check for schedule conflicts
-    const conflict = await this.scheduleRepository
-      .createQueryBuilder('schedule')
-      .where('schedule.classroomId = :classroomId', {
-        classroomId: createScheduleDto.classroomId,
-      })
-      .andWhere('schedule.date = :date', { date: createScheduleDto.date })
-      .andWhere('schedule.day = :day', { day: dayName })
-      .andWhere(
-        '(:startTime BETWEEN schedule.startTime AND schedule.endTime OR :endTime BETWEEN schedule.startTime AND schedule.endTime)',
-        {
-          startTime: createScheduleDto.startTime,
-          endTime: createScheduleDto.endTime,
-        },
-      )
-      .getOne();
+    // school scoping checks
+    this.ensureSameSchoolOrThrow(course as any, schoolId, 'Course');
+    this.ensureSameSchoolOrThrow(teacher as any, schoolId, 'Teacher');
+    if (classroom) this.ensureSameSchoolOrThrow(classroom as any, schoolId, 'Classroom');
+    this.ensureSameSchoolOrThrow(classEntity as any, schoolId, 'Class');
 
-    if (conflict) {
-      throw new Error('Schedule conflict detected');
-    }
+    // Normalize times and validate conflicts
+    const startTime = this.toTime(createScheduleDto.startTime);
+    const endTime = this.toTime(createScheduleDto.endTime);
+    if (endTime <= startTime) throw new BadRequestException('endTime must be after startTime');
+    await this.validateConflict({
+      schoolId,
+      classId: createScheduleDto.classId,
+      teacherId: createScheduleDto.teacherId,
+      classroomId: classroom?.id,
+      day: dayName,
+      startTime,
+      endTime,
+    });
 
     const schedule = this.scheduleRepository.create({
       class: classEntity,
-      date: dateObj,
+      date: referenceDate,
       day: dayName,
-      startTime: createScheduleDto.startTime,
-      endTime: createScheduleDto.endTime,
+      startTime,
+      endTime,
       course,
       teacher,
-      classroom,
+      classroom: classroom ?? undefined,
       isActive: createScheduleDto.isActive ?? true,
+      schoolId,
     });
 
     return this.scheduleRepository.save(schedule as Schedule);
@@ -105,6 +150,7 @@ export class ScheduleService {
       skip?: number;
       take?: number;
       search?: string;
+      schoolId?: string;
     } = {},
   ): Promise<{ data: Schedule[]; pagination: any }> {
     const query = this.scheduleRepository
@@ -114,6 +160,10 @@ export class ScheduleService {
       .leftJoinAndSelect('schedule.classroom', 'classroom')
       .leftJoinAndSelect('schedule.class', 'class')
       .where('schedule.isActive = :isActive', { isActive: true });
+
+    if (options.schoolId) {
+  query.andWhere('schedule.schoolId = :schoolId', { schoolId: options.schoolId });
+    }
 
     if (options?.search) {
       query.andWhere(
@@ -221,17 +271,8 @@ export class ScheduleService {
 
   async update(
     id: string,
-    updateScheduleDto: {
-      date?: Date;
-      day?: string;
-      startTime?: Date;
-      endTime?: Date;
-      courseId?: string;
-      teacherId?: string;
-      classroomId?: string;
-      classId?: string;
-      isActive?: boolean;
-    },
+    updateScheduleDto: UpdateScheduleDto,
+    schoolId?: string,
   ): Promise<Schedule> {
     const schedule = await this.scheduleRepository.findOne({ where: { id } });
     if (!schedule) {
@@ -278,7 +319,25 @@ export class ScheduleService {
       schedule.class = classEntity;
     }
 
-    Object.assign(schedule, updateScheduleDto);
+    // Normalize and validate time if provided
+    if (updateScheduleDto.startTime) schedule.startTime = this.toTime(updateScheduleDto.startTime);
+    if (updateScheduleDto.endTime) schedule.endTime = this.toTime(updateScheduleDto.endTime);
+    if (schedule.endTime <= schedule.startTime) throw new BadRequestException('endTime must be after startTime');
+    if (updateScheduleDto.day) schedule.day = updateScheduleDto.day;
+    if (updateScheduleDto.date) schedule.date = new Date(updateScheduleDto.date);
+
+    // Conflict validation
+    await this.validateConflict({
+      schoolId: schoolId || schedule.schoolId,
+      classId: schedule.class?.id as string,
+      teacherId: schedule.teacher?.id as string,
+      classroomId: schedule.classroom?.id,
+      day: schedule.day,
+      startTime: schedule.startTime,
+      endTime: schedule.endTime,
+      excludeId: schedule.id,
+    });
+
     return this.scheduleRepository.save(schedule);
   }
 
@@ -301,5 +360,98 @@ export class ScheduleService {
       where: { course: { id: courseId }, isActive: true },
       relations: ['course', 'teacher', 'classroom', 'class'],
     });
+  }
+
+  // Weekly timetable for a class (Mon-Fri by default)
+  async getWeeklyTimetable(classId: string, schoolId: string, days: string[] = ['Monday','Tuesday','Wednesday','Thursday','Friday']): Promise<WeeklyTimetableResponse> {
+    const items = await this.scheduleRepository.find({
+      where: { isActive: true },
+      relations: ['course', 'teacher', 'classroom', 'class'],
+    });
+    const filtered = items.filter(i => (i.class?.id === classId) && (i.schoolId === schoolId) && days.includes(i.day));
+    const byDay = days.map((d) => ({
+      day: d,
+      items: filtered
+        .filter(f => f.day === d)
+        .sort((a,b) => (a.startTime < b.startTime ? -1 : 1))
+        .map(f => ({
+          id: f.id,
+          startTime: f.startTime.slice(0,5),
+          endTime: f.endTime.slice(0,5),
+          course: { id: (f.course as any)?.id, name: (f.course as any)?.name },
+          teacher: { id: (f.teacher as any)?.id, name: `${(f.teacher as any)?.firstName || ''} ${(f.teacher as any)?.lastName || ''}`.trim() },
+          classroom: f.classroom ? { id: (f.classroom as any)?.id, name: (f.classroom as any)?.name } : null,
+        }))
+    }));
+    return { classId, days: byDay };
+  }
+
+  // Clone schedules from one class to another within the same school
+  async cloneClassSchedule(fromClassId: string, toClassId: string, schoolId: string, overwrite = false) {
+    if (fromClassId === toClassId) throw new BadRequestException('Cannot clone to the same class');
+    const [fromItems, toItems] = await Promise.all([
+      this.scheduleRepository.find({ where: { isActive: true }, relations: ['class'] }),
+      this.scheduleRepository.find({ where: { isActive: true }, relations: ['class'] }),
+    ]);
+    const source = fromItems.filter(i => i.class?.id === fromClassId && i.schoolId === schoolId);
+    const existing = toItems.filter(i => i.class?.id === toClassId && i.schoolId === schoolId);
+    if (overwrite && existing.length) {
+      await this.scheduleRepository.remove(existing);
+    }
+    for (const s of source) {
+      await this.validateConflict({
+        schoolId,
+        classId: toClassId,
+        teacherId: (s.teacher as any)?.id,
+        classroomId: s.classroom ? (s.classroom as any)?.id : undefined,
+        day: s.day,
+        startTime: s.startTime,
+        endTime: s.endTime,
+      });
+      await this.scheduleRepository.save({
+        day: s.day,
+        date: s.date,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        course: s.course,
+        teacher: s.teacher,
+        classroom: s.classroom ?? undefined,
+        class: { id: toClassId } as any,
+        isActive: true,
+        schoolId,
+      } as any);
+    }
+    return { cloned: source.length };
+  }
+
+  // Parse an uploaded buffer for CSV/XLSX schedule entries
+  async bulkImport(buffer: Buffer, schoolId: string) {
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    const results: { row: number; status: 'imported' | 'error'; message?: string }[] = [];
+    let imported = 0;
+    for (let idx = 0; idx < rows.length; idx++) {
+      const r = rows[idx];
+      try {
+        const dto: CreateScheduleDto = {
+          classId: r.classId,
+          date: r.date,
+          day: r.day,
+          startTime: r.startTime,
+          endTime: r.endTime,
+          courseId: r.courseId,
+          teacherId: r.teacherId,
+          classroomId: r.classroomId || undefined,
+          isActive: r.isActive !== 'false',
+        };
+        await this.create(dto, schoolId);
+        imported++;
+        results.push({ row: idx + 2, status: 'imported' });
+      } catch (e: any) {
+        results.push({ row: idx + 2, status: 'error', message: e.message });
+      }
+    }
+    return { imported, total: rows.length, results };
   }
 }

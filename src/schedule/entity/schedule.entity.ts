@@ -6,6 +6,7 @@ import {
   UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Course } from 'src/course/entities/course.entity';
 import { Teacher } from 'src/user/entities/teacher.entity';
@@ -14,6 +15,8 @@ import { Class } from 'src/classes/entity/class.entity';
 import { School } from 'src/school/entities/school.entity';
 
 @Entity('schedules')
+@Index(['schoolId', 'day'])
+@Index(['schoolId', 'day', 'startTime', 'endTime'])
 export class Schedule {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -31,11 +34,12 @@ export class Schedule {
   })
   day: string;
 
-  @Column()
-  startTime: Date;
+  // Use time without timezone for comparisons
+  @Column({ type: 'time without time zone' })
+  startTime: string; // HH:mm:ss
 
-  @Column()
-  endTime: Date;
+  @Column({ type: 'time without time zone' })
+  endTime: string; // HH:mm:ss
 
   @Column({ default: true })
   isActive: boolean;
@@ -52,7 +56,7 @@ export class Schedule {
   @ManyToOne(() => Teacher, (teacher) => teacher.schedules)
   teacher: Teacher;
 
-  @ManyToOne(() => Classroom, (classroom) => classroom.schedules)
+  @ManyToOne(() => Classroom, (classroom) => classroom.schedules, { nullable: true })
   classroom: Classroom;
 
   @ManyToOne(() => Class, (classEntity) => classEntity.schedules)

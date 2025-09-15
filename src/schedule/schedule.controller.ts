@@ -4,7 +4,6 @@ import {
   Post,
   Put,
   Delete,
-  Body,
   Param,
   Query,
   UseGuards,
@@ -17,6 +16,9 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { ApiBearerAuth, ApiTags, ApiResponse } from '@nestjs/swagger';
 import { Role } from 'src/user/enums/role.enum';
 import { Roles } from 'src/user/decorators/roles.decorator';
+import { Body, UploadedFile, UseInterceptors, Request } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { CreateScheduleDto, UpdateScheduleDto, CloneScheduleDto } from './dtos/schedule.dto';
 
 @ApiTags('Schedule')
 @ApiBearerAuth()
@@ -35,20 +37,10 @@ export class ScheduleController {
     description: 'Schedule created',
   })
   async create(
-    @Body()
-    createScheduleDto: {
-      classId: string;
-      date: Date;
-      day: string;
-      startTime: Date;
-      endTime: Date;
-      courseId: string;
-      teacherId: string;
-      classroomId: string;
-      isActive?: boolean;
-    },
+    @Request() req,
+    @Body() createScheduleDto: CreateScheduleDto,
   ) {
-    const created = await this.scheduleService.create(createScheduleDto);
+    const created = await this.scheduleService.create(createScheduleDto, req.user?.schoolId);
     await this.systemLoggingService.logAction({
       action: 'SCHEDULE_CREATED',
       module: 'SCHEDULE',
@@ -77,6 +69,7 @@ export class ScheduleController {
     description: 'List of schedules',
   })
   async findAll(
+    @Request() req,
     @Query('skip') skip?: number,
     @Query('take') take?: number,
     @Query('search') search?: string,
@@ -85,6 +78,7 @@ export class ScheduleController {
       skip: skip ? Number(skip) : undefined,
       take: take ? Number(take) : undefined,
       search,
+      schoolId: req.user?.schoolId,
     });
   }
 
@@ -105,22 +99,12 @@ export class ScheduleController {
     description: 'Schedule updated',
   })
   async update(
+    @Request() req,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body()
-    updateScheduleDto: {
-      date?: Date;
-      day?: string;
-      startTime?: Date;
-      endTime?: Date;
-      courseId?: string;
-      teacherId?: string;
-      classroomId?: string;
-      classId?: string;
-      isActive?: boolean;
-    },
+    @Body() updateScheduleDto: UpdateScheduleDto,
   ) {
     const before = await this.scheduleService.findOne(id);
-    const updated = await this.scheduleService.update(id, updateScheduleDto);
+    const updated = await this.scheduleService.update(id, updateScheduleDto, req.user?.schoolId);
     await this.systemLoggingService.logAction({
       action: 'SCHEDULE_UPDATED',
       module: 'SCHEDULE',
@@ -168,5 +152,50 @@ export class ScheduleController {
   })
   async findByCourse(@Param('courseId', ParseUUIDPipe) courseId: string) {
     return this.scheduleService.findByCourse(courseId);
+  }
+
+  // Weekly timetable
+  @Get('class/:classId/weekly')
+  @Roles(Role.ADMIN, Role.TEACHER, Role.STUDENT)
+  @ApiResponse({ status: 200, description: 'Weekly timetable for class' })
+  async getWeekly(
+    @Request() req,
+    @Param('classId', ParseUUIDPipe) classId: string,
+    @Query('days') days?: string,
+  ) {
+    const dayList = days ? days.split(',') : undefined;
+    return this.scheduleService.getWeeklyTimetable(classId, req.user?.schoolId, dayList as any);
+  }
+
+  // Clone schedules
+  @Post('clone')
+  @Roles(Role.ADMIN)
+  @ApiResponse({ status: 201, description: 'Schedules cloned' })
+  async clone(
+    @Request() req,
+    @Body() dto: CloneScheduleDto,
+  ) {
+    const res = await this.scheduleService.cloneClassSchedule(dto.fromClassId, dto.toClassId, req.user?.schoolId, dto.overwrite);
+    await this.systemLoggingService.logAction({
+      action: 'SCHEDULES_CLONED',
+      module: 'SCHEDULE',
+      level: 'info',
+      entityType: 'Schedule',
+      metadata: dto as any,
+      newValues: res as any,
+    });
+    return res;
+  }
+
+  // Bulk import via Excel/CSV
+  @Post('bulk-upload')
+  @Roles(Role.ADMIN)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiResponse({ status: 201, description: 'Bulk schedule upload processed' })
+  async bulkUpload(@Request() req, @UploadedFile() file: any) {
+    if (!file) throw new Error('No file uploaded');
+    const allowed = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'text/csv'];
+    if (!allowed.includes(file.mimetype)) throw new Error('Unsupported file type. Upload .xlsx, .xls or .csv');
+    return this.scheduleService.bulkImport(file.buffer, req.user?.schoolId);
   }
 }
