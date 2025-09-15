@@ -248,9 +248,10 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
     @Query('search') search?: string,
+    @Query('form') form?: string,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
-    this.logger.log(`Fetching students page=${page} limit=${limit} search=${search}`);
+    this.logger.log(`Fetching students page=${page} limit=${limit} search=${search} form=${form}`);
     try {
       const pageNum = parseInt(page, 10) || 1;
       const limitNum = parseInt(limit, 10) || 10;
@@ -258,7 +259,7 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
       const isSuper = req.user?.role === 'SUPER_ADMIN';
       const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
       const [students, total] = await this.studentService.findAndCountScoped(
-        { skip, take: limitNum, search },
+        { skip, take: limitNum, search, form },
         effectiveSchoolId,
         isSuper,
       );
@@ -270,7 +271,7 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
           totalItems: total,
           itemsPerPage: limitNum,
         },
-        filters: { schoolId: effectiveSchoolId, search }
+        filters: { schoolId: effectiveSchoolId, search, form }
       };
     } catch (error) {
       this.logger.error(`Failed to fetch students: ${error.message}`);
