@@ -21,6 +21,9 @@ export class Attendance {
   @ManyToOne(() => Class, { eager: true })
   class: Class;
 
+  @Column({ type: 'uuid', nullable: true })
+  scheduleId: string;
+
   @Column({ type: 'boolean' })
   isPresent: boolean;
 

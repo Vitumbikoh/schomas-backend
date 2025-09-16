@@ -31,11 +31,7 @@ export class AttendanceService {
     createAttendanceDto: CreateAttendanceDto,
     userId: string,
   ): Promise<Attendance[]> {
-    const { classId, courseId, date, attendanceStatus } = createAttendanceDto;
-
-    // Log for debugging
-    console.log('Received DTO:', createAttendanceDto);
-    console.log('User ID from JWT:', userId);
+    const { classId, courseId, scheduleId, schoolId, date, attendanceStatus } = createAttendanceDto;
 
     // Validate attendanceStatus length
     if (Object.keys(attendanceStatus).length === 0) {
@@ -51,6 +47,16 @@ export class AttendanceService {
       throw new UnauthorizedException('User is not a teacher or does not exist');
     }
 
+    // Validate schoolId if provided
+    if (schoolId && user.schoolId !== schoolId) {
+      throw new BadRequestException('Invalid school ID for this user');
+    }
+
+    const effectiveSchoolId = schoolId || user.schoolId;
+    if (!effectiveSchoolId) {
+      throw new BadRequestException('School ID is required');
+    }
+
     // Fetch teacher by userId
     const teacher = await this.teacherRepository.findOne({
       where: { userId: userId },
@@ -62,14 +68,16 @@ export class AttendanceService {
     console.log(`Found teacher: ${teacher.firstName} ${teacher.lastName} (${teacher.id})`);
 
     // Fetch class
-    const classEntity = await this.classRepository.findOne({ where: { id: classId } });
+    const classEntity = await this.classRepository.findOne({ 
+      where: { id: classId, schoolId: effectiveSchoolId } 
+    });
     if (!classEntity) {
       throw new BadRequestException('Invalid class');
     }
 
     // Fetch course and verify teacher association using Teacher ID
     const course = await this.courseRepository.findOne({
-      where: { id: courseId, teacher: { id: teacher.id } },
+      where: { id: courseId, teacher: { id: teacher.id }, schoolId: effectiveSchoolId },
       relations: ['teacher'],
     });
     if (!course) {
@@ -82,7 +90,7 @@ export class AttendanceService {
     for (const [studentId, isPresent] of Object.entries(attendanceStatus)) {
       // Fetch Student entity directly
       const student = await this.studentRepository.findOne({
-        where: { id: studentId },
+        where: { id: studentId, schoolId: effectiveSchoolId },
       });
       if (!student) {
         console.log(`No Student entity found for id: ${studentId}`);
@@ -105,6 +113,9 @@ export class AttendanceService {
       attendance.teacher = user; // Use User entity for teacher
       attendance.course = course;
       attendance.class = classEntity;
+      if (scheduleId) {
+        attendance.scheduleId = scheduleId;
+      }
       attendance.isPresent = isPresent;
       attendance.date = new Date(date);
 

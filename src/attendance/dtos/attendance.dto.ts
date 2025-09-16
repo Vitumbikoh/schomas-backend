@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsObject, IsDateString } from 'class-validator';
+import { IsString, IsNotEmpty, IsObject, IsDateString, IsOptional, IsUUID } from 'class-validator';
 
 export class CreateAttendanceDto {
   @IsString()
@@ -8,6 +8,14 @@ export class CreateAttendanceDto {
   @IsString()
   @IsNotEmpty({ message: 'Course ID is required' })
   courseId: string;
+
+  @IsString()
+  @IsOptional()
+  scheduleId?: string;
+
+  @IsUUID()
+  @IsOptional()
+  schoolId?: string;
 
   @IsDateString({}, { message: 'Valid date is required' })
   @IsNotEmpty({ message: 'Date is required' })
