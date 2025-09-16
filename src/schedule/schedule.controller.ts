@@ -150,8 +150,8 @@ export class ScheduleController {
     status: 200,
     description: 'Course schedules',
   })
-  async findByCourse(@Param('courseId', ParseUUIDPipe) courseId: string) {
-    return this.scheduleService.findByCourse(courseId);
+  async findByCourse(@Param('courseId', ParseUUIDPipe) courseId: string, @Request() req) {
+    return this.scheduleService.findByCourse(courseId, req.user?.schoolId);
   }
 
   // Weekly timetable

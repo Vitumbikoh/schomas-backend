@@ -355,9 +355,14 @@ export class ScheduleService {
     });
   }
 
-  async findByCourse(courseId: string): Promise<Schedule[]> {
+  async findByCourse(courseId: string, schoolId?: string): Promise<Schedule[]> {
+    const whereCondition: any = { course: { id: courseId }, isActive: true };
+    if (schoolId) {
+      whereCondition.schoolId = schoolId;
+    }
+
     return this.scheduleRepository.find({
-      where: { course: { id: courseId }, isActive: true },
+      where: whereCondition,
       relations: ['course', 'teacher', 'classroom', 'class'],
     });
   }
