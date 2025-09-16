@@ -622,6 +622,12 @@ export class GradeService {
       grade: await this.calculateLetterGradeDynamic(parseFloat(grade.grade) || 0, grade.schoolId),
       date: grade.date,
       examType: grade.assessmentType,
+      termId: grade.termId,
+      term: grade.term ? {
+        id: grade.term.id,
+        name: `Term ${grade.term.termNumber}`,
+        termNumber: grade.term.termNumber,
+      } : null,
     })));
 
     return {
