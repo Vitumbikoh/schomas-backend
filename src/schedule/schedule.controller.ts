@@ -18,7 +18,7 @@ import { Role } from 'src/user/enums/role.enum';
 import { Roles } from 'src/user/decorators/roles.decorator';
 import { Body, UploadedFile, UseInterceptors, Request } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { CreateScheduleDto, UpdateScheduleDto, CloneScheduleDto } from './dtos/schedule.dto';
+import { CreateScheduleDto, UpdateScheduleDto, CloneScheduleDto, UpsertWeeklyGridDto, ExportScheduleCsvDto, GridItemDto } from './dtos/schedule.dto';
 
 @ApiTags('Schedule')
 @ApiBearerAuth()
@@ -167,6 +167,19 @@ export class ScheduleController {
     return this.scheduleService.getWeeklyTimetable(classId, req.user?.schoolId, dayList as any);
   }
 
+  // Weekly timetable for teacher
+  @Get('teacher/:teacherId/weekly')
+  @Roles(Role.ADMIN, Role.TEACHER)
+  @ApiResponse({ status: 200, description: 'Weekly timetable for teacher' })
+  async getTeacherWeekly(
+    @Request() req,
+    @Param('teacherId', ParseUUIDPipe) teacherId: string,
+    @Query('days') days?: string,
+  ) {
+    const dayList = days ? days.split(',') : undefined;
+    return this.scheduleService.getWeeklyTimetableForTeacher(teacherId, req.user?.schoolId, dayList as any);
+  }
+
   // Clone schedules
   @Post('clone')
   @Roles(Role.ADMIN)
@@ -197,5 +210,93 @@ export class ScheduleController {
     const allowed = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'text/csv'];
     if (!allowed.includes(file.mimetype)) throw new Error('Unsupported file type. Upload .xlsx, .xls or .csv');
     return this.scheduleService.bulkImport(file.buffer, req.user?.schoolId);
+  }
+
+  // Weekly Grid Management
+  @Post('grid-upsert')
+  @Roles(Role.ADMIN)
+  @ApiResponse({ status: 201, description: 'Weekly grid updated' })
+  async upsertWeeklyGrid(
+    @Request() req,
+    @Body() dto: UpsertWeeklyGridDto,
+  ) {
+    const result = await this.scheduleService.upsertWeeklyGrid(dto, req.user?.schoolId);
+    await this.systemLoggingService.logAction({
+      action: 'WEEKLY_GRID_UPSERTED',
+      module: 'SCHEDULE',
+      level: 'info',
+      entityType: 'Schedule',
+      metadata: { classId: dto.classId, itemCount: dto.schedules.length } as any,
+      newValues: result as any,
+    });
+    return result;
+  }
+
+  // CSV Export for specific class
+  @Get('class/:classId/export.csv')
+  @Roles(Role.ADMIN, Role.TEACHER)
+  @ApiResponse({ status: 200, description: 'Schedule exported as CSV' })
+  async exportClassCSV(
+    @Request() req,
+    @Param('classId', ParseUUIDPipe) classId: string,
+    @Query('days') days?: string,
+  ) {
+    const dto: ExportScheduleCsvDto = {
+      classId,
+      days: days ? days.split(',') : undefined,
+      format: 'csv'
+    };
+    const csvContent = await this.scheduleService.exportScheduleCSV(dto, req.user?.schoolId);
+    
+    // Return CSV with proper headers
+    return {
+      content: csvContent,
+      filename: `schedule-class-${classId}-${new Date().toISOString().split('T')[0]}.csv`,
+      contentType: 'text/csv'
+    };
+  }
+
+  // CSV Export for specific teacher
+  @Get('teacher/:teacherId/export.csv')
+  @Roles(Role.ADMIN, Role.TEACHER)
+  @ApiResponse({ status: 200, description: 'Teacher schedule exported as CSV' })
+  async exportTeacherCSV(
+    @Request() req,
+    @Param('teacherId', ParseUUIDPipe) teacherId: string,
+    @Query('days') days?: string,
+  ) {
+    const dto: ExportScheduleCsvDto = {
+      teacherId,
+      days: days ? days.split(',') : undefined,
+      format: 'csv'
+    };
+    const csvContent = await this.scheduleService.exportScheduleCSV(dto, req.user?.schoolId);
+    
+    return {
+      content: csvContent,
+      filename: `schedule-teacher-${teacherId}-${new Date().toISOString().split('T')[0]}.csv`,
+      contentType: 'text/csv'
+    };
+  }
+
+  // Validate schedule conflicts without saving
+  @Post('validate-conflicts')
+  @Roles(Role.ADMIN)
+  @ApiResponse({ status: 200, description: 'Conflict validation results' })
+  async validateConflicts(
+    @Request() req,
+    @Body() dto: { classId: string; schedules: GridItemDto[] },
+  ) {
+    const results: Array<{ item: GridItemDto; validation: any }> = [];
+    for (const item of dto.schedules) {
+      const result = await (this.scheduleService as any).validateGridItemConflicts(
+        item, 
+        dto.classId, 
+        req.user?.schoolId, 
+        item.id
+      );
+      results.push({ item, validation: result });
+    }
+    return results;
   }
 }

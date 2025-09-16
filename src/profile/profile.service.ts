@@ -70,6 +70,7 @@ export class ProfileService {
         });
         if (teacher) {
           roleSpecificProfile = {
+            teacherId: teacher.id,
             firstName: teacher.firstName,
             lastName: teacher.lastName,
             phoneNumber: teacher.phoneNumber,

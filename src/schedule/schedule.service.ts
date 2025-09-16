@@ -7,7 +7,7 @@ import { Teacher } from 'src/user/entities/teacher.entity';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
 import { Class } from 'src/classes/entity/class.entity';
 import { getDayName } from 'src/common/utils/date-utils';
-import { CreateScheduleDto, UpdateScheduleDto, WeeklyTimetableResponse } from './dtos/schedule.dto';
+import { CreateScheduleDto, UpdateScheduleDto, WeeklyTimetableResponse, UpsertWeeklyGridDto, GridItemDto, ConflictValidationResult, ExportScheduleCsvDto } from './dtos/schedule.dto';
 import * as XLSX from 'xlsx';
 
 @Injectable()
@@ -368,7 +368,8 @@ export class ScheduleService {
       where: { isActive: true },
       relations: ['course', 'teacher', 'classroom', 'class'],
     });
-    const filtered = items.filter(i => (i.class?.id === classId) && (i.schoolId === schoolId) && days.includes(i.day));
+    // For super admin (schoolId null), don't filter by schoolId
+    const filtered = items.filter(i => (i.class?.id === classId) && (!schoolId || i.schoolId === schoolId) && days.includes(i.day));
     const byDay = days.map((d) => ({
       day: d,
       items: filtered
@@ -384,6 +385,32 @@ export class ScheduleService {
         }))
     }));
     return { classId, days: byDay };
+  }
+
+  // Weekly timetable for a teacher (Mon-Fri by default)
+  async getWeeklyTimetableForTeacher(teacherId: string, schoolId: string, days: string[] = ['Monday','Tuesday','Wednesday','Thursday','Friday']): Promise<any> {
+    const items = await this.scheduleRepository.find({
+      where: { isActive: true },
+      relations: ['course', 'teacher', 'classroom', 'class'],
+    });
+    // For super admin (schoolId null), don't filter by schoolId
+    const filtered = items.filter(i => (i.teacher?.id === teacherId) && (!schoolId || i.schoolId === schoolId) && days.includes(i.day));
+    const byDay = days.map((d) => ({
+      day: d,
+      items: filtered
+        .filter(f => f.day === d)
+        .sort((a,b) => (a.startTime < b.startTime ? -1 : 1))
+        .map(f => ({
+          id: f.id,
+          startTime: f.startTime.slice(0,5),
+          endTime: f.endTime.slice(0,5),
+          course: { id: (f.course as any)?.id, name: (f.course as any)?.name },
+          teacher: { id: (f.teacher as any)?.id, name: `${(f.teacher as any)?.firstName || ''} ${(f.teacher as any)?.lastName || ''}`.trim() },
+          classroom: f.classroom ? { id: (f.classroom as any)?.id, name: (f.classroom as any)?.name } : null,
+          class: { id: (f.class as any)?.id, name: (f.class as any)?.name },
+        }))
+    }));
+    return { teacherId, days: byDay };
   }
 
   // Clone schedules from one class to another within the same school
@@ -422,6 +449,269 @@ export class ScheduleService {
       } as any);
     }
     return { cloned: source.length };
+  }
+
+  // Enhanced Weekly Grid Management
+  async upsertWeeklyGrid(dto: UpsertWeeklyGridDto, schoolId: string) {
+    const { classId, schedules, replaceAll = false } = dto;
+    
+    // Validate class exists and belongs to school
+    const classEntity = await this.classRepository.findOne({
+      where: { id: classId }
+    });
+    if (!classEntity) {
+      throw new NotFoundException('Class not found');
+    }
+    this.ensureSameSchoolOrThrow(classEntity as any, schoolId, 'Class');
+
+    // Get existing schedules for this class
+    const existingSchedules = await this.scheduleRepository.find({
+      where: { 
+        schoolId,
+        isActive: true
+      },
+      relations: ['class', 'course', 'teacher', 'classroom']
+    });
+    const classSchedules = existingSchedules.filter(s => s.class?.id === classId);
+
+    // Validate all items first for conflicts
+    const validationResults: ConflictValidationResult[] = [];
+    for (const item of schedules) {
+      const result = await this.validateGridItemConflicts(item, classId, schoolId, item.id);
+      validationResults.push(result);
+    }
+
+    // Check for any validation errors
+    const hasErrors = validationResults.some(r => !r.isValid);
+    if (hasErrors) {
+      throw new BadRequestException({
+        message: 'Schedule conflicts detected',
+        conflicts: validationResults.filter(r => !r.isValid)
+      });
+    }
+
+    // If replaceAll, mark existing schedules for deletion
+    const toDelete = replaceAll 
+      ? classSchedules.filter(existing => !schedules.find(item => item.id === existing.id))
+      : [];
+
+    // Process each schedule item
+    const results = {
+      created: 0,
+      updated: 0,
+      deleted: toDelete.length,
+      errors: [] as Array<{ item: GridItemDto; error: string }>
+    };
+
+    // Delete schedules if replaceAll
+    if (toDelete.length > 0) {
+      await this.scheduleRepository.remove(toDelete);
+    }
+
+    // Upsert schedule items
+    for (const item of schedules) {
+      try {
+        if (item.id) {
+          // Update existing
+          await this.updateGridItem(item, schoolId);
+          results.updated++;
+        } else {
+          // Create new
+          await this.createGridItem(item, classId, schoolId);
+          results.created++;
+        }
+      } catch (error) {
+        results.errors.push({ 
+          item, 
+          error: error instanceof Error ? error.message : 'Unknown error' 
+        });
+      }
+    }
+
+    return results;
+  }
+
+  private async validateGridItemConflicts(
+    item: GridItemDto, 
+    classId: string, 
+    schoolId: string, 
+    excludeId?: string
+  ): Promise<ConflictValidationResult> {
+    const conflicts: ConflictValidationResult['conflicts'] = [];
+    
+    const startTime = this.toTime(item.startTime);
+    const endTime = this.toTime(item.endTime);
+    
+    if (endTime <= startTime) {
+      conflicts.push({
+        type: 'class',
+        message: 'End time must be after start time',
+        existingSchedule: {
+          id: '',
+          day: item.day,
+          startTime: item.startTime,
+          endTime: item.endTime
+        }
+      });
+      return { isValid: false, conflicts };
+    }
+
+    // Find overlapping schedules
+    const queryBuilder = this.scheduleRepository
+      .createQueryBuilder('schedule')
+      .leftJoinAndSelect('schedule.class', 'class')
+      .leftJoinAndSelect('schedule.teacher', 'teacher')
+      .leftJoinAndSelect('schedule.classroom', 'classroom')
+      .where('schedule.schoolId = :schoolId', { schoolId })
+      .andWhere('schedule.day = :day', { day: item.day })
+      .andWhere('schedule.isActive = true')
+      .andWhere(`
+        (schedule.startTime < :endTime AND schedule.endTime > :startTime)
+      `, { startTime, endTime });
+
+    // Only exclude if excludeId is a valid UUID (not a temp id)
+    if (excludeId && !excludeId.startsWith('temp-')) {
+      queryBuilder.andWhere('schedule.id != :excludeId', { excludeId });
+    }
+
+    const overlappingSchedules = await queryBuilder.getMany();
+
+    // Check teacher conflicts
+    const teacherConflicts = overlappingSchedules.filter(s => s.teacher?.id === item.teacherId);
+    for (const conflict of teacherConflicts) {
+      conflicts.push({
+        type: 'teacher',
+        message: `Teacher is already scheduled at this time in class ${conflict.class?.name || 'Unknown'}`,
+        existingSchedule: {
+          id: conflict.id,
+          day: conflict.day,
+          startTime: conflict.startTime.slice(0, 5),
+          endTime: conflict.endTime.slice(0, 5),
+          className: conflict.class?.name,
+          teacherName: `${(conflict.teacher as any)?.firstName || ''} ${(conflict.teacher as any)?.lastName || ''}`.trim()
+        }
+      });
+    }
+
+    // Check class conflicts (same class, overlapping time)
+    const classConflicts = overlappingSchedules.filter(s => s.class?.id === classId);
+    for (const conflict of classConflicts) {
+      conflicts.push({
+        type: 'class',
+        message: `Class already has a schedule at this time`,
+        existingSchedule: {
+          id: conflict.id,
+          day: conflict.day,
+          startTime: conflict.startTime.slice(0, 5),
+          endTime: conflict.endTime.slice(0, 5),
+          className: conflict.class?.name
+        }
+      });
+    }
+
+    // Check room conflicts if room specified
+    if (item.classroomId) {
+      const roomConflicts = overlappingSchedules.filter(s => s.classroom?.id === item.classroomId);
+      for (const conflict of roomConflicts) {
+        conflicts.push({
+          type: 'room',
+          message: `Room is already booked at this time by class ${conflict.class?.name || 'Unknown'}`,
+          existingSchedule: {
+            id: conflict.id,
+            day: conflict.day,
+            startTime: conflict.startTime.slice(0, 5),
+            endTime: conflict.endTime.slice(0, 5),
+            className: conflict.class?.name,
+            roomName: conflict.classroom?.name
+          }
+        });
+      }
+    }
+
+    return {
+      isValid: conflicts.length === 0,
+      conflicts
+    };
+  }
+
+  private async createGridItem(item: GridItemDto, classId: string, schoolId: string): Promise<Schedule> {
+    const createDto: CreateScheduleDto = {
+      classId,
+      day: item.day,
+      startTime: item.startTime,
+      endTime: item.endTime,
+      courseId: item.courseId,
+      teacherId: item.teacherId,
+      classroomId: item.classroomId,
+      isActive: item.isActive ?? true
+    };
+    
+    return this.create(createDto, schoolId);
+  }
+
+  private async updateGridItem(item: GridItemDto, schoolId: string): Promise<Schedule> {
+    if (!item.id) {
+      throw new BadRequestException('Schedule ID is required for updates');
+    }
+
+    const updateDto: UpdateScheduleDto = {
+      day: item.day,
+      startTime: item.startTime,
+      endTime: item.endTime,
+      courseId: item.courseId,
+      teacherId: item.teacherId,
+      classroomId: item.classroomId,
+      isActive: item.isActive
+    };
+
+    return this.update(item.id, updateDto, schoolId);
+  }
+
+  // Export schedule as CSV
+  async exportScheduleCSV(dto: ExportScheduleCsvDto, schoolId: string): Promise<string> {
+    let query = this.scheduleRepository
+      .createQueryBuilder('schedule')
+      .leftJoinAndSelect('schedule.class', 'class')
+      .leftJoinAndSelect('schedule.course', 'course')
+      .leftJoinAndSelect('schedule.teacher', 'teacher')
+      .leftJoinAndSelect('schedule.classroom', 'classroom')
+      .where('schedule.schoolId = :schoolId', { schoolId })
+      .andWhere('schedule.isActive = true');
+
+    if (dto.classId) {
+      query = query.andWhere('class.id = :classId', { classId: dto.classId });
+    }
+
+    if (dto.teacherId) {
+      query = query.andWhere('teacher.id = :teacherId', { teacherId: dto.teacherId });
+    }
+
+    if (dto.days && dto.days.length > 0) {
+      query = query.andWhere('schedule.day IN (:...days)', { days: dto.days });
+    }
+
+    const schedules = await query
+      .orderBy('schedule.day')
+      .addOrderBy('schedule.startTime')
+      .getMany();
+
+    // Build CSV content
+    const headers = ['Class', 'Day', 'Start Time', 'End Time', 'Course', 'Teacher', 'Room'];
+    const rows = schedules.map(s => [
+      s.class?.name || '',
+      s.day,
+      s.startTime.slice(0, 5),
+      s.endTime.slice(0, 5),
+      (s.course as any)?.name || '',
+      `${(s.teacher as any)?.firstName || ''} ${(s.teacher as any)?.lastName || ''}`.trim(),
+      s.classroom?.name || ''
+    ]);
+
+    const csvContent = [headers, ...rows]
+      .map(row => row.map(cell => `"${cell}"`).join(','))
+      .join('\n');
+
+    return csvContent;
   }
 
   // Parse an uploaded buffer for CSV/XLSX schedule entries

@@ -64,4 +64,5 @@ export class ProfileResponseDto {
   dateOfBirth?: Date;
   gender?: string;
   occupation?: string;
+  teacherId?: string;
 }
