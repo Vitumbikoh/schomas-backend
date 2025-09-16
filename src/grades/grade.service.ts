@@ -567,6 +567,7 @@ export class GradeService {
       gradeId: grade.gradeId,
       examTitle: grade.course.name,
       subject: grade.course.name,
+      termId: grade.termId,
       marksObtained: parseFloat(grade.grade) || 0,
       totalMarks: 100,
       percentage: parseFloat(grade.grade) || 0,
