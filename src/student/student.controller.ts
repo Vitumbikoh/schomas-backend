@@ -428,6 +428,46 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
     }
   }
 
+  @Get('by-class/:classId')
+  @Roles(Role.ADMIN, Role.TEACHER)
+  @ApiOperation({ summary: 'Get students by class ID' })
+  @ApiResponse({ status: 200, description: 'Students in class retrieved successfully' })
+  async getStudentsByClass(@Param('classId') classId: string, @Request() req) {
+    this.logger.log(`Fetching students for class: ${classId}`);
+    try {
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      const students = await this.studentService.findByClassId(classId, req.user?.schoolId, isSuper);
+      return {
+        success: true,
+        students,
+        count: students.length,
+        classId
+      };
+    } catch (error) {
+      this.logger.error(`Failed to fetch students for class ${classId}: ${error.message}`);
+      throw new Error('Failed to fetch students for class: ' + error.message);
+    }
+  }
+
+  @Get('class-counts')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get student count by class' })
+  @ApiResponse({ status: 200, description: 'Student counts by class retrieved successfully' })
+  async getStudentCountsByClass(@Request() req) {
+    this.logger.log('Fetching student counts by class');
+    try {
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      const counts = await this.studentService.getStudentCountsByClass(req.user?.schoolId, isSuper);
+      return {
+        success: true,
+        classCounts: counts
+      };
+    } catch (error) {
+      this.logger.error(`Failed to fetch student counts by class: ${error.message}`);
+      throw new Error('Failed to fetch student counts by class: ' + error.message);
+    }
+  }
+
   @Put('students/:id')
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Update a student' })
