@@ -148,19 +148,23 @@ async getAllCourses(
   @Query('classId') classId?: string,
 ) {
   const pageNum = parseInt(page, 10) || 1;
-  const limitNum = parseInt(limit, 10) || 10;
+  const limitNum = parseInt(limit, 10) || 9;
   const skip = (pageNum - 1) * limitNum;
 
-  const whereConditions: any[] = search
-    ? [
-        { name: Like(`%${search}%`) },
-        { code: Like(`%${search}%`) },
-        { description: Like(`%${search}%`) },
-      ]
-    : [];
+  const whereConditions: any = {};
 
+  // Handle search conditions
+  if (search) {
+    whereConditions.OR = [
+      { name: Like(`%${search}%`) },
+      { code: Like(`%${search}%`) },
+      { description: Like(`%${search}%`) },
+    ];
+  }
+
+  // Handle classId filter
   if (classId && classId !== 'all') {
-    whereConditions.push({ classId });
+    whereConditions.classId = classId;
   }
 
   const isSuper = req.user?.role === 'SUPER_ADMIN';
@@ -168,13 +172,13 @@ async getAllCourses(
     this.courseService.findAll({
       skip,
       take: limitNum,
-      where: whereConditions.length > 0 ? whereConditions : {},
+      where: Object.keys(whereConditions).length > 0 ? whereConditions : {},
       schoolId: req.user?.schoolId,
       superAdmin: isSuper,
     }),
     this.courseService.count(
-      isSuper ? (whereConditions.length > 0 ? whereConditions : {}) : {
-        ...(whereConditions.length === 0 ? {} : whereConditions[0]),
+      isSuper ? (Object.keys(whereConditions).length > 0 ? whereConditions : {}) : {
+        ...whereConditions,
         schoolId: req.user?.schoolId,
       },
     ),
@@ -350,19 +354,44 @@ async getAllCourses(
   @ApiOperation({ summary: 'Download course bulk upload template' })
   async downloadTemplate(@Res() res) {
     const headers = [
-      'code', 'name', 'description', 'status', 'className', 'teacherName', 'schedule'
+      'code', 'name', 'description', 'status', 'className', 'teacherName'
     ];
     const sampleRows = [
-      { code: 'MATH101', name: 'Mathematics Form 1', description: 'Basic mathematics for form 1 students', status: 'active', className: 'Form one', teacherName: 'John Doe', schedule: 'Monday 8:00-9:00' },
-      { code: 'ENG101', name: 'English Form 1', description: 'English language and literature', status: 'active', className: 'Form one', teacherName: 'Jane Smith', schedule: 'Tuesday 9:00-10:00' },
-      { code: 'SCI101', name: 'Science Form 1', description: 'General science concepts', status: 'active', className: 'Form one', teacherName: 'Dr. Johnson', schedule: 'Wednesday 10:00-11:00' },
-      { code: 'HIST101', name: 'History Form 1', description: 'World and Kenyan history', status: 'upcoming', className: 'Form one', teacherName: 'Prof. Wilson', schedule: 'Thursday 11:00-12:00' },
-      { code: 'MATH201', name: 'Mathematics Form 2', description: 'Intermediate mathematics', status: 'active', className: 'Form two', teacherName: 'John Doe', schedule: 'Monday 10:00-11:00' },
-      { code: 'ENG201', name: 'English Form 2', description: 'Advanced English concepts', status: 'active', className: 'Form two', teacherName: 'Jane Smith', schedule: 'Tuesday 11:00-12:00' },
-      { code: 'PHYS201', name: 'Physics Form 2', description: 'Basic physics principles', status: 'active', className: 'Form two', teacherName: 'Dr. Brown', schedule: 'Friday 8:00-9:00' },
-      { code: 'CHEM201', name: 'Chemistry Form 2', description: 'Chemical reactions and compounds', status: 'active', className: 'Form two', teacherName: 'Dr. Davis', schedule: 'Friday 9:00-10:00' },
-      { code: 'BIO301', name: 'Biology Form 3', description: 'Advanced biology concepts', status: 'upcoming', className: 'Form Three', teacherName: 'Dr. Miller', schedule: 'Monday 12:00-13:00' },
-      { code: 'GEOG301', name: 'Geography Form 3', description: 'Physical and human geography', status: 'active', className: 'Form Three', teacherName: 'Ms. Garcia', schedule: 'Thursday 13:00-14:00' }
+      // Form 1 Courses (10 courses)
+      { code: 'MATH101', name: 'Mathematics Form 1', description: 'Basic mathematics for form 1 students', status: 'active', className: 'Form one', teacherName: 'John Doe' },
+      { code: 'ENG101', name: 'English Form 1', description: 'English language and literature', status: 'active', className: 'Form one', teacherName: 'Jane Smith' },
+      { code: 'SCI101', name: 'Science Form 1', description: 'General science concepts', status: 'active', className: 'Form one', teacherName: 'Dr. Johnson' },
+      { code: 'HIST101', name: 'History Form 1', description: 'World and Kenyan history', status: 'active', className: 'Form one', teacherName: 'Prof. Wilson' },
+      { code: 'GEOG101', name: 'Geography Form 1', description: 'Basic geography concepts', status: 'active', className: 'Form one', teacherName: 'Ms. Garcia' },
+      { code: 'KISW101', name: 'Kiswahili Form 1', description: 'Kiswahili language and literature', status: 'active', className: 'Form one', teacherName: 'Mr. Kiprop' },
+      { code: 'CRE101', name: 'CRE Form 1', description: 'Christian Religious Education', status: 'active', className: 'Form one', teacherName: 'Mrs. Wanjiku' },
+      { code: 'ART101', name: 'Art Form 1', description: 'Visual arts and crafts', status: 'active', className: 'Form one', teacherName: 'Ms. Achieng' },
+      { code: 'MUSIC101', name: 'Music Form 1', description: 'Music theory and practice', status: 'active', className: 'Form one', teacherName: 'Mr. Oduya' },
+      { code: 'PE101', name: 'Physical Education Form 1', description: 'Physical education and sports', status: 'active', className: 'Form one', teacherName: 'Coach Kiprotich' },
+
+      // Form 2 Courses (10 courses)
+      { code: 'MATH201', name: 'Mathematics Form 2', description: 'Intermediate mathematics', status: 'active', className: 'Form two', teacherName: 'John Doe' },
+      { code: 'ENG201', name: 'English Form 2', description: 'Advanced English concepts', status: 'active', className: 'Form two', teacherName: 'Jane Smith' },
+      { code: 'PHYS201', name: 'Physics Form 2', description: 'Basic physics principles', status: 'active', className: 'Form two', teacherName: 'Dr. Brown' },
+      { code: 'CHEM201', name: 'Chemistry Form 2', description: 'Chemical reactions and compounds', status: 'active', className: 'Form two', teacherName: 'Dr. Davis' },
+      { code: 'BIO201', name: 'Biology Form 2', description: 'Basic biology concepts', status: 'active', className: 'Form two', teacherName: 'Dr. Miller' },
+      { code: 'HIST201', name: 'History Form 2', description: 'Advanced history studies', status: 'active', className: 'Form two', teacherName: 'Prof. Wilson' },
+      { code: 'GEOG201', name: 'Geography Form 2', description: 'Intermediate geography', status: 'active', className: 'Form two', teacherName: 'Ms. Garcia' },
+      { code: 'KISW201', name: 'Kiswahili Form 2', description: 'Advanced Kiswahili studies', status: 'active', className: 'Form two', teacherName: 'Mr. Kiprop' },
+      { code: 'CRE201', name: 'CRE Form 2', description: 'Advanced Christian Religious Education', status: 'active', className: 'Form two', teacherName: 'Mrs. Wanjiku' },
+      { code: 'BUS201', name: 'Business Studies Form 2', description: 'Introduction to business concepts', status: 'active', className: 'Form two', teacherName: 'Mr. Kiprotich' },
+
+      // Form 3 Courses (10 courses)
+      { code: 'MATH301', name: 'Mathematics Form 3', description: 'Advanced mathematics', status: 'active', className: 'Form Three', teacherName: 'John Doe' },
+      { code: 'ENG301', name: 'English Form 3', description: 'Advanced English literature and language', status: 'active', className: 'Form Three', teacherName: 'Jane Smith' },
+      { code: 'PHYS301', name: 'Physics Form 3', description: 'Advanced physics concepts', status: 'active', className: 'Form Three', teacherName: 'Dr. Brown' },
+      { code: 'CHEM301', name: 'Chemistry Form 3', description: 'Advanced chemistry studies', status: 'active', className: 'Form Three', teacherName: 'Dr. Davis' },
+      { code: 'BIO301', name: 'Biology Form 3', description: 'Advanced biology concepts', status: 'active', className: 'Form Three', teacherName: 'Dr. Miller' },
+      { code: 'HIST301', name: 'History Form 3', description: 'Advanced history and government', status: 'active', className: 'Form Three', teacherName: 'Prof. Wilson' },
+      { code: 'GEOG301', name: 'Geography Form 3', description: 'Advanced geography studies', status: 'active', className: 'Form Three', teacherName: 'Ms. Garcia' },
+      { code: 'KISW301', name: 'Kiswahili Form 3', description: 'Advanced Kiswahili literature', status: 'active', className: 'Form Three', teacherName: 'Mr. Kiprop' },
+      { code: 'CRE301', name: 'CRE Form 3', description: 'Advanced Christian Religious Education', status: 'active', className: 'Form Three', teacherName: 'Mrs. Wanjiku' },
+      { code: 'AGRI301', name: 'Agriculture Form 3', description: 'Agricultural science and practices', status: 'active', className: 'Form Three', teacherName: 'Mr. Kiprotich' }
     ];
     const worksheet = XLSX.utils.json_to_sheet(sampleRows as any[], { header: headers });
     const workbook = XLSX.utils.book_new();
@@ -449,7 +478,6 @@ async getCourse(@Request() req, @Param('id') id: string) {
     const course = await this.courseService.findOne(id, ['teacher', 'class']); // Include class relation
     const response: any = {
       ...course,
-      schedule: course.schedule || { days: [], time: '', location: '' },
       classId: course.classId, // Include classId
       className: course.class ? course.class.name : 'Not assigned', // Include className
     };

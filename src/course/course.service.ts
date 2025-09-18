@@ -48,8 +48,36 @@ export class CourseService {
     }
 
     if (options.where) {
-      // Basic handling for simple LIKE searches already prepared outside
-      // Complex OR conditions can be appended by caller via custom methods
+      if (Array.isArray(options.where)) {
+        // Handle array of conditions (OR logic)
+        options.where.forEach((condition, index) => {
+          if (index === 0) {
+            qb.where(condition);
+          } else {
+            qb.orWhere(condition);
+          }
+        });
+      } else {
+        // Handle single condition object
+        const whereObj = options.where as any;
+
+        // Handle OR conditions for search
+        if (whereObj.OR) {
+          whereObj.OR.forEach((condition: any, index: number) => {
+            if (index === 0) {
+              qb.where(condition);
+            } else {
+              qb.orWhere(condition);
+            }
+          });
+          delete whereObj.OR;
+        }
+
+        // Handle other conditions
+        Object.keys(whereObj).forEach(key => {
+          qb.andWhere(`course.${key} = :${key}`, { [key]: whereObj[key] });
+        });
+      }
     }
 
     if (options.skip) qb.skip(options.skip);
@@ -59,28 +87,49 @@ export class CourseService {
   }
 
   async count(
-    where?: FindOptionsWhere<Course> | FindOptionsWhere<Course>[],
+    where?: FindOptionsWhere<Course> | FindOptionsWhere<Course>[] | any,
     schoolId?: string,
     superAdmin = false,
   ): Promise<number> {
     let combinedWhere = where || {};
-    
+
     // Apply school filtering
     if (!superAdmin) {
       if (!schoolId) return 0;
       if (Array.isArray(combinedWhere)) {
         combinedWhere = combinedWhere.map(w => ({ ...w, schoolId }));
-      } else {
-        combinedWhere = { ...combinedWhere, schoolId };
+      } else if (combinedWhere && typeof combinedWhere === 'object') {
+        // Handle object with OR conditions
+        if (combinedWhere.OR) {
+          combinedWhere = {
+            OR: combinedWhere.OR.map((condition: any) => ({ ...condition, schoolId })),
+            ...Object.keys(combinedWhere).filter(key => key !== 'OR').reduce((acc, key) => {
+              acc[key] = combinedWhere[key];
+              return acc;
+            }, {} as any)
+          };
+        } else {
+          combinedWhere = { ...combinedWhere, schoolId };
+        }
       }
     } else if (schoolId) {
       if (Array.isArray(combinedWhere)) {
         combinedWhere = combinedWhere.map(w => ({ ...w, schoolId }));
-      } else {
-        combinedWhere = { ...combinedWhere, schoolId };
+      } else if (combinedWhere && typeof combinedWhere === 'object') {
+        if (combinedWhere.OR) {
+          combinedWhere = {
+            OR: combinedWhere.OR.map((condition: any) => ({ ...condition, schoolId })),
+            ...Object.keys(combinedWhere).filter(key => key !== 'OR').reduce((acc, key) => {
+              acc[key] = combinedWhere[key];
+              return acc;
+            }, {} as any)
+          };
+        } else {
+          combinedWhere = { ...combinedWhere, schoolId };
+        }
       }
     }
-    
+
     return await this.courseRepository.count({ where: combinedWhere });
   }
 
