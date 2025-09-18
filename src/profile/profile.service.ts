@@ -48,6 +48,7 @@ export class ProfileService {
       username: user.username,
       role: user.role,
       email: user.email ?? null,
+      phone: undefined, // Will be set below
       school: user.school ? {
         id: user.school.id,
         name: user.school.name,
@@ -55,9 +56,10 @@ export class ProfileService {
       } : null,
     };
 
-    // For ADMIN and SUPER_ADMIN, return only base profile
+    // Set phone number based on role
     if (user.role === Role.ADMIN || user.role === Role.SUPER_ADMIN) {
-      return baseProfile;
+      baseProfile.phone = user.phone && user.phone.trim() !== '' ? user.phone : undefined;
+      console.log(`ADMIN/SUPER_ADMIN phone: ${baseProfile.phone}`);
     }
 
     // For other roles, get additional profile details
@@ -69,6 +71,8 @@ export class ProfileService {
           where: { userId: user.id },
         });
         if (teacher) {
+          baseProfile.phone = teacher.phoneNumber && teacher.phoneNumber.trim() !== '' ? teacher.phoneNumber : undefined;
+          console.log(`TEACHER phone: ${baseProfile.phone}`);
           roleSpecificProfile = {
             teacherId: teacher.id,
             firstName: teacher.firstName,
@@ -83,6 +87,8 @@ export class ProfileService {
           where: { userId: user.id },
         });
         if (student) {
+          baseProfile.phone = student.phoneNumber && student.phoneNumber.trim() !== '' ? student.phoneNumber : undefined;
+          console.log(`STUDENT phone: ${baseProfile.phone}`);
           roleSpecificProfile = {
             firstName: student.firstName,
             lastName: student.lastName,
@@ -99,6 +105,8 @@ export class ProfileService {
           where: { user: { id: user.id } },
         });
         if (parent) {
+          baseProfile.phone = parent.phoneNumber && parent.phoneNumber.trim() !== '' ? parent.phoneNumber : undefined;
+          console.log(`PARENT phone: ${baseProfile.phone}`);
           roleSpecificProfile = {
             firstName: parent.firstName,
             lastName: parent.lastName,
@@ -116,6 +124,8 @@ export class ProfileService {
           where: { user: { id: user.id } },
         });
         if (finance) {
+          baseProfile.phone = finance.phoneNumber && finance.phoneNumber.trim() !== '' ? finance.phoneNumber : undefined;
+          console.log(`FINANCE phone: ${baseProfile.phone}`);
           roleSpecificProfile = {
             firstName: finance.firstName,
             lastName: finance.lastName,
@@ -131,6 +141,8 @@ export class ProfileService {
         // For any other roles, return only base profile
         break;
     }
+
+    console.log(`Final profile phone for ${user.role}: ${baseProfile.phone}`);
 
     return {
       ...baseProfile,

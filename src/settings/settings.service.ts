@@ -85,6 +85,7 @@ export class SettingsService {
     }
 
     try {
+      this.logger.debug(`Getting settings for userId: ${userId}`);
       const user = await this.userRepository.findOne({
         where: { id: userId },
         relations: ['settings', 'teacher', 'student', 'parent', 'finance'],
@@ -93,6 +94,9 @@ export class SettingsService {
       if (!user) {
         throw new NotFoundException(`User with ID ${userId} not found`);
       }
+
+      this.logger.debug(`User found: ${user.username}, role: ${user.role}`);
+      this.logger.debug(`User relations - teacher: ${!!user.teacher}, student: ${!!user.student}, parent: ${!!user.parent}, finance: ${!!user.finance}`);
 
       // Initialize default settings if they don't exist
       if (!user.settings) {
@@ -118,22 +122,63 @@ export class SettingsService {
           email: user.email ?? null,
           role: user.role,
           image: user.image,
+          phone: undefined, // Start with undefined, will be set below
           notifications: user.settings.notifications,
           security: user.settings.security,
         },
       };
 
-      // Only get phone number for non-admin roles
-      if (user.role !== Role.ADMIN) {
-        if (user.role === Role.TEACHER && user.teacher) {
-          response.user.phone = user.teacher.phoneNumber;
-        } else if (user.role === Role.STUDENT && user.student) {
-          response.user.phone = user.student.phoneNumber;
-        } else if (user.role === Role.PARENT && user.parent) {
-          response.user.phone = user.parent.phoneNumber;
-        } else if (user.role === Role.FINANCE && user.finance) {
-          response.user.phone = user.finance.phoneNumber;
+      // Get phone number based on role
+      if (user.role === Role.ADMIN || user.role === Role.SUPER_ADMIN) {
+        response.user.phone = user.phone && user.phone.trim() !== '' ? user.phone : undefined;
+        this.logger.debug(`ADMIN/SUPER_ADMIN phone: ${response.user.phone}`);
+      } else {
+        // For other roles, query the role-specific table directly
+        let rolePhone: string | undefined = undefined;
+        
+        try {
+          switch (user.role) {
+            case Role.TEACHER:
+              const teacher = await this.teacherRepository.findOne({
+                where: { userId: user.id },
+              });
+              this.logger.debug(`Teacher query result: ${JSON.stringify(teacher)}`);
+              rolePhone = teacher?.phoneNumber && teacher.phoneNumber.trim() !== '' ? teacher.phoneNumber : undefined;
+              this.logger.debug(`TEACHER phone: ${rolePhone}`);
+              break;
+            case Role.STUDENT:
+              const student = await this.studentRepository.findOne({
+                where: { userId: user.id },
+              });
+              this.logger.debug(`Student query result: ${JSON.stringify(student)}`);
+              rolePhone = student?.phoneNumber && student.phoneNumber.trim() !== '' ? student.phoneNumber : undefined;
+              this.logger.debug(`STUDENT phone: ${rolePhone}`);
+              break;
+            case Role.PARENT:
+              const parent = await this.parentRepository.findOne({
+                where: { user: { id: user.id } },
+              });
+              this.logger.debug(`Parent query result: ${JSON.stringify(parent)}`);
+              rolePhone = parent?.phoneNumber && parent.phoneNumber.trim() !== '' ? parent.phoneNumber : undefined;
+              this.logger.debug(`PARENT phone: ${rolePhone}`);
+              break;
+            case Role.FINANCE:
+              const finance = await this.financeRepository.findOne({
+                where: { user: { id: user.id } },
+              });
+              this.logger.debug(`Finance query result: ${JSON.stringify(finance)}`);
+              rolePhone = finance?.phoneNumber && finance.phoneNumber.trim() !== '' ? finance.phoneNumber : undefined;
+              this.logger.debug(`FINANCE phone: ${rolePhone}`);
+              break;
+          }
+        } catch (error) {
+          this.logger.error(`Error querying role-specific table for ${user.role}:`, error);
         }
+        
+        // Use role-specific phone if available, otherwise fall back to user phone
+        const userPhone = user.phone && user.phone.trim() !== '' ? user.phone : undefined;
+        response.user.phone = rolePhone ?? userPhone ?? undefined;
+        this.logger.debug(`Final phone for ${user.role}: ${response.user.phone}`);
       }
 
       // Rest of your admin-specific settings...

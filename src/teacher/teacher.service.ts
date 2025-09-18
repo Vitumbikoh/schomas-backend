@@ -453,6 +453,7 @@ export class TeachersService {
           if (student && !studentsMap.has(student.id)) {
             studentsMap.set(student.id, {
               id: student.id,
+              studentId: student.studentId,
               firstName: student.firstName,
               lastName: student.lastName,
               email: student.user?.email || null,
@@ -1079,8 +1080,17 @@ export class TeachersService {
         if (student && !studentsMap.has(student.id)) {
           studentsMap.set(student.id, {
             id: student.id,
-            name: `${student.firstName} ${student.lastName}`,
-            class: student.class?.name || 'N/A',
+            studentId: student.studentId,
+            firstName: student.firstName,
+            lastName: student.lastName,
+            email: student.user?.email || null,
+            class: student.class
+              ? {
+                  id: student.class.id,
+                  name: student.class.name,
+                }
+              : null,
+            enrollmentDate: enrollment.enrollmentDate || enrollment.createdAt,
           });
         }
       });
@@ -1258,4 +1268,80 @@ async submitExamGrades(
     invalidStudentIds: studentIds.filter(id => !students.some(s => s.studentId === id)),
   };
 }
+
+  async getStudentDetailsForTeacher(teacherId: string, studentId: string) {
+    console.log(`Fetching student details for teacher ${teacherId}, student ${studentId}`);
+
+    if (!isUUID(teacherId) || !isUUID(studentId)) {
+      console.error(`Invalid teacher ID or student ID: ${teacherId}, ${studentId}`);
+      throw new NotFoundException('Invalid teacher ID or student ID');
+    }
+
+    const teacher = await this.teacherRepository.findOne({
+      where: { id: teacherId },
+      relations: ['user'],
+    });
+
+    if (!teacher) {
+      console.error(`Teacher with ID ${teacherId} not found`);
+      throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
+    }
+
+    // Check if the teacher has access to this student (student is in one of teacher's courses)
+    const courses = await this.courseRepository.find({
+      where: { teacher: { id: teacherId } },
+      relations: [
+        'enrollments',
+        'enrollments.student',
+        'enrollments.student.user',
+        'enrollments.student.class',
+        'enrollments.student.parent',
+        'enrollments.student.parent.user',
+      ],
+    });
+
+    let student: any = null;
+    for (const course of courses) {
+      const foundStudent = course.enrollments?.find(enrollment => enrollment.student.id === studentId)?.student;
+      if (foundStudent) {
+        student = foundStudent;
+        break;
+      }
+    }
+
+    if (!student) {
+      console.error(`Student ${studentId} not found or not accessible by teacher ${teacherId}`);
+      throw new NotFoundException('Student not found or not accessible');
+    }
+
+    // Return formatted student details
+    return {
+      id: student.id,
+      studentId: student.studentId,
+      firstName: student.firstName,
+      lastName: student.lastName,
+      user: student.user ? {
+        email: student.user.email,
+        username: student.user.username,
+      } : null,
+      class: student.class ? {
+        id: student.class.id,
+        name: student.class.name,
+      } : null,
+      gradeLevel: student.gradeLevel,
+      dateOfBirth: student.dateOfBirth,
+      gender: student.gender,
+      phoneNumber: student.phoneNumber,
+      address: student.address,
+      parent: student.parent ? {
+        id: student.parent.id,
+        firstName: student.parent.firstName,
+        lastName: student.parent.lastName,
+        user: student.parent.user ? {
+          email: student.parent.user.email,
+        } : null,
+        phoneNumber: student.parent.phoneNumber,
+      } : null,
+    };
+  }
 }

@@ -382,6 +382,46 @@ export class TeacherController {
     }
   }
 
+  @Get('students/:studentId')
+  @Roles(Role.TEACHER)
+  async getStudentDetails(@Param('studentId') studentId: string, @Request() req) {
+    try {
+      const userId = req.user?.sub;
+      console.log('Request user:', req.user);
+      if (!userId) {
+        console.error('No user ID found in request');
+        throw new ForbiddenException('Invalid user authentication');
+      }
+
+      const teacher = await this.teacherService.findOneByUserId(userId);
+      if (!teacher) {
+        console.error(`Teacher not found for user ID: ${userId}`);
+        throw new NotFoundException('Your teacher record was not found');
+      }
+
+      const studentDetails = await this.teacherService.getStudentDetailsForTeacher(
+        teacher.id,
+        studentId,
+      );
+
+      return {
+        success: true,
+        student: studentDetails,
+      };
+    } catch (error) {
+      console.error('Error in getStudentDetails:', error);
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
+        throw error;
+      }
+      throw new ForbiddenException(
+        'Failed to fetch student details: ' + error.message,
+      );
+    }
+  }
+
   @Get('my-courses/count')
   @Roles(Role.TEACHER)
   async getMyCoursesCount(@Request() req) {

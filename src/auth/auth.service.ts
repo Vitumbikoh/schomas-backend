@@ -83,8 +83,9 @@ export class AuthService {
         username: user.username,
         email: user.email,
         role: user.role,
+        phone: user.phone,
         schoolId: user.schoolId || null,
-  forcePasswordReset: (user as any).forcePasswordReset ?? false,
+        forcePasswordReset: (user as any).forcePasswordReset ?? false,
       },
     };
   }
