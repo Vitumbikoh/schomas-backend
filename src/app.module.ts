@@ -29,6 +29,7 @@ import { SystemModule } from './system/system.module';
 import { AggregationModule } from './aggregation/aggregation.module';
 import { BillingModule } from './billing/billing.module';
 import { LibraryModule } from './library/library.module';
+import { StaffModule } from './staff/staff.module';
 import { RequestContextMiddleware } from './common/request-context/request-context.middleware';
 
 @Module({
@@ -63,6 +64,7 @@ import { RequestContextMiddleware } from './common/request-context/request-conte
   AggregationModule,
   BillingModule,
   LibraryModule,
+  StaffModule,
   ],
 })
 export class AppModule implements NestModule {

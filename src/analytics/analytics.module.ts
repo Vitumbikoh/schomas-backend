@@ -10,6 +10,8 @@ import { Teacher } from '../user/entities/teacher.entity';
 import { Term } from '../settings/entities/term.entity';
 import { Enrollment } from '../enrollment/entities/enrollment.entity';
 import { FeeStructure } from '../finance/entities/fee-structure.entity';
+import { Exam } from '../exams/entities/exam.entity';
+import { ExamGradeRecord } from '../aggregation/entities/exam-grade-record.entity';
 import { SettingsModule } from '../settings/settings.module';
 import { FinanceModule } from '../finance/finance.module';
 import { AnalyticsController } from './analytics.controller';
@@ -28,6 +30,8 @@ import { AnalyticsService } from './analytics.service';
       Term,
       Enrollment,
       FeeStructure,
+      Exam,
+      ExamGradeRecord,
     ]),
     SettingsModule,
     FinanceModule, // This imports all exported providers from FinanceModule

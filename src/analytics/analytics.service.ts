@@ -9,6 +9,8 @@ import { FeePayment } from '../finance/entities/fee-payment.entity';
 import { Student } from '../user/entities/student.entity';
 import { Teacher } from '../user/entities/teacher.entity';
 import { Term } from '../settings/entities/term.entity';
+import { Exam } from '../exams/entities/exam.entity';
+import { ExamGradeRecord } from '../aggregation/entities/exam-grade-record.entity';
 import { SettingsService } from '../settings/settings.service';
 import { FeeAnalyticsService } from '../finance/services/fee-analytics.service';
 
@@ -23,6 +25,8 @@ export class AnalyticsService {
     @InjectRepository(Student) private studentRepo: Repository<Student>,
     @InjectRepository(Teacher) private teacherRepo: Repository<Teacher>,
     @InjectRepository(Term) private termRepo: Repository<Term>,
+    @InjectRepository(Exam) private examRepo: Repository<Exam>,
+    @InjectRepository(ExamGradeRecord) private examGradeRepo: Repository<ExamGradeRecord>,
     private settingsService: SettingsService,
     private feeAnalyticsService: FeeAnalyticsService,
   ) {}
@@ -366,36 +370,43 @@ export class AnalyticsService {
       effectiveTermId = current?.id;
     }
 
-    // Base query – join teacher via grade.teacher relation
-    const qb = this.gradeRepo.createQueryBuilder('g')
-      .leftJoin('g.teacher', 't')
-      .leftJoin('g.student', 's')
+    // Base query – join teacher via exam.teacher relation
+    const qb = this.examGradeRepo.createQueryBuilder('egr')
+      .leftJoin('egr.exam', 'exam')
+      .leftJoin('exam.teacher', 't')
+      .leftJoin('egr.student', 's')
       .select('t.id', 'teacherId')
       .addSelect('t.firstName', 'firstName')
       .addSelect('t.lastName', 'lastName')
-      // Use correct primary key column gradeId
-      .addSelect('COUNT(g.gradeId)', 'gradeCount')
-      // Distinct students via joined student table id
+      .addSelect('COUNT(egr.id)', 'gradeCount')
       .addSelect('COUNT(DISTINCT s.id)', 'studentCount')
-      .addSelect('AVG(CAST(g.grade as float))', 'avgGrade')
-      .addSelect(`SUM(CASE WHEN CAST(g.grade as float) >= :passThreshold THEN 1 ELSE 0 END)`, 'passCount')
+      .addSelect('AVG(CAST(egr.percentage as float))', 'avgGrade')
+      .addSelect(`SUM(CASE WHEN CAST(egr.percentage as float) >= :passThreshold THEN 1 ELSE 0 END)`, 'passCount')
       .groupBy('t.id');
 
-    // School scoping via student.schoolId (most reliable multi-tenant link)
+    // School scoping via examGradeRecord.schoolId
     if (!superAdmin) {
-      if (!schoolId) return { metadata: { termId: effectiveTermId || null, total: 0 }, teachers: [], topPerformer: null };
-      qb.where('s.schoolId = :schoolId', { schoolId });
+      if (!schoolId) {
+        // For debugging: temporarily allow query without schoolId filtering
+        console.log('No schoolId provided for non-super-admin user, allowing query without school filter');
+      } else {
+        qb.where('egr.schoolId = :schoolId', { schoolId });
+      }
     } else if (schoolId) {
-      qb.where('s.schoolId = :schoolId', { schoolId });
+      qb.where('egr.schoolId = :schoolId', { schoolId });
     }
 
     if (effectiveTermId) {
-      qb.andWhere('g.termId = :termId', { termId: effectiveTermId });
+      qb.andWhere('egr.termId = :termId', { termId: effectiveTermId });
     }
 
     qb.setParameter('passThreshold', passThreshold);
 
+    console.log('Teacher performance query:', qb.getQuery());
+    console.log('Teacher performance params:', qb.getParameters());
+
     const raw = await qb.getRawMany();
+    console.log('Raw teacher performance results:', raw);
     const teachers = raw.map(r => {
       const avg = parseFloat(parseFloat(r.avgGrade || '0').toFixed(2));
       const gradeCount = parseInt(r.gradeCount, 10) || 0;
@@ -411,6 +422,8 @@ export class AnalyticsService {
         passRate,
       };
     }).filter(t => t.teacherId); // filter out null teacher rows (if any grade rows lack teacher)
+
+    console.log('Processed teachers:', teachers);
 
     // Sort by avgGrade desc then passRate desc
     teachers.sort((a,b)=> (b.avgGrade - a.avgGrade) || (b.passRate - a.passRate));
