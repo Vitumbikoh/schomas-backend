@@ -10,7 +10,13 @@ import {
   Param,
   NotFoundException,
   Query,
+  UploadedFile,
+  UseInterceptors,
+  Res,
+  Logger,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import * as XLSX from 'xlsx';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -37,6 +43,8 @@ import { SystemLoggingService } from 'src/logs/system-logging.service';
 @Controller('course')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 export class CourseController {
+  private readonly logger = new Logger(CourseController.name);
+  
   constructor(
     private readonly courseService: CourseService,
     private readonly teacherService: TeachersService,
@@ -117,9 +125,7 @@ export class CourseController {
     return {
       totalCourses: courses.length,
       activeCourses: courses.filter((c) => c.status === 'active').length,
-      upcomingCourses: courses.filter(
-        (course) => course.startDate && new Date(course.startDate) > new Date(),
-      ).length,
+      upcomingCourses: courses.filter((c) => c.status === 'upcoming').length,
       averageEnrollment: totalEnrollments / courses.length || 0,
       totalEnrollments,
     };
@@ -315,6 +321,56 @@ async getAllCourses(
       await this.systemLoggingService.logSystemError(error, 'COURSE', 'COURSE_CREATE_ERROR', { payload: createCourseDto });
       throw error;
     }
+  }
+
+  @Post('bulk-upload')
+  @Roles(Role.ADMIN)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiOperation({ summary: 'Bulk upload courses via Excel/CSV' })
+  @ApiResponse({ status: 201, description: 'Bulk course upload processed' })
+  async bulkUploadCourses(@Request() req, @UploadedFile() file: any) {
+    if (!file) {
+      throw new Error('No file uploaded');
+    }
+    const allowed = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'text/csv'];
+    if (!allowed.includes(file.mimetype)) {
+      this.logger.warn(`Unsupported file type: ${file.mimetype}`);
+      throw new Error('Unsupported file type. Upload .xlsx, .xls or .csv');
+    }
+
+    const result = await this.courseService.bulkCreateFromExcel(file.buffer, req.user?.schoolId);
+    return {
+      ...result,
+      success: true,
+    };
+  }
+
+  @Get('template')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Download course bulk upload template' })
+  async downloadTemplate(@Res() res) {
+    const headers = [
+      'code', 'name', 'description', 'status', 'className', 'teacherName', 'schedule'
+    ];
+    const sampleRows = [
+      { code: 'MATH101', name: 'Mathematics Form 1', description: 'Basic mathematics for form 1 students', status: 'active', className: 'Form one', teacherName: 'John Doe', schedule: 'Monday 8:00-9:00' },
+      { code: 'ENG101', name: 'English Form 1', description: 'English language and literature', status: 'active', className: 'Form one', teacherName: 'Jane Smith', schedule: 'Tuesday 9:00-10:00' },
+      { code: 'SCI101', name: 'Science Form 1', description: 'General science concepts', status: 'active', className: 'Form one', teacherName: 'Dr. Johnson', schedule: 'Wednesday 10:00-11:00' },
+      { code: 'HIST101', name: 'History Form 1', description: 'World and Kenyan history', status: 'upcoming', className: 'Form one', teacherName: 'Prof. Wilson', schedule: 'Thursday 11:00-12:00' },
+      { code: 'MATH201', name: 'Mathematics Form 2', description: 'Intermediate mathematics', status: 'active', className: 'Form two', teacherName: 'John Doe', schedule: 'Monday 10:00-11:00' },
+      { code: 'ENG201', name: 'English Form 2', description: 'Advanced English concepts', status: 'active', className: 'Form two', teacherName: 'Jane Smith', schedule: 'Tuesday 11:00-12:00' },
+      { code: 'PHYS201', name: 'Physics Form 2', description: 'Basic physics principles', status: 'active', className: 'Form two', teacherName: 'Dr. Brown', schedule: 'Friday 8:00-9:00' },
+      { code: 'CHEM201', name: 'Chemistry Form 2', description: 'Chemical reactions and compounds', status: 'active', className: 'Form two', teacherName: 'Dr. Davis', schedule: 'Friday 9:00-10:00' },
+      { code: 'BIO301', name: 'Biology Form 3', description: 'Advanced biology concepts', status: 'upcoming', className: 'Form Three', teacherName: 'Dr. Miller', schedule: 'Monday 12:00-13:00' },
+      { code: 'GEOG301', name: 'Geography Form 3', description: 'Physical and human geography', status: 'active', className: 'Form Three', teacherName: 'Ms. Garcia', schedule: 'Thursday 13:00-14:00' }
+    ];
+    const worksheet = XLSX.utils.json_to_sheet(sampleRows as any[], { header: headers });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Courses');
+    const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+    res.setHeader('Content-Disposition', 'attachment; filename="course-bulk-template.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    return res.send(buffer);
   }
 
   @Post(':courseId/assign-teacher')

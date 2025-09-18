@@ -1201,4 +1201,47 @@ export class TeacherController {
       throw new ForbiddenException('Failed to submit grades: ' + error.message);
     }
   }
+
+  @Get('attendance/course/:courseId')
+  @Roles(Role.TEACHER)
+  async getAttendanceByCourse(
+    @Param('courseId') courseId: string,
+    @Query('date') date: string,
+    @Request() req
+  ) {
+    try {
+      const userId = req.user?.sub;
+      console.log('Request user:', req.user);
+      if (!userId) {
+        console.error('No user ID found in request');
+        throw new ForbiddenException('Invalid user authentication');
+      }
+
+      const teacher = await this.teacherService.findOneByUserId(userId);
+      if (!teacher) {
+        console.error(`Teacher not found for user ID: ${userId}`);
+        throw new NotFoundException('Your teacher record was not found');
+      }
+
+      const attendance = await this.teacherService.getAttendanceByCourse(
+        teacher.id,
+        courseId,
+        date
+      );
+
+      return {
+        success: true,
+        attendance,
+      };
+    } catch (error) {
+      console.error('Error in getAttendanceByCourse:', error);
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
+        throw error;
+      }
+      throw new ForbiddenException('Failed to fetch attendance: ' + error.message);
+    }
+  }
 }

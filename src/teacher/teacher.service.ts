@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { User } from '../user/entities/user.entity';
-import { Repository, Like, In } from 'typeorm';
+import { Repository, Like, In, Between } from 'typeorm';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
 import { Teacher } from '../user/entities/teacher.entity';
 import { CreateTeacherDto } from '../user/dtos/create-teacher.dto';
@@ -1343,5 +1343,103 @@ async submitExamGrades(
         phoneNumber: student.parent.phoneNumber,
       } : null,
     };
+  }
+
+  async getAttendanceByCourse(teacherId: string, courseId: string, date?: string) {
+    console.log(`Fetching attendance for teacher ${teacherId}, course ${courseId}, date ${date}`);
+
+    if (!isUUID(teacherId) || !isUUID(courseId)) {
+      console.error(`Invalid teacher ID or course ID: ${teacherId}, ${courseId}`);
+      throw new NotFoundException('Invalid teacher ID or course ID');
+    }
+
+    const teacher = await this.teacherRepository.findOne({
+      where: { id: teacherId },
+      relations: ['user'],
+    });
+
+    if (!teacher) {
+      console.error(`Teacher with ID ${teacherId} not found`);
+      throw new NotFoundException(`Teacher with ID ${teacherId} not found`);
+    }
+
+    // Verify the teacher teaches this course
+    const course = await this.courseRepository.findOne({
+      where: { id: courseId, teacher: { id: teacherId } },
+      relations: ['class'],
+    });
+
+    if (!course) {
+      console.error(`Course with ID ${courseId} not found or not assigned to teacher ${teacherId}`);
+      throw new NotFoundException('Course not found or not accessible');
+    }
+
+    // Build query for attendance records
+    let whereCondition: any = {
+      course: { id: courseId },
+    };
+
+    if (date) {
+      const queryDate = new Date(date);
+      const startOfDay = new Date(queryDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(queryDate);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      whereCondition.date = Between(startOfDay, endOfDay);
+    }
+
+    const attendanceRecords = await this.attendanceRepository.find({
+      where: whereCondition,
+      relations: ['student', 'student.student', 'course', 'class'],
+      order: { date: 'DESC' },
+    });
+
+    // Group attendance by date
+    const attendanceByDate = new Map<string, any>();
+
+    attendanceRecords.forEach(record => {
+      const dateKey = record.date.toISOString().split('T')[0];
+
+      if (!attendanceByDate.has(dateKey)) {
+        attendanceByDate.set(dateKey, {
+          id: `${courseId}-${dateKey}`,
+          date: dateKey,
+          course: {
+            id: course.id,
+            name: course.name,
+            code: course.code,
+          },
+          class: {
+            id: course.class.id,
+            name: course.class.name,
+          },
+          presentCount: 0,
+          absentCount: 0,
+          totalStudents: 0,
+          attendanceDetails: [],
+        });
+      }
+
+      const dayRecord = attendanceByDate.get(dateKey);
+      dayRecord.totalStudents++;
+
+      if (record.isPresent) {
+        dayRecord.presentCount++;
+      } else {
+        dayRecord.absentCount++;
+      }
+
+      dayRecord.attendanceDetails.push({
+        studentId: record.student.id,
+        studentName: `${record.student.student?.firstName || 'Unknown'} ${record.student.student?.lastName || 'Student'}`,
+        isPresent: record.isPresent,
+      });
+    });
+
+    const result = Array.from(attendanceByDate.values());
+    console.log(`Returning ${result.length} attendance records for course ${courseId}`);
+
+    return result;
   }
 }

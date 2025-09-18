@@ -34,12 +34,6 @@ export class Course {
   @Column({ default: 'upcoming' })
   status: 'active' | 'inactive' | 'upcoming';
 
-  @Column({ type: 'date', nullable: true })
-  startDate: Date;
-
-  @Column({ type: 'date', nullable: true })
-  endDate: Date;
-
   @Column({ default: 0 })
   enrollmentCount: number;
 

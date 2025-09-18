@@ -2,7 +2,6 @@
 import { 
   IsString, 
   IsOptional, 
-  IsDateString, 
   IsIn,
   IsUUID,
   IsArray,
@@ -44,14 +43,6 @@ export class UpdateCourseDto {
   @IsIn(['active', 'inactive', 'upcoming'])
   @IsOptional()
   status?: 'active' | 'inactive' | 'upcoming';
-
-  @IsDateString()
-  @IsOptional()
-  startDate?: Date;
-
-  @IsDateString()
-  @IsOptional()
-  endDate?: Date;
 
   @IsOptional()
   enrollmentCount?: number;

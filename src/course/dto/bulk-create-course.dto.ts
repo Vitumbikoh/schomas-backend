@@ -1,4 +1,3 @@
-// src/course/dto/create-course.dto.ts
 import { 
   IsString, 
   IsNotEmpty, 
@@ -7,14 +6,10 @@ import {
   IsUUID
 } from 'class-validator';
 
-export class CreateCourseDto {
+export class BulkCreateCourseDto {
   @IsString()
   @IsNotEmpty()
   code: string;
-
-  @IsOptional()
-  @IsUUID()
-  classId?: string;
 
   @IsString()
   @IsNotEmpty()
@@ -36,4 +31,18 @@ export class CreateCourseDto {
   @IsString()
   @IsOptional()
   schedule?: string;
+
+  @IsOptional()
+  @IsUUID()
+  classId?: string;
+
+  // Additional field for bulk upload - will be resolved to classId
+  @IsString()
+  @IsOptional()
+  className?: string;
+
+  // Additional field for bulk upload - will be resolved to teacherId
+  @IsString()
+  @IsOptional()
+  teacherName?: string;
 }
