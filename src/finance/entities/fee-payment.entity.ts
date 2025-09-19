@@ -19,7 +19,7 @@ export class FeePayment {
   @Column()
   paymentType: string;
 
-  @Column({ type: 'enum', enum: ['cash', 'bank_transfer'] })
+  @Column({ type: 'enum', enum: ['cash', 'bank_transfer'], default: 'cash' })
   paymentMethod: 'cash' | 'bank_transfer';
 
   @Column({ type: 'text', nullable: true }) // Fix: Explicitly set type to text

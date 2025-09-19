@@ -105,6 +105,70 @@ export class FinanceController {
     };
   }
 
+  @Get('payment-methods-distribution')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Get payment methods distribution analytics' })
+  @ApiResponse({
+    status: 200,
+    description: 'Payment methods distribution data retrieved successfully',
+  })
+  async getPaymentMethodsDistribution(@Request() req) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.financeService.getPaymentMethodDistribution(
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
+  }
+
+  @Get('outstanding-fees-breakdown')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Get outstanding fees breakdown by amount ranges' })
+  @ApiResponse({
+    status: 200,
+    description: 'Outstanding fees breakdown data retrieved successfully',
+  })
+  async getOutstandingFeesBreakdown(@Request() req) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.financeService.getOutstandingFeesBreakdown(
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
+  }
+
+  @Get('outstanding-fees-last-month')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Get outstanding fees from last month for comparison' })
+  @ApiResponse({
+    status: 200,
+    description: 'Outstanding fees last month data retrieved successfully',
+  })
+  async getOutstandingFeesLastMonth(@Request() req) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.financeService.getOutstandingFeesLastMonth(
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
+  }
+
+  @Get('revenue-trends')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Get monthly revenue trends for the last 6 months' })
+  @ApiResponse({
+    status: 200,
+    description: 'Revenue trends data retrieved successfully',
+  })
+  async getRevenueTrends(@Request() req) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.financeService.getRevenueTrends(
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
+  }
+
   @Post('payments')
   @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Process a fee payment' })
