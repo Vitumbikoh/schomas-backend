@@ -300,7 +300,9 @@ export class CourseService {
    * Bulk create courses from an uploaded Excel/CSV file buffer.
    * Supported formats: .xlsx, .xls, .csv
    * Required headers (case insensitive): code, name
-   * Optional headers: description, status, className, teacherName, schedule
+   * Optional headers: description, status, className, teacherUsername
+   * teacherUsername should match the username field in the user table
+   * If teacherUsername is empty, the course will be created without a teacher assigned
    */
   async bulkCreateFromExcel(buffer: Buffer, schoolId?: string) {
     try {
@@ -335,6 +337,8 @@ export class CourseService {
             'classname': 'className',
             'class_name': 'className',
             'class': 'className',
+            'teacherusername': 'teacherUsername',
+            'teacher_username': 'teacherUsername',
             'teachername': 'teacherName',
             'teacher_name': 'teacherName',
             'teacher': 'teacherName',
@@ -406,16 +410,41 @@ export class CourseService {
             }
           }
 
-          // Resolve teacher name to teacherId if provided
-          if (normalized.teacherName && !normalized.teacherId) {
+          // Resolve teacher username to teacherId if provided
+          if (normalized.teacherUsername && !normalized.teacherId) {
+            const rawTeacherUsername = String(normalized.teacherUsername).trim();
+            if (rawTeacherUsername.length) {
+              try {
+                // Find teacher by username from user table
+                const teacherEntity = await this.teacherRepository.createQueryBuilder('t')
+                  .leftJoinAndSelect('t.user', 'user')
+                  .where('user.username = :username', { username: rawTeacherUsername })
+                  .andWhere(schoolId ? 't.schoolId = :sid' : '1=1', schoolId ? { sid: schoolId } : {})
+                  .getOne();
+
+                if (teacherEntity) {
+                  normalized.teacherId = teacherEntity.id;
+                } else {
+                  this.logger.warn(`Teacher with username '${rawTeacherUsername}' not found for course ${normalized.code} at line ${lineNumber}`);
+                  // Don't fail the import for missing teacher, just log warning
+                }
+              } catch (e) {
+                this.logger.error(`Error looking up teacher with username '${rawTeacherUsername}': ${e.message}`);
+                // Don't fail the import for teacher lookup errors
+              }
+            }
+          }
+
+          // Fallback: Resolve teacher name to teacherId if teacherUsername not provided but teacherName is
+          if (!normalized.teacherId && normalized.teacherName) {
             const rawTeacher = String(normalized.teacherName).trim();
             if (rawTeacher.length) {
               try {
                 // Try to find teacher by name (assuming format: "First Last" or "Last, First")
                 const teacherEntity = await this.teacherRepository.createQueryBuilder('t')
                   .leftJoinAndSelect('t.user', 'user')
-                  .where('LOWER(CONCAT(user.firstName, \' \', user.lastName)) LIKE :name', { 
-                    name: `%${rawTeacher.toLowerCase()}%` 
+                  .where('LOWER(CONCAT(user.firstName, \' \', user.lastName)) LIKE :name', {
+                    name: `%${rawTeacher.toLowerCase()}%`
                   })
                   .andWhere(schoolId ? 't.schoolId = :sid' : '1=1', schoolId ? { sid: schoolId } : {})
                   .getOne();
@@ -434,7 +463,7 @@ export class CourseService {
           }
 
           // Remove helper fields before creating course
-          const { className, teacherName, ...courseDto } = normalized;
+          const { className, teacherName, teacherUsername, ...courseDto } = normalized;
           
           // Create course
           const created = await this.create(courseDto as CreateCourseDto, schoolId);

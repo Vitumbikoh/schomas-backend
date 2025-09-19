@@ -354,44 +354,44 @@ async getAllCourses(
   @ApiOperation({ summary: 'Download course bulk upload template' })
   async downloadTemplate(@Res() res) {
     const headers = [
-      'code', 'name', 'description', 'status', 'className', 'teacherName'
+      'code', 'name', 'description', 'status', 'className', 'teacherUsername'
     ];
     const sampleRows = [
       // Form 1 Courses (10 courses)
-      { code: 'MATH101', name: 'Mathematics Form 1', description: 'Basic mathematics for form 1 students', status: 'active', className: 'Form one', teacherName: 'John Doe' },
-      { code: 'ENG101', name: 'English Form 1', description: 'English language and literature', status: 'active', className: 'Form one', teacherName: 'Jane Smith' },
-      { code: 'SCI101', name: 'Science Form 1', description: 'General science concepts', status: 'active', className: 'Form one', teacherName: 'Dr. Johnson' },
-      { code: 'HIST101', name: 'History Form 1', description: 'World and Kenyan history', status: 'active', className: 'Form one', teacherName: 'Prof. Wilson' },
-      { code: 'GEOG101', name: 'Geography Form 1', description: 'Basic geography concepts', status: 'active', className: 'Form one', teacherName: 'Ms. Garcia' },
-      { code: 'KISW101', name: 'Kiswahili Form 1', description: 'Kiswahili language and literature', status: 'active', className: 'Form one', teacherName: 'Mr. Kiprop' },
-      { code: 'CRE101', name: 'CRE Form 1', description: 'Christian Religious Education', status: 'active', className: 'Form one', teacherName: 'Mrs. Wanjiku' },
-      { code: 'ART101', name: 'Art Form 1', description: 'Visual arts and crafts', status: 'active', className: 'Form one', teacherName: 'Ms. Achieng' },
-      { code: 'MUSIC101', name: 'Music Form 1', description: 'Music theory and practice', status: 'active', className: 'Form one', teacherName: 'Mr. Oduya' },
-      { code: 'PE101', name: 'Physical Education Form 1', description: 'Physical education and sports', status: 'active', className: 'Form one', teacherName: 'Coach Kiprotich' },
+      { code: 'MATH101', name: 'Mathematics Form 1', description: 'Basic mathematics for form 1 students', status: 'active', className: 'Form one', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'ENG101', name: 'English Form 1', description: 'English language and literature', status: 'active', className: 'Form one', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'SCI101', name: 'Science Form 1', description: 'General science concepts', status: 'active', className: 'Form one', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'HIST101', name: 'History Form 1', description: 'World and Kenyan history', status: 'active', className: 'Form one', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'GEOG101', name: 'Geography Form 1', description: 'Basic geography concepts', status: 'active', className: 'Form one', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'KISW101', name: 'Kiswahili Form 1', description: 'Kiswahili language and literature', status: 'active', className: 'Form one', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'CRE101', name: 'CRE Form 1', description: 'Christian Religious Education', status: 'active', className: 'Form one', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'ART101', name: 'Art Form 1', description: 'Visual arts and crafts', status: 'active', className: 'Form one', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'MUSIC101', name: 'Music Form 1', description: 'Music theory and practice', status: 'active', className: 'Form one', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'PE101', name: 'Physical Education Form 1', description: 'Physical education and sports', status: 'active', className: 'Form one', teacherUsername: 'memorygondwe2@teacher' },
 
       // Form 2 Courses (10 courses)
-      { code: 'MATH201', name: 'Mathematics Form 2', description: 'Intermediate mathematics', status: 'active', className: 'Form two', teacherName: 'John Doe' },
-      { code: 'ENG201', name: 'English Form 2', description: 'Advanced English concepts', status: 'active', className: 'Form two', teacherName: 'Jane Smith' },
-      { code: 'PHYS201', name: 'Physics Form 2', description: 'Basic physics principles', status: 'active', className: 'Form two', teacherName: 'Dr. Brown' },
-      { code: 'CHEM201', name: 'Chemistry Form 2', description: 'Chemical reactions and compounds', status: 'active', className: 'Form two', teacherName: 'Dr. Davis' },
-      { code: 'BIO201', name: 'Biology Form 2', description: 'Basic biology concepts', status: 'active', className: 'Form two', teacherName: 'Dr. Miller' },
-      { code: 'HIST201', name: 'History Form 2', description: 'Advanced history studies', status: 'active', className: 'Form two', teacherName: 'Prof. Wilson' },
-      { code: 'GEOG201', name: 'Geography Form 2', description: 'Intermediate geography', status: 'active', className: 'Form two', teacherName: 'Ms. Garcia' },
-      { code: 'KISW201', name: 'Kiswahili Form 2', description: 'Advanced Kiswahili studies', status: 'active', className: 'Form two', teacherName: 'Mr. Kiprop' },
-      { code: 'CRE201', name: 'CRE Form 2', description: 'Advanced Christian Religious Education', status: 'active', className: 'Form two', teacherName: 'Mrs. Wanjiku' },
-      { code: 'BUS201', name: 'Business Studies Form 2', description: 'Introduction to business concepts', status: 'active', className: 'Form two', teacherName: 'Mr. Kiprotich' },
+      { code: 'MATH201', name: 'Mathematics Form 2', description: 'Intermediate mathematics', status: 'active', className: 'Form two', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'ENG201', name: 'English Form 2', description: 'Advanced English concepts', status: 'active', className: 'Form two', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'PHYS201', name: 'Physics Form 2', description: 'Basic physics principles', status: 'active', className: 'Form two', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'CHEM201', name: 'Chemistry Form 2', description: 'Chemical reactions and compounds', status: 'active', className: 'Form two', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'BIO201', name: 'Biology Form 2', description: 'Basic biology concepts', status: 'active', className: 'Form two', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'HIST201', name: 'History Form 2', description: 'Advanced history studies', status: 'active', className: 'Form two', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'GEOG201', name: 'Geography Form 2', description: 'Intermediate geography', status: 'active', className: 'Form two', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'KISW201', name: 'Kiswahili Form 2', description: 'Advanced Kiswahili studies', status: 'active', className: 'Form two', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'CRE201', name: 'CRE Form 2', description: 'Advanced Christian Religious Education', status: 'active', className: 'Form two', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'BUS201', name: 'Business Studies Form 2', description: 'Introduction to business concepts', status: 'active', className: 'Form two', teacherUsername: 'memorygondwe2@teacher' },
 
       // Form 3 Courses (10 courses)
-      { code: 'MATH301', name: 'Mathematics Form 3', description: 'Advanced mathematics', status: 'active', className: 'Form Three', teacherName: 'John Doe' },
-      { code: 'ENG301', name: 'English Form 3', description: 'Advanced English literature and language', status: 'active', className: 'Form Three', teacherName: 'Jane Smith' },
-      { code: 'PHYS301', name: 'Physics Form 3', description: 'Advanced physics concepts', status: 'active', className: 'Form Three', teacherName: 'Dr. Brown' },
-      { code: 'CHEM301', name: 'Chemistry Form 3', description: 'Advanced chemistry studies', status: 'active', className: 'Form Three', teacherName: 'Dr. Davis' },
-      { code: 'BIO301', name: 'Biology Form 3', description: 'Advanced biology concepts', status: 'active', className: 'Form Three', teacherName: 'Dr. Miller' },
-      { code: 'HIST301', name: 'History Form 3', description: 'Advanced history and government', status: 'active', className: 'Form Three', teacherName: 'Prof. Wilson' },
-      { code: 'GEOG301', name: 'Geography Form 3', description: 'Advanced geography studies', status: 'active', className: 'Form Three', teacherName: 'Ms. Garcia' },
-      { code: 'KISW301', name: 'Kiswahili Form 3', description: 'Advanced Kiswahili literature', status: 'active', className: 'Form Three', teacherName: 'Mr. Kiprop' },
-      { code: 'CRE301', name: 'CRE Form 3', description: 'Advanced Christian Religious Education', status: 'active', className: 'Form Three', teacherName: 'Mrs. Wanjiku' },
-      { code: 'AGRI301', name: 'Agriculture Form 3', description: 'Agricultural science and practices', status: 'active', className: 'Form Three', teacherName: 'Mr. Kiprotich' }
+      { code: 'MATH301', name: 'Mathematics Form 3', description: 'Advanced mathematics', status: 'active', className: 'Form Three', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'ENG301', name: 'English Form 3', description: 'Advanced English literature and language', status: 'active', className: 'Form Three', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'PHYS301', name: 'Physics Form 3', description: 'Advanced physics concepts', status: 'active', className: 'Form Three', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'CHEM301', name: 'Chemistry Form 3', description: 'Advanced chemistry studies', status: 'active', className: 'Form Three', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'BIO301', name: 'Biology Form 3', description: 'Advanced biology concepts', status: 'active', className: 'Form Three', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'HIST301', name: 'History Form 3', description: 'Advanced history and government', status: 'active', className: 'Form Three', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'GEOG301', name: 'Geography Form 3', description: 'Advanced geography studies', status: 'active', className: 'Form Three', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'KISW301', name: 'Kiswahili Form 3', description: 'Advanced Kiswahili literature', status: 'active', className: 'Form Three', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'CRE301', name: 'CRE Form 3', description: 'Advanced Christian Religious Education', status: 'active', className: 'Form Three', teacherUsername: 'matthewsgondwe2@teacher' },
+      { code: 'AGRI301', name: 'Agriculture Form 3', description: 'Agricultural science and practices', status: 'active', className: 'Form Three', teacherUsername: 'memorygondwe2@teacher' }
     ];
     const worksheet = XLSX.utils.json_to_sheet(sampleRows as any[], { header: headers });
     const workbook = XLSX.utils.book_new();
