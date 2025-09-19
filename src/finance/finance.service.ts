@@ -12,6 +12,7 @@ import { Budget } from './entities/budget.entity';
 import { FeeStructure } from './entities/fee-structure.entity';
 import { Student } from '../user/entities/student.entity';
 import { User } from '../user/entities/user.entity';
+import { Class } from '../classes/entity/class.entity';
 import { ProcessPaymentDto } from './dtos/process-payment.dto';
 import { ApproveBudgetDto } from './dtos/approve-budget.dto';
 import { Role } from 'src/user/enums/role.enum';
@@ -35,6 +36,8 @@ export class FinanceService {
     private readonly feeStructureRepository: Repository<FeeStructure>,
     @InjectRepository(Student)
     private readonly studentRepository: Repository<Student>,
+    @InjectRepository(Class)
+    private readonly classRepository: Repository<Class>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private settingsService: SettingsService,
@@ -1157,48 +1160,84 @@ async getParentPayments(
   }
 
   async getOutstandingFeesBreakdown(schoolId?: string, superAdmin = false) {
+    // Get current term for filtering
+    const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
+    const termFilter = currentTerm ? { termId: currentTerm.id } : {};
     const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
 
-    // Get outstanding fees by amount ranges - use all pending payments
-    const outstandingFeesResult = await this.paymentRepository
-      .createQueryBuilder('payment')
-      .select('payment.amount', 'amount')
-      .where('payment.status = :status', { status: 'pending' })
-      .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
-      .getRawMany();
-
-    console.log('Outstanding fees breakdown - raw results:', outstandingFeesResult);
-
-    // Categorize by amount ranges - group by TOTAL AMOUNT in each range
-    const ranges = {
-      '$0 - $500': 0,
-      '$501 - $1,000': 0,
-      '$1,001 - $2,000': 0,
-      '$2,000+': 0
-    };
-
-    let totalOutstandingAmount = 0;
-    outstandingFeesResult.forEach(item => {
-      const amount = parseFloat(item.amount || '0');
-      totalOutstandingAmount += amount;
-
-      if (amount <= 500) {
-        ranges['$0 - $500'] += amount;
-      } else if (amount <= 1000) {
-        ranges['$501 - $1,000'] += amount;
-      } else if (amount <= 2000) {
-        ranges['$1,001 - $2,000'] += amount;
-      } else {
-        ranges['$2,000+'] += amount;
-      }
+    // Get all classes for the school/term
+    const classes = await this.classRepository.find({
+      where: {
+        ...schoolScope,
+      },
+      order: { numericalName: 'ASC' },
     });
 
-    console.log('Outstanding fees breakdown - amount ranges:', ranges, 'totalAmount:', totalOutstandingAmount);
+    // Get fee structures for the term
+    const feeStructures = await this.feeStructureRepository.find({
+      where: { isActive: true, ...termFilter, ...schoolScope },
+    });
 
-    return Object.entries(ranges).map(([range, amount]) => ({
-      range,
-      amount: amount,
-      percentage: totalOutstandingAmount > 0 ? Math.round((amount / totalOutstandingAmount) * 100) : 0,
+    const classBreakdown: Array<{
+      class: string;
+      outstandingFees: number;
+      expectedFees: number;
+      paidFees: number;
+      studentCount: number;
+    }> = [];
+
+    for (const classEntity of classes) {
+      // Get students in this class
+      const studentsInClass = await this.studentRepository.count({
+        where: {
+          class: { id: classEntity.id },
+          ...termFilter,
+          ...schoolScope,
+        },
+      });
+
+      if (studentsInClass === 0) continue; // Skip classes with no students
+
+      // Calculate expected fees for this class
+      // Fee structures can be class-specific or apply to all classes
+      const applicableFeeStructures = feeStructures.filter(fs =>
+        !fs.classId || fs.classId === classEntity.id
+      );
+
+      const expectedFees = applicableFeeStructures
+        .filter(fs => !fs.isOptional)
+        .reduce((sum, fs) => sum + (parseFloat(fs.amount.toString()) * studentsInClass), 0);
+
+      // Get paid fees for students in this class
+      const paidFeesResult = await this.paymentRepository
+        .createQueryBuilder('payment')
+        .select('SUM(payment.amount)', 'sum')
+        .leftJoin('payment.student', 'student')
+        .where('payment.status = :status', { status: 'completed' })
+        .andWhere('student.classId = :classId', { classId: classEntity.id })
+        .andWhere(currentTerm ? 'payment.termId = :termId' : '1=1', currentTerm ? { termId: currentTerm.id } : {})
+        .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
+        .getRawOne();
+
+      const paidFees = parseFloat(paidFeesResult?.sum || '0');
+      const outstandingFees = Math.max(0, expectedFees - paidFees);
+
+      classBreakdown.push({
+        class: classEntity.name,
+        outstandingFees: outstandingFees,
+        expectedFees: expectedFees,
+        paidFees: paidFees,
+        studentCount: studentsInClass,
+      });
+    }
+
+    // Calculate total outstanding fees for percentages
+    const totalOutstandingFees = classBreakdown.reduce((sum, item) => sum + item.outstandingFees, 0);
+
+    return classBreakdown.map(item => ({
+      range: item.class, // Keep 'range' for frontend compatibility
+      amount: item.outstandingFees,
+      percentage: totalOutstandingFees > 0 ? Math.round((item.outstandingFees / totalOutstandingFees) * 100) : 0,
     }));
   }
 
