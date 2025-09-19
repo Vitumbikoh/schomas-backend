@@ -2,6 +2,7 @@ import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { FinanceModule } from './finance/finance.module';
+import { ExpenseModule } from './expenses/expense.module';
 import { ParentsModule } from './parent/parents.module';
 import { StudentsModule } from './student/student.module';
 import { TeachersModule } from './teacher/teacher.module';
@@ -42,6 +43,7 @@ import { RequestContextMiddleware } from './common/request-context/request-conte
     StudentsModule,
     ParentsModule,
     FinanceModule,
+    ExpenseModule,
     AdminsModule,
     EnrollmentModule,
     ExamModule,
