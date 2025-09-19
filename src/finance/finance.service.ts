@@ -1028,7 +1028,6 @@ async getParentPayments(
     const termFilter = currentTerm ? { termId: currentTerm.id } : {};
 
     const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
-
     // Get current month and last month dates
     const now = new Date();
     const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -1062,14 +1061,31 @@ async getParentPayments(
       .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
       .getRawOne();
 
-    // Calculate outstanding fees (pending payments)
-    const outstandingFeesResult = await this.paymentRepository
+    // Calculate outstanding fees (expected fees - paid fees)
+    // First get expected fees from fee structures
+    const feeStructures = await this.feeStructureRepository.find({
+      where: { isActive: true, ...termFilter, ...schoolScope },
+    });
+
+    const students = await this.studentRepository.count({
+      where: { ...termFilter, ...schoolScope },
+    });
+
+    const expectedFees = feeStructures
+      .filter(fs => !fs.isOptional)
+      .reduce((sum, fs) => sum + (parseFloat(fs.amount.toString()) * students), 0);
+
+    // Get total paid fees
+    const paidFeesResult = await this.paymentRepository
       .createQueryBuilder('payment')
       .select('SUM(payment.amount)', 'sum')
-      .where('payment.status = :status', { status: 'pending' })
+      .where('payment.status = :status', { status: 'completed' })
       .andWhere(currentTerm ? 'payment.termId = :termId' : '1=1', currentTerm ? { termId: currentTerm.id } : {})
       .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
       .getRawOne();
+
+    const paidFees = parseFloat(paidFeesResult?.sum || '0');
+    const outstandingFees = Math.max(0, expectedFees - paidFees);
 
     // Count payments today
     const paymentsToday = await this.paymentRepository.count({
@@ -1108,7 +1124,7 @@ async getParentPayments(
     return {
       monthlyRevenue: parseFloat(monthlyRevenueResult?.sum || '0'),
       monthlyRevenueLastMonth: parseFloat(monthlyRevenueLastMonthResult?.sum || '0'),
-      outstandingFees: parseFloat(outstandingFeesResult?.sum || '0'),
+      outstandingFees: outstandingFees,
       paymentsToday,
       collectionRate,
     };
@@ -1141,11 +1157,9 @@ async getParentPayments(
   }
 
   async getOutstandingFeesBreakdown(schoolId?: string, superAdmin = false) {
-    // Get current term for filtering
-    const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
     const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
 
-    // Get outstanding fees by amount ranges - use all pending payments, not just current term
+    // Get outstanding fees by amount ranges - use all pending payments
     const outstandingFeesResult = await this.paymentRepository
       .createQueryBuilder('payment')
       .select('payment.amount', 'amount')
@@ -1155,7 +1169,7 @@ async getParentPayments(
 
     console.log('Outstanding fees breakdown - raw results:', outstandingFeesResult);
 
-    // Categorize by amount ranges - adjust ranges to be more realistic
+    // Categorize by amount ranges - group by TOTAL AMOUNT in each range
     const ranges = {
       '$0 - $500': 0,
       '$501 - $1,000': 0,
@@ -1163,29 +1177,28 @@ async getParentPayments(
       '$2,000+': 0
     };
 
-    let totalAmount = 0;
+    let totalOutstandingAmount = 0;
     outstandingFeesResult.forEach(item => {
       const amount = parseFloat(item.amount || '0');
-      totalAmount += amount;
+      totalOutstandingAmount += amount;
 
       if (amount <= 500) {
-        ranges['$0 - $500']++;
+        ranges['$0 - $500'] += amount;
       } else if (amount <= 1000) {
-        ranges['$501 - $1,000']++;
+        ranges['$501 - $1,000'] += amount;
       } else if (amount <= 2000) {
-        ranges['$1,001 - $2,000']++;
+        ranges['$1,001 - $2,000'] += amount;
       } else {
-        ranges['$2,000+']++;
+        ranges['$2,000+'] += amount;
       }
     });
 
-    const total = outstandingFeesResult.length;
-    console.log('Outstanding fees breakdown - ranges:', ranges, 'total:', total, 'totalAmount:', totalAmount);
+    console.log('Outstanding fees breakdown - amount ranges:', ranges, 'totalAmount:', totalOutstandingAmount);
 
-    return Object.entries(ranges).map(([range, count]) => ({
+    return Object.entries(ranges).map(([range, amount]) => ({
       range,
-      count,
-      percentage: total > 0 ? Math.round((count / total) * 100) : 0,
+      amount: amount,
+      percentage: totalOutstandingAmount > 0 ? Math.round((amount / totalOutstandingAmount) * 100) : 0,
     }));
   }
 
