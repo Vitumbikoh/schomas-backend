@@ -426,7 +426,7 @@ export class FinanceService {
     totalProcessedPayments: number;
     totalApprovedBudgets: number;
     totalRevenue: number;
-    pendingApprovals: number;
+    pendingStudents: number;
   fallbackUsed?: boolean;
   }> {
     // Get current term for filtering (with safe fallback)
@@ -446,7 +446,7 @@ export class FinanceService {
         budgetWhere.schoolId = schoolId;
       } else {
         // No schoolId for non-super admin -> return zeros
-        return { totalProcessedPayments: 0, totalApprovedBudgets: 0, totalRevenue: 0, pendingApprovals: 0 };
+        return { totalProcessedPayments: 0, totalApprovedBudgets: 0, totalRevenue: 0, pendingStudents: 0 };
       }
     } else if (schoolId) {
       paymentWhere.schoolId = schoolId;
@@ -472,32 +472,18 @@ export class FinanceService {
     let totalProcessedPayments = 0;
     let totalApprovedBudgets = 0;
     let totalRevenueResult: any = { sum: '0' };
-    let pendingPaymentsCount = 0;
-    let pendingBudgetsCount = 0;
+    let pendingStudentsCount = 0;
     try {
       [
         totalProcessedPayments,
         totalApprovedBudgets,
         totalRevenueResult,
-        pendingPaymentsCount,
-        pendingBudgetsCount,
+        pendingStudentsCount,
       ] = await Promise.all([
         this.paymentRepository.count({ where: paymentWhere }),
         this.budgetRepository.count({ where: budgetWhere }),
         this.calculateTotalRevenue(paymentWhere, currentTerm, dateRange),
-        this.paymentRepository.count({
-          where: {
-            status: 'pending',
-            ...(currentTerm ? { termId: currentTerm.id } : {}),
-            ...(paymentWhere.schoolId ? { schoolId: paymentWhere.schoolId } : {}),
-          },
-        }),
-        this.budgetRepository.count({
-          where: {
-            status: 'pending',
-            ...(budgetWhere.schoolId ? { schoolId: budgetWhere.schoolId } : {}),
-          },
-        }),
+        this.getStudentsWithOutstandingFees(schoolId, superAdmin),
       ]);
     } catch (err) {
       // await this.systemLoggingService.logSystemError(err, 'FINANCE', 'FINANCIAL_STATS_QUERY_FAILED', {
@@ -505,7 +491,7 @@ export class FinanceService {
       //   budgetWhere,
       //   dateRange: dateRange ? { start: dateRange.startDate, end: dateRange.endDate } : undefined,
       // });
-      return { totalProcessedPayments: 0, totalApprovedBudgets: 0, totalRevenue: 0, pendingApprovals: 0 };
+      return { totalProcessedPayments: 0, totalApprovedBudgets: 0, totalRevenue: 0, pendingStudents: 0 };
     }
 
     let totalRevenue = parseFloat(totalRevenueResult?.sum || '0');
@@ -560,7 +546,7 @@ export class FinanceService {
       totalProcessedPayments,
       totalApprovedBudgets,
       totalRevenue,
-      pendingApprovals: pendingPaymentsCount + pendingBudgetsCount,
+      pendingStudents: pendingStudentsCount,
       fallbackUsed,
     };
   }
@@ -1301,5 +1287,58 @@ async getParentPayments(
     }
 
     return trends;
+  }
+
+  async getStudentsWithOutstandingFees(schoolId?: string, superAdmin = false): Promise<number> {
+    // Get current term for filtering
+    const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
+    const termFilter = currentTerm ? { termId: currentTerm.id } : {};
+    const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
+
+    // Get all students for the school/term
+    const students = await this.studentRepository.find({
+      where: {
+        ...schoolScope,
+        ...termFilter,
+      },
+      relations: ['class'],
+    });
+
+    let studentsWithOutstandingFees = 0;
+
+    for (const student of students) {
+      // Get fee structures applicable to this student
+      const feeStructures = await this.feeStructureRepository
+        .createQueryBuilder('fee_structure')
+        .where('fee_structure.isActive = :isActive', { isActive: true })
+        .andWhere(currentTerm ? 'fee_structure.termId = :termId' : '1=1', currentTerm ? { termId: currentTerm.id } : {})
+        .andWhere(schoolScope.schoolId ? 'fee_structure.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
+        .andWhere('(fee_structure.classId IS NULL OR fee_structure.classId = :classId)', { classId: student.class?.id })
+        .getMany();
+
+      // Calculate expected fees for this student
+      const expectedFees = feeStructures
+        .filter(fs => !fs.isOptional)
+        .reduce((sum, fs) => sum + parseFloat(fs.amount.toString()), 0);
+
+      // Get paid fees for this student
+      const paidFeesResult = await this.paymentRepository
+        .createQueryBuilder('payment')
+        .select('SUM(payment.amount)', 'sum')
+        .where('payment.status = :status', { status: 'completed' })
+        .andWhere('payment.studentId = :studentId', { studentId: student.id })
+        .andWhere(currentTerm ? 'payment.termId = :termId' : '1=1', currentTerm ? { termId: currentTerm.id } : {})
+        .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
+        .getRawOne();
+
+      const paidFees = parseFloat(paidFeesResult?.sum || '0');
+      const outstandingFees = Math.max(0, expectedFees - paidFees);
+
+      if (outstandingFees > 0) {
+        studentsWithOutstandingFees++;
+      }
+    }
+
+    return studentsWithOutstandingFees;
   }
 }

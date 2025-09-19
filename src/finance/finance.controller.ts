@@ -729,7 +729,7 @@ export class FinanceController {
           endDate: dateRange.endDate?.toISOString(),
           totalProcessedPayments: stats.totalProcessedPayments,
           totalApprovedBudgets: stats.totalApprovedBudgets,
-          pendingApprovals: stats.pendingApprovals,
+          pendingStudents: stats.pendingStudents,
           rawRevenue: stats.totalRevenue,
           revenueFormatted: `$${revenueNumber.toFixed(2)}`,
         },
