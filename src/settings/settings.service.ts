@@ -1265,18 +1265,6 @@ export class SettingsService {
 
     await queryRunner.manager.save(Term, termToUpdate);
   }
-async getCurrentTerm(): Promise<{ id: string } | null> {
-    try {
-        const term = await this.termRepository.findOne({
-            where: { isCurrent: true },
-            select: ['id'],
-        });
-        return term ? { id: term.id } : null;
-    } catch (error) {
-        this.logger.error('Failed to get current term', error.stack);
-        throw new InternalServerErrorException('Failed to get term');
-    }
-}
 
   async getTerms(academicCalendarId?: string, schoolId?: string) {
     // If no calendar id provided, try active calendar for the school
@@ -1897,6 +1885,29 @@ async getCurrentTerm(): Promise<{ id: string } | null> {
     } catch (error) {
       this.logger.error(`Failed to get school info for ${schoolId}:`, error);
       return { school: null, settings: null };
+    }
+  }
+
+  /**
+   * Get the current active term for a school
+   */
+  async getCurrentTerm(schoolId?: string): Promise<any | null> {
+    try {
+      const whereCondition: any = { isCurrent: true };
+      if (schoolId) {
+        whereCondition.schoolId = schoolId;
+      }
+
+      const currentTerm = await this.termRepository.findOne({
+        where: whereCondition,
+        relations: ['academicCalendar', 'period'],
+      });
+
+      return currentTerm || null;
+    } catch (error) {
+      this.logger.error(`Failed to get current term:`, error);
+      // Return null instead of throwing to prevent cascading failures
+      return null;
     }
   }
 }

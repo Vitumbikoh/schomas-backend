@@ -408,6 +408,85 @@ export class FinanceController {
     }
   }
 
+  // ==================== FINANCE OFFICERS ENDPOINTS ====================
+
+  @Get('officers')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get all finance officers with pagination' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiResponse({ status: 200, description: 'Finance officers retrieved successfully' })
+  async getAllFinanceOfficers(
+    @Request() req,
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
+    @Query('search') search = '',
+    @Query('schoolId') schoolIdOverride?: string,
+  ) {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolScope = isSuper
+      ? schoolIdOverride || req.user?.schoolId
+      : req.user?.schoolId;
+
+    const { financeUsers, total } = await this.financeService.getAllFinanceUsers(
+      Number(page),
+      Number(limit),
+      search,
+      schoolScope,
+      isSuper,
+    );
+
+    const transformedFinanceOfficers = financeUsers.map((finance) => ({
+      id: finance.id,
+      firstName: finance.firstName,
+      lastName: finance.lastName,
+      username: finance.user?.username,
+      email: finance.user?.email,
+      phoneNumber: finance.phoneNumber,
+      department: finance.department,
+      canApproveBudgets: finance.canApproveBudgets,
+      canProcessPayments: finance.canProcessPayments,
+      status: finance.user?.isActive ? 'active' : 'inactive',
+      hireDate: finance.user?.createdAt?.toISOString(),
+    }));
+
+    return {
+      financeOfficers: transformedFinanceOfficers,
+      pagination: {
+        totalItems: total,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+        itemsPerPage: limit,
+      },
+      filters: { schoolId: schoolScope, search },
+    };
+  }
+
+  @Get('officers/:id')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Get finance officer details by ID' })
+  @ApiResponse({ status: 200, description: 'Finance officer details returned' })
+  @ApiResponse({ status: 404, description: 'Finance officer not found' })
+  async getFinanceOfficerById(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Request() req,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    const financeUser = await this.financeService.getFinanceUserDetails(
+      id,
+      superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
+      superAdmin,
+    );
+
+    // Add username at top level for easier access
+    return {
+      ...financeUser,
+      username: financeUser.user?.username,
+    };
+  }
+
   @Get()
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Get all finance users' })

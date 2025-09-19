@@ -3,6 +3,7 @@ import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn } f
 import { Finance } from '../../user/entities/finance.entity';
 import { Department } from './department.entity';
 import { User } from 'src/user/entities/user.entity';
+import { School } from 'src/school/entities/school.entity';
 
 @Entity()
 export class Budget {
@@ -40,4 +41,9 @@ export class Budget {
   @ManyToOne(() => User, { nullable: true })
   approvedByAdmin?: User;
 
+  // Multi-tenant scope
+  @Column({ type: 'uuid', nullable: true })
+  schoolId: string;
+  @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE' })
+  school: School;
 }
