@@ -177,10 +177,9 @@ async getAllCourses(
       superAdmin: isSuper,
     }),
     this.courseService.count(
-      isSuper ? (Object.keys(whereConditions).length > 0 ? whereConditions : {}) : {
-        ...whereConditions,
-        schoolId: req.user?.schoolId,
-      },
+      Object.keys(whereConditions).length > 0 ? whereConditions : {},
+      req.user?.schoolId,
+      isSuper,
     ),
   ]);
 
