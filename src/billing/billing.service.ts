@@ -42,14 +42,14 @@ export class BillingService {
     let plan = await this.planRepo.findOne({ where: { schoolId: resolvedSchoolId, isActive: true } });
     if (plan) {
       plan.ratePerStudent = dto.ratePerStudent;
-      plan.currency = dto.currency || plan.currency || 'USD';
+      plan.currency = dto.currency || plan.currency || 'MWK';
       plan.cadence = (dto.cadence as any) || plan.cadence || 'per_term';
       plan.effectiveFrom = dto.effectiveFrom ? new Date(dto.effectiveFrom) : plan.effectiveFrom;
     } else {
       plan = this.planRepo.create({
         schoolId: resolvedSchoolId,
         ratePerStudent: dto.ratePerStudent,
-        currency: dto.currency || 'USD',
+        currency: dto.currency || 'MWK',
         cadence: (dto.cadence as any) || 'per_term',
         isActive: true,
         effectiveFrom: dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date(),

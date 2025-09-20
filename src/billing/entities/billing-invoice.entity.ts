@@ -67,6 +67,6 @@ export class BillingInvoice {
   updatedAt: Date;
 
   @Index()
-  @Column({ type: 'varchar', length: 20, default: 'USD' })
-  currency: string;
+  @Column({ type: 'enum', enum: ['MWK', 'USD'], default: 'MWK' })
+  currency: 'MWK' | 'USD';
 }

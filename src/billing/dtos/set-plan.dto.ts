@@ -9,8 +9,8 @@ export class SetSchoolBillingPlanDto {
   ratePerStudent: number;
   
   @IsOptional()
-  @IsString()
-  currency?: string;
+  @IsIn(['MWK', 'USD'])
+  currency?: 'MWK' | 'USD';
   
   @IsOptional()
   @IsIn(['per_term', 'per_academic_year'])

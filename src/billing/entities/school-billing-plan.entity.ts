@@ -16,8 +16,8 @@ export class SchoolBillingPlan {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   ratePerStudent: number;
 
-  @Column({ type: 'varchar', length: 8, default: 'USD' })
-  currency: string;
+  @Column({ type: 'enum', enum: ['MWK', 'USD'], default: 'MWK' })
+  currency: 'MWK' | 'USD';
 
   // Default billing cadence preference (can still generate per term or per year explicitly)
   @Column({ type: 'enum', enum: ['per_term', 'per_academic_year'], default: 'per_term' })

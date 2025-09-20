@@ -14,6 +14,9 @@ export class FeeStructure {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   amount: number;
 
+  @Column({ type: 'enum', enum: ['MWK', 'USD'], default: 'MWK' })
+  currency: 'MWK' | 'USD';
+
   @Column({ type: 'text', nullable: true })
   description: string;
 

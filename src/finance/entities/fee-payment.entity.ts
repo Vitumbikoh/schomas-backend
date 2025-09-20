@@ -16,6 +16,9 @@ export class FeePayment {
   @Column({ type: 'varchar', nullable: true }) // Fixed from previous error
   receiptNumber: string | null;
 
+  @Column({ type: 'enum', enum: ['MWK', 'USD'], default: 'MWK' })
+  currency: 'MWK' | 'USD';
+
   @Column()
   paymentType: string;
 
