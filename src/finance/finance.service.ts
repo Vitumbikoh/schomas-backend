@@ -22,6 +22,7 @@ import { CreateFinanceDto } from 'src/user/dtos/create-finance.dto';
 import * as bcrypt from 'bcrypt';
 import { SettingsService } from 'src/settings/settings.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
+import { Expense } from '../expenses/entities/expense.entity';
 
 @Injectable()
 export class FinanceService {
@@ -40,9 +41,130 @@ export class FinanceService {
     private readonly classRepository: Repository<Class>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+  @InjectRepository(Expense)
+  private readonly expenseRepository: Repository<Expense>,
     private settingsService: SettingsService,
     private systemLoggingService: SystemLoggingService,
   ) {}
+
+  // Aggregated financial report: fees by type and approved expenses
+  async getFinancialReportSummary(params: {
+    startDate?: Date;
+    endDate?: Date;
+    schoolId?: string;
+    superAdmin?: boolean;
+  }): Promise<{
+    totals: {
+      totalFees: number;
+      totalByType: Array<{ type: string; amount: number }>;
+      totalApprovedExpenses: number;
+      netBalance: number;
+    };
+    trends: Array<{ month: string; fees: number; expenses: number }>;
+  }> {
+    const { startDate, endDate, schoolId, superAdmin = false } = params || {};
+
+    // Build base where filters
+    const feeWhere: any = { status: 'completed' };
+    const expenseWhere: any = { status: 'Approved' as any };
+
+    // Term scoping is already applied in some places, but for reports we'll honor date range primarily
+    if (!superAdmin) {
+      if (!schoolId) {
+        return {
+          totals: { totalFees: 0, totalByType: [], totalApprovedExpenses: 0, netBalance: 0 },
+          trends: [],
+        };
+      }
+      feeWhere.schoolId = schoolId;
+      expenseWhere.schoolId = schoolId;
+    } else if (schoolId) {
+      feeWhere.schoolId = schoolId;
+      expenseWhere.schoolId = schoolId;
+    }
+
+    if (startDate && endDate) {
+      feeWhere.paymentDate = Between(startDate, endDate);
+      expenseWhere.approvedDate = Between(startDate, endDate);
+    }
+
+    // Totals by paymentType
+    const feeTotalsByTypeRaw = await this.paymentRepository
+      .createQueryBuilder('payment')
+      .select('payment.paymentType', 'paymentType')
+      .addSelect('SUM(payment.amount)', 'sum')
+      .where('payment.status = :status', { status: 'completed' })
+      .andWhere(feeWhere.schoolId ? 'payment.schoolId = :schoolId' : '1=1', feeWhere.schoolId ? { schoolId: feeWhere.schoolId } : {})
+      .andWhere(startDate && endDate ? 'payment.paymentDate BETWEEN :start AND :end' : '1=1', startDate && endDate ? { start: startDate, end: endDate } : {})
+      .groupBy('payment.paymentType')
+      .getRawMany();
+
+    const totalByType = feeTotalsByTypeRaw.map((r: any) => ({ type: r.paymentType || 'other', amount: parseFloat(r.sum || '0') }));
+    const totalFees = totalByType.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+
+    // Total approved expenses (use approvedAmount when present else amount)
+    const approvedExpensesQb = this.expenseRepository
+      .createQueryBuilder('expense')
+      .select('COALESCE(SUM(COALESCE(expense.approvedAmount, expense.amount)), 0)', 'sum')
+      .where('expense.status = :status', { status: 'Approved' })
+      .andWhere(expenseWhere.schoolId ? 'expense.schoolId = :schoolId' : '1=1', expenseWhere.schoolId ? { schoolId: expenseWhere.schoolId } : {})
+      .andWhere(startDate && endDate ? 'expense.approvedDate BETWEEN :start AND :end' : '1=1', startDate && endDate ? { start: startDate, end: endDate } : {});
+    const approvedExpensesRaw = await approvedExpensesQb.getRawOne();
+    const totalApprovedExpenses = parseFloat(approvedExpensesRaw?.sum || '0');
+
+    const netBalance = totalFees - totalApprovedExpenses;
+
+    // Monthly trends combining fees and expenses
+    // Fees by month
+    const feeTrendsRaw = await this.paymentRepository
+      .createQueryBuilder('payment')
+      .select("TO_CHAR(payment.paymentDate, 'YYYY-MM')", 'month')
+      .addSelect('SUM(payment.amount)', 'fees')
+      .where('payment.status = :status', { status: 'completed' })
+      .andWhere(feeWhere.schoolId ? 'payment.schoolId = :schoolId' : '1=1', feeWhere.schoolId ? { schoolId: feeWhere.schoolId } : {})
+      .andWhere(startDate && endDate ? 'payment.paymentDate BETWEEN :start AND :end' : '1=1', startDate && endDate ? { start: startDate, end: endDate } : {})
+      .groupBy("TO_CHAR(payment.paymentDate, 'YYYY-MM')")
+      .orderBy("TO_CHAR(payment.paymentDate, 'YYYY-MM')", 'ASC')
+      .getRawMany();
+
+    // Expenses by month (approved)
+    const expenseTrendsRaw = await this.expenseRepository
+      .createQueryBuilder('expense')
+      .select("TO_CHAR(expense.approvedDate, 'YYYY-MM')", 'month')
+      .addSelect('SUM(COALESCE(expense.approvedAmount, expense.amount))', 'expenses')
+      .where('expense.status = :status', { status: 'Approved' })
+      .andWhere(expenseWhere.schoolId ? 'expense.schoolId = :schoolId' : '1=1', expenseWhere.schoolId ? { schoolId: expenseWhere.schoolId } : {})
+      .andWhere(startDate && endDate ? 'expense.approvedDate BETWEEN :start AND :end' : '1=1', startDate && endDate ? { start: startDate, end: endDate } : {})
+      .groupBy("TO_CHAR(expense.approvedDate, 'YYYY-MM')")
+      .orderBy("TO_CHAR(expense.approvedDate, 'YYYY-MM')", 'ASC')
+      .getRawMany();
+
+    // Merge trends on month
+    const monthMap = new Map<string, { fees: number; expenses: number }>();
+    for (const r of feeTrendsRaw) {
+      const m = r.month as string;
+      monthMap.set(m, { fees: parseFloat(r.fees || '0'), expenses: 0 });
+    }
+    for (const r of expenseTrendsRaw) {
+      const m = r.month as string;
+      const existing = monthMap.get(m) || { fees: 0, expenses: 0 };
+      existing.expenses = parseFloat(r.expenses || '0');
+      monthMap.set(m, existing);
+    }
+    const trends = Array.from(monthMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, v]) => ({ month, fees: v.fees, expenses: v.expenses }));
+
+    return {
+      totals: {
+        totalFees,
+        totalByType,
+        totalApprovedExpenses,
+        netBalance,
+      },
+      trends,
+    };
+  }
 
   async getDashboardData(userId: string, schoolId?: string, superAdmin = false) {
     const financeUser = await this.getFinanceUser(userId);

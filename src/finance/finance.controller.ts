@@ -883,4 +883,39 @@ export class FinanceController {
       new Date(endDate),
     );
   }
+
+  @Get('reports/financial')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Get combined financial report (fees by type + approved expenses)' })
+  @ApiQuery({ name: 'startDate', required: false, type: String })
+  @ApiQuery({ name: 'endDate', required: false, type: String })
+  @ApiQuery({ name: 'schoolId', required: false, type: String })
+  async getCombinedFinancialReport(
+    @Request() req,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('schoolId') schoolIdOverride?: string,
+  ) {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolScope = isSuper
+      ? schoolIdOverride || req.user?.schoolId
+      : req.user?.schoolId;
+
+    const result = await this.financeService.getFinancialReportSummary({
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
+      schoolId: schoolScope,
+      superAdmin: isSuper,
+    });
+
+    return {
+      success: true,
+      ...result,
+      filters: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        schoolId: schoolScope || null,
+      },
+    };
+  }
 }

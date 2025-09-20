@@ -19,6 +19,7 @@ import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
 import { FeeAnalyticsService } from './services/fee-analytics.service';
 import { StudentFeeExpectationService } from './student-fee-expectation.service';
+import { Expense } from '../expenses/entities/expense.entity';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { StudentFeeExpectationService } from './student-fee-expectation.service'
       Enrollment,
       Term,
       Class,
+      Expense,
     ]),
     SettingsModule,
     LogsModule,

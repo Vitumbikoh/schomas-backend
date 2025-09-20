@@ -306,15 +306,39 @@ export class ExpenseService {
 
     const expenses = await queryBuilder.getMany();
 
-    // Calculate analytics
+    // Calculate basic metrics
     const totalExpenses = expenses.length;
     const totalAmount = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-    const approvedAmount = expenses
-      .filter(exp => exp.status === ExpenseStatus.APPROVED)
-      .reduce((sum, exp) => sum + (exp.approvedAmount || exp.amount), 0);
+    const approvedExpenses = expenses.filter(exp => exp.status === ExpenseStatus.APPROVED);
+    const approvedAmount = approvedExpenses.reduce((sum, exp) => sum + (exp.approvedAmount || exp.amount), 0);
     const pendingAmount = expenses
       .filter(exp => exp.status === ExpenseStatus.PENDING)
       .reduce((sum, exp) => sum + exp.amount, 0);
+
+    // Average expense calculation
+    const avgExpense = totalExpenses > 0 ? totalAmount / totalExpenses : 0;
+
+    // Approval rate calculation
+    const approvalRate = totalExpenses > 0 ? (approvedExpenses.length / totalExpenses) * 100 : 0;
+
+    // Average approval time calculation
+    const expensesWithApprovalTime = approvedExpenses.filter(exp =>
+      exp.createdAt && exp.approvedDate
+    );
+
+    let avgApprovalTime = 0;
+    if (expensesWithApprovalTime.length > 0) {
+      const totalApprovalTime = expensesWithApprovalTime.reduce((sum, exp) => {
+        const createdTime = new Date(exp.createdAt).getTime();
+        const approvedTime = new Date(exp.approvedDate).getTime();
+        return sum + (approvedTime - createdTime);
+      }, 0);
+      avgApprovalTime = totalApprovalTime / expensesWithApprovalTime.length / (1000 * 60 * 60 * 24); // Convert to days
+    }
+
+    // Budget utilization (assuming a simple budget of $100,000 for demo - this should be configurable)
+    const assumedBudget = 100000; // This should come from a budget configuration
+    const budgetUtilization = assumedBudget > 0 ? (approvedAmount / assumedBudget) * 100 : 0;
 
     // Category breakdown
     const categoryBreakdown = expenses.reduce((acc, exp) => {
@@ -322,20 +346,67 @@ export class ExpenseService {
       return acc;
     }, {} as Record<string, number>);
 
-    // Monthly trend (simplified)
+    // Monthly trend with detailed breakdown
     const monthlyTrend = expenses.reduce((acc, exp) => {
-      const month = exp.createdAt.toISOString().slice(0, 7); // YYYY-MM
-      acc[month] = (acc[month] || 0) + exp.amount;
+      const date = new Date(exp.createdAt);
+      const monthKey = date.toLocaleString('default', { month: 'short', year: 'numeric' });
+      const monthNum = date.getMonth();
+      const year = date.getFullYear();
+
+      if (!acc[monthKey]) {
+        acc[monthKey] = {
+          amount: 0,
+          count: 0,
+          month: monthNum,
+          year: year
+        };
+      }
+
+      acc[monthKey].amount += exp.amount;
+      acc[monthKey].count += 1;
+
       return acc;
-    }, {} as Record<string, number>);
+    }, {} as Record<string, { amount: number; count: number; month: number; year: number }>);
+
+    // Sort monthly trend by date
+    const sortedMonthlyTrend = Object.entries(monthlyTrend)
+      .sort(([a], [b]) => {
+        const dateA = new Date(a);
+        const dateB = new Date(b);
+        return dateA.getTime() - dateB.getTime();
+      })
+      .reduce((acc, [key, value]) => {
+        acc[key] = {
+          amount: value.amount,
+          count: value.count,
+          formattedAmount: `$${value.amount.toLocaleString()}`,
+          displayName: `${key}\n${value.count} expenses`
+        };
+        return acc;
+      }, {} as Record<string, any>);
 
     return {
-      totalExpenses,
-      totalAmount,
-      approvedAmount,
-      pendingAmount,
+      summary: {
+        budgetUtilization: `${budgetUtilization.toFixed(1)}%`,
+        avgExpense: `$${avgExpense.toLocaleString()}`,
+        approvalRate: `${approvalRate.toFixed(1)}%`,
+        avgApprovalTime: `${avgApprovalTime.toFixed(1)} days`
+      },
+      totals: {
+        totalExpenses,
+        totalAmount,
+        approvedAmount,
+        pendingAmount
+      },
       categoryBreakdown,
-      monthlyTrend,
+      monthlyTrend: sortedMonthlyTrend,
+      // Additional metrics
+      performance: {
+        approvalRate,
+        avgApprovalTime,
+        budgetUtilization,
+        avgExpense
+      }
     };
   }
 
