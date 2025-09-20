@@ -18,16 +18,57 @@ export class ExpenseService {
     private userRepository: Repository<User>,
   ) {}
 
+  private async generateExpenseNumber(): Promise<string> {
+    const currentYear = new Date().getFullYear();
+
+    // Find the highest expense number for the current year
+    const lastExpense = await this.expenseRepository
+      .createQueryBuilder('expense')
+      .where('expense.expenseNumber LIKE :pattern', { pattern: `EXP-${currentYear}-%` })
+      .orderBy('expense.expenseNumber', 'DESC')
+      .getOne();
+
+    let nextNumber = 1;
+    if (lastExpense && lastExpense.expenseNumber) {
+      // Extract the sequential number from the last expense number
+      const parts = lastExpense.expenseNumber.split('-');
+      if (parts.length === 3) {
+        const lastNumber = parseInt(parts[2], 10);
+        if (!isNaN(lastNumber)) {
+          nextNumber = lastNumber + 1;
+        }
+      }
+    }
+
+    // Format as EXP-YYYY-NNNN (e.g., EXP-2025-0001)
+    return `EXP-${currentYear}-${nextNumber.toString().padStart(4, '0')}`;
+  }
+
   async create(createExpenseDto: CreateExpenseDto, userId: string): Promise<Expense> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
+    // Find a finance user to set as the requester
+    const financeUser = await this.userRepository.findOne({
+      where: { role: Role.FINANCE },
+      relations: ['finance']
+    });
+
+    if (!financeUser) {
+      throw new BadRequestException('No finance user found to assign the expense request');
+    }
+
+    // Generate unique expense number
+    const expenseNumber = await this.generateExpenseNumber();
+
     const expense = this.expenseRepository.create({
       ...createExpenseDto,
-      requestedBy: user.username,
-      requestedByUserId: userId,
+      expenseNumber,
+      requestedBy: financeUser.username,
+      requestedByUserId: financeUser.id,
+      schoolId: createExpenseDto.schoolId || financeUser.schoolId,
       status: ExpenseStatus.PENDING,
       requestDate: new Date(),
       createdAt: new Date(),
@@ -46,6 +87,7 @@ export class ExpenseService {
     const queryBuilder = this.expenseRepository.createQueryBuilder('expense')
       .leftJoinAndSelect('expense.requestedByUser', 'requestedByUser')
       .leftJoinAndSelect('expense.approvedByUser', 'approvedByUser')
+      .leftJoinAndSelect('expense.school', 'school')
       .leftJoinAndSelect('expense.approvalHistory', 'approvalHistory')
       .leftJoinAndSelect('approvalHistory.performedByUser', 'performedByUser');
 
@@ -68,6 +110,10 @@ export class ExpenseService {
 
     if (filters.requestedBy) {
       queryBuilder.andWhere('requestedByUser.username ILIKE :requestedBy', { requestedBy: `%${filters.requestedBy}%` });
+    }
+
+    if (filters.schoolId) {
+      queryBuilder.andWhere('expense.schoolId = :schoolId', { schoolId: filters.schoolId });
     }
 
     if (filters.startDate && filters.endDate) {
@@ -303,15 +349,8 @@ export class ExpenseService {
   }
 
   private canApproveExpense(user: User, expense: Expense): boolean {
-    // Simplified approval logic - in real app, check user roles and approval limits
-    // For now, allow any user to approve expenses under $1000
-    // Higher amounts would require higher-level approval
-    if (expense.amount <= 1000) {
-      return true;
-    }
-
-    // For higher amounts, check if user has admin role or specific approval permissions
-    // This is a placeholder - implement proper role-based access control
-    return user.role === Role.ADMIN || user.role === Role.FINANCE || user.role === Role.SUPER_ADMIN;
+    // Only school admins (ADMIN role) can approve expenses
+    // Finance users can view but not approve
+    return user.role === Role.ADMIN;
   }
 }

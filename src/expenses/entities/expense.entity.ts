@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, OneToMany, BaseEntity } from 'typeorm';
 import { User } from 'src/user/entities/user.entity';
+import { School } from 'src/school/entities/school.entity';
 import { ExpenseApprovalHistory } from './expense-approval-history.entity';
 
 export enum ExpenseCategory {
@@ -86,6 +87,9 @@ export class Expense extends BaseEntity {
   })
   priority: ExpensePriority;
 
+  @Column({ type: 'uuid', nullable: true })
+  schoolId: string | null;
+
   @Column({ type: 'json', nullable: true })
   attachments: string[];
 
@@ -131,6 +135,10 @@ export class Expense extends BaseEntity {
 
   @Column({ nullable: true })
   paidByUserId: string;
+
+  @ManyToOne(() => School, { nullable: true })
+  @JoinColumn({ name: 'schoolId' })
+  school: School;
 
   @OneToMany(() => ExpenseApprovalHistory, history => history.expense, { cascade: true })
   approvalHistory: ExpenseApprovalHistory[];

@@ -46,6 +46,10 @@ export class CreateExpenseDto {
   @IsString()
   @MaxLength(500)
   notes?: string;
+
+  @IsOptional()
+  @IsUUID()
+  schoolId?: string;
 }
 
 export class UpdateExpenseDto {
@@ -95,6 +99,10 @@ export class UpdateExpenseDto {
   @IsString()
   @MaxLength(500)
   notes?: string;
+
+  @IsOptional()
+  @IsUUID()
+  schoolId?: string;
 }
 
 export class ApproveExpenseDto {
@@ -141,6 +149,10 @@ export class ExpenseFiltersDto {
   @IsOptional()
   @IsString()
   requestedBy?: string;
+
+  @IsOptional()
+  @IsUUID()
+  schoolId?: string;
 
   @IsOptional()
   @IsDateString()
