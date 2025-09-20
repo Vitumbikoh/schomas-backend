@@ -181,6 +181,13 @@ export class ExpenseService {
   }
 
   async approve(id: string, approveExpenseDto: ApproveExpenseDto, userId: string): Promise<Expense> {
+    console.log('Expense approval - Received userId:', userId);
+    
+    if (!userId) {
+      console.error('Expense approval - userId is undefined or null');
+      throw new BadRequestException('User ID is required for expense approval');
+    }
+
     const expense = await this.findOne(id);
 
     if (expense.status !== ExpenseStatus.PENDING) {
@@ -189,11 +196,18 @@ export class ExpenseService {
 
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
+      console.error('Expense approval - User not found for ID:', userId);
       throw new NotFoundException('User not found');
     }
 
+    // Debug logging
+    console.log('Expense approval - User found (from DB):', { id: user.id, username: user.username, role: user.role, userIdFromRequest: userId });
+    console.log('Expense approval - Expected ADMIN role:', Role.ADMIN);
+    console.log('Expense approval - Role comparison:', user.role === Role.ADMIN);
+
     // Check if user has approval permissions (simplified - in real app, check roles)
     if (!this.canApproveExpense(user, expense)) {
+      console.log('Expense approval - User does not have permission to approve. User role:', user.role);
       throw new ForbiddenException('You do not have permission to approve this expense');
     }
 
@@ -351,6 +365,10 @@ export class ExpenseService {
   private canApproveExpense(user: User, expense: Expense): boolean {
     // Only school admins (ADMIN role) can approve expenses
     // Finance users can view but not approve
-    return user.role === Role.ADMIN;
+    // Super admins should NOT approve per requirement
+    if (user.role !== Role.ADMIN) return false;
+    // Optional: enforce same school approval only
+    if (expense.schoolId && user.schoolId && expense.schoolId !== user.schoolId) return false;
+    return true;
   }
 }

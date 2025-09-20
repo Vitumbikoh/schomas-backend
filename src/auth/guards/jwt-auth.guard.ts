@@ -1,21 +1,18 @@
 import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
-import { AuthGuard } from '@nestjs/passport';// <-- Use Nest's ConfigService
-import { ConfigService } from 'src/config/config.service';
+import { AuthGuard } from '@nestjs/passport';
 import { IS_PUBLIC_KEY } from '../auth.guard';
+import { Observable } from 'rxjs';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    private readonly jwtService: JwtService,
-    private readonly configService: ConfigService,
   ) {
     super();
   }
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
+  canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -25,23 +22,23 @@ export class JwtAuthGuard extends AuthGuard('jwt') implements CanActivate {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest();
-    const authHeader = request.headers.authorization;
+    // Delegate to the parent AuthGuard('jwt') which uses JwtStrategy
+    console.log('JWT_GUARD - Delegating to parent AuthGuard(jwt)');
+    return super.canActivate(context);
+  }
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return false;
+  handleRequest(err: any, user: any, info: any, context: ExecutionContext) {
+    console.log('JWT_GUARD - handleRequest called');
+    console.log('JWT_GUARD - handleRequest err:', err);
+    console.log('JWT_GUARD - handleRequest info:', info);
+    console.log('JWT_GUARD - handleRequest user:', JSON.stringify(user, null, 2));
+    
+    if (err || !user) {
+      console.error('JWT_GUARD - Authentication failed:', err || 'No user found');
+      throw err || new Error('Unauthorized');
     }
-
-    const token = authHeader.split(' ')[1];
-
-    try {
-      const payload = await this.jwtService.verifyAsync(token, {
-        secret: this.configService.get('JWT_SECRET'),
-      });
-      request.user = payload;
-      return true;
-    } catch (error) {
-      return false;
-    }
+    
+    console.log('JWT_GUARD - Authentication successful, returning user');
+    return user;
   }
 }

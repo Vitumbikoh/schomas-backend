@@ -10,12 +10,20 @@ export class ExpenseController {
 
   @Post()
   create(@Body() createExpenseDto: CreateExpenseDto, @Request() req) {
-    return this.expenseService.create(createExpenseDto, req.user.id);
+    const userId = req.user?.id || req.user?.sub;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.expenseService.create(createExpenseDto, userId);
   }
 
   @Get()
   findAll(@Query() filters: ExpenseFiltersDto, @Request() req) {
-    return this.expenseService.findAll(filters, req.user.id);
+    const userId = req.user?.id || req.user?.sub;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.expenseService.findAll(filters, userId);
   }
 
   @Get('analytics')
@@ -34,7 +42,11 @@ export class ExpenseController {
     @Body() updateExpenseDto: UpdateExpenseDto,
     @Request() req
   ) {
-    return this.expenseService.update(id, updateExpenseDto, req.user.id);
+    const userId = req.user?.id || req.user?.sub;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.expenseService.update(id, updateExpenseDto, userId);
   }
 
   @Post(':id/approve')
@@ -43,7 +55,20 @@ export class ExpenseController {
     @Body() approveExpenseDto: ApproveExpenseDto,
     @Request() req
   ) {
-    return this.expenseService.approve(id, approveExpenseDto, req.user.id);
+    console.log('CONTROLLER APPROVE - req.user:', JSON.stringify(req.user, null, 2));
+    console.log('CONTROLLER APPROVE - req.user.id:', req.user?.id);
+    console.log('CONTROLLER APPROVE - req.user.sub:', req.user?.sub);
+    
+    // Use sub if id is undefined (Passport.js uses sub as the user identifier)
+    const userId = req.user?.id || req.user?.sub;
+    console.log('CONTROLLER APPROVE - Extracted userId:', userId);
+    if (!userId) {
+      console.error('CONTROLLER APPROVE - Failed to extract userId from req.user');
+      throw new Error('User ID not found in request');
+    }
+    
+    console.log('CONTROLLER APPROVE - Calling service with userId:', userId);
+    return this.expenseService.approve(id, approveExpenseDto, userId);
   }
 
   @Post(':id/reject')
@@ -52,12 +77,20 @@ export class ExpenseController {
     @Body() rejectExpenseDto: RejectExpenseDto,
     @Request() req
   ) {
-    return this.expenseService.reject(id, rejectExpenseDto, req.user.id);
+    const userId = req.user?.id || req.user?.sub;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.expenseService.reject(id, rejectExpenseDto, userId);
   }
 
   @Delete(':id')
   remove(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    return this.expenseService.delete(id, req.user.id);
+    const userId = req.user?.id || req.user?.sub;
+    if (!userId) {
+      throw new Error('User ID not found in request');
+    }
+    return this.expenseService.delete(id, userId);
   }
 
   @Post(':id/comment')

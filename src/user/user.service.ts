@@ -49,10 +49,12 @@ export class UsersService {
   }
 
   async findById(id: string): Promise<User | null> {
-    return this.userRepository.findOne({
+    const user = await this.userRepository.findOne({
       where: { id },
       relations: ['teacher', 'student', 'parent', 'finance'],
     });
+    console.log('UserService.findById - User found:', user ? { id: user.id, username: user.username, role: user.role } : 'null');
+    return user;
   }
 
   async findByEmail(email: string): Promise<User | null> {

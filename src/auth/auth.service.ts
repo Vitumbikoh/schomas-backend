@@ -91,10 +91,13 @@ export class AuthService {
   }
 
   async validateToken(userId: string): Promise<User> {
+    console.log('AuthService.validateToken - Validating userId:', userId);
     const user = await this.usersService.findById(userId);
     if (!user || !user.isActive) {
+      console.log('AuthService.validateToken - User not found or inactive:', { userId, user: user ? 'found but inactive' : 'not found' });
       throw new Error('User not found or inactive');
     }
+    console.log('AuthService.validateToken - User validated successfully:', { id: user.id, username: user.username, role: user.role });
     return user;
   }
 
