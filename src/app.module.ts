@@ -32,6 +32,7 @@ import { BillingModule } from './billing/billing.module';
 import { LibraryModule } from './library/library.module';
 import { StaffModule } from './staff/staff.module';
 import { RequestContextMiddleware } from './common/request-context/request-context.middleware';
+import { PayrollModule } from './payroll/payroll.module';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { RequestContextMiddleware } from './common/request-context/request-conte
   BillingModule,
   LibraryModule,
   StaffModule,
+  PayrollModule,
   ],
 })
 export class AppModule implements NestModule {

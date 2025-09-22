@@ -28,7 +28,7 @@ export class StaffController {
   constructor(private readonly staffService: StaffService) {}
 
   @Get()
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.FINANCE)
   @ApiOperation({ summary: 'Get all staff members for the school' })
   @ApiResponse({ status: 200, description: 'Staff members retrieved successfully' })
   async getAllStaff(
