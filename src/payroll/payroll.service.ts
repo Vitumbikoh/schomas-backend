@@ -77,9 +77,7 @@ export class PayrollService {
   }
 
   private async createSalaryItemsForStaff(runId: string, staffIds: string[], schoolId: string): Promise<void> {
-    console.log('createSalaryItemsForStaff called with:', { runId, staffIds, schoolId });
-    
-    // Load staff with their assignments
+    // Load staff with their base profile
     const staffWithAssignments = await this.userRepository.find({
       where: {
         id: In(staffIds),
@@ -88,9 +86,8 @@ export class PayrollService {
       },
       relations: ['teacher', 'finance'],
     });
-    console.log('Found staff:', staffWithAssignments.length);
 
-    // Load all active assignments for these staff members
+    // Load all active manual assignments for these staff members
     const assignments = await this.assignRepo.find({
       where: {
         userId: In(staffIds),
@@ -99,9 +96,8 @@ export class PayrollService {
       },
       relations: ['component'],
     });
-    console.log('Found assignments:', assignments.length);
 
-    // Group assignments by staff member
+    // Group manual assignments by staff member
     const staffAssignments = new Map<string, any[]>();
     assignments.forEach(assignment => {
       if (!staffAssignments.has(assignment.userId)) {
@@ -110,29 +106,36 @@ export class PayrollService {
       staffAssignments.get(assignment.userId)!.push(assignment);
     });
 
+    // Load auto-assign pay components for virtual inclusion
+    const autoAssignComponents = await this.compRepo.find({
+      where: { schoolId, autoAssign: true },
+    });
+
     // Create salary items
     const salaryItems: any[] = [];
     for (const staff of staffWithAssignments) {
       const userAssignments = staffAssignments.get(staff.id) || [];
-      console.log(`Processing staff ${staff.id}: ${userAssignments.length} assignments`);
-      
-      // Skip staff with no assignments
-      if (userAssignments.length === 0) {
-        console.log(`Staff ${staff.id} has no pay assignments, skipping`);
-        continue;
-      }
+
+      // Virtual auto-assignments by department
+      const staffDepartment = this.getDepartmentFromUser(staff);
+      const virtualAssignments = autoAssignComponents
+        .filter(component => component.department === staffDepartment || !component.department)
+        .map(component => ({ component, amount: component.defaultAmount || 0, isAutoAssigned: true }));
+
+      const allAssignments = [...userAssignments, ...virtualAssignments];
       
       let grossPay = 0;
       let taxablePay = 0;
       let deductions = 0;
       const breakdown: any = {};
 
-      for (const assignment of userAssignments) {
+      for (const assignment of allAssignments) {
         const amount = Number(assignment.amount);
-        console.log(`Assignment: ${assignment.component.name} = ${amount} (type: ${assignment.component.type})`);
-        breakdown[assignment.component.name] = {
+        const componentName = assignment.isAutoAssigned ? `${assignment.component.name} (Auto)` : assignment.component.name;
+        breakdown[componentName] = {
           amount: amount,
           type: assignment.component.type,
+          autoAssigned: assignment.isAutoAssigned || false,
         };
 
         if (assignment.component.type === 'BASIC' || assignment.component.type === 'ALLOWANCE') {
@@ -146,13 +149,15 @@ export class PayrollService {
       }
 
       const netPay = grossPay - deductions;
-      console.log(`Staff ${staff.id} totals: gross=${grossPay}, net=${netPay}, deductions=${deductions}`);
+
+      // Skip zero-amount items
+      if (grossPay <= 0 && netPay <= 0) continue;
 
       const salaryItem = this.itemRepo.create({
         runId,
         userId: staff.id,
         staffName: this.getStaffName(staff),
-        department: this.getDepartmentFromUser(staff),
+        department: staffDepartment,
         breakdown,
         grossPay,
         taxablePay,
@@ -167,43 +172,23 @@ export class PayrollService {
       salaryItems.push(salaryItem);
     }
 
-    console.log(`About to save ${salaryItems.length} salary items out of ${staffWithAssignments.length} staff`);
     if (salaryItems.length > 0) {
-      const savedItems = await this.itemRepo.save(salaryItems);
-      console.log(`Saved ${savedItems.length} salary items`);
-    } else {
-      console.log('No salary items to save - no staff had pay assignments');
+      await this.itemRepo.save(salaryItems);
     }
   }
 
   private async calculateRunTotals(runId: string, schoolId: string): Promise<any> {
-    console.log('calculateRunTotals called with:', { runId, schoolId });
-    
     const run = await this.runRepo.findOne({ where: { id: runId, schoolId } });
     if (!run) throw new NotFoundException('Run not found');
 
     const items = await this.itemRepo.find({ where: { runId, schoolId } });
-    console.log(`Found ${items.length} salary items for calculation`);
     
-    const totalGross = items.reduce((sum, item) => {
-      const gross = Number(item.grossPay);
-      console.log(`Item grossPay: ${item.grossPay} -> ${gross}`);
-      return sum + gross;
-    }, 0);
-    
-    const totalNet = items.reduce((sum, item) => {
-      const net = Number(item.netPay);
-      console.log(`Item netPay: ${item.netPay} -> ${net}`);
-      return sum + net;
-    }, 0);
-
-    console.log(`Calculated totals: gross=${totalGross}, net=${totalNet}`);
+    const totalGross = items.reduce((sum, item) => sum + Number(item.grossPay), 0);
+    const totalNet = items.reduce((sum, item) => sum + Number(item.netPay), 0);
 
     run.staffCount = items.length;
     run.totalGross = totalGross;
     run.totalNet = totalNet;
-
-    console.log('Updated run object:', { staffCount: run.staffCount, totalGross: run.totalGross, totalNet: run.totalNet });
 
     return run;
   }
@@ -237,27 +222,11 @@ export class PayrollService {
       if (validStaff.length !== dto.staffIds.length) {
         throw new BadRequestException('Some selected staff members are invalid or inactive');
       }
+    }
 
-      // Check if the selected staff have any active pay assignments
-      const staffAssignments = await this.assignRepo.find({
-        where: {
-          userId: In(dto.staffIds),
-          schoolId: user.schoolId,
-          isActive: true,
-        },
-        relations: ['component'],
-      });
-
-      const staffWithAssignments = new Set(staffAssignments.map(a => a.userId));
-      const staffWithoutAssignments = dto.staffIds.filter(id => !staffWithAssignments.has(id));
-
-      if (staffWithoutAssignments.length > 0) {
-        console.log('Staff without assignments:', staffWithoutAssignments);
-        // Don't throw an error, but log it for debugging
-        console.log(`Warning: ${staffWithoutAssignments.length} staff members have no pay assignments`);
-      }
-
-      console.log(`Found ${staffAssignments.length} pay assignments for ${dto.staffIds.length} selected staff`);
+    // Require explicit staff selection
+    if (!dto.staffIds || dto.staffIds.length === 0) {
+      throw new BadRequestException('Please select at least one staff member to create a salary run.');
     }
 
     const run = this.runRepo.create({
@@ -270,40 +239,35 @@ export class PayrollService {
     
     const savedRun = await this.runRepo.save(run);
 
-    // If specific staff were selected, create salary items immediately
-    if (dto.staffIds && dto.staffIds.length > 0) {
-      await this.createSalaryItemsForStaff(savedRun.id, dto.staffIds, user.schoolId);
-      
-      // Update the run with actual staff count and totals
-      const updatedRun = await this.calculateRunTotals(savedRun.id, user.schoolId);
-      const finalRun = await this.runRepo.save(updatedRun);
-      
-      await this.logger.logAction({
-        action: 'PAYROLL_RUN_CREATED',
-        module: 'PAYROLL',
-        level: 'info',
-        schoolId: user.schoolId,
-        performedBy: user ? { id: user.sub || user.id, email: user.email, role: user.role } : undefined,
-        entityId: finalRun.id,
-        entityType: 'SalaryRun',
-        newValues: { ...finalRun, staffIds: dto.staffIds },
-      });
-      
-      return finalRun;
+    // Create salary items immediately for selected staff
+    await this.createSalaryItemsForStaff(savedRun.id, dto.staffIds, user.schoolId);
+    
+    // Update the run with actual staff count and totals
+    const updatedRun = await this.calculateRunTotals(savedRun.id, user.schoolId);
+
+    // If totals are zero, clean up and block creation
+    const isZeroTotals = Number(updatedRun.totalGross) === 0 && Number(updatedRun.totalNet) === 0;
+    if (isZeroTotals) {
+      // Clean up created salary items and the run
+      await this.itemRepo.delete({ runId: savedRun.id, schoolId: user.schoolId });
+      await this.runRepo.remove(savedRun);
+      throw new BadRequestException('Cannot create salary run with zero gross and net amounts. Assign pay components or select staff with amounts.');
     }
 
+    const finalRun = await this.runRepo.save(updatedRun);
+    
     await this.logger.logAction({
       action: 'PAYROLL_RUN_CREATED',
       module: 'PAYROLL',
       level: 'info',
       schoolId: user.schoolId,
       performedBy: user ? { id: user.sub || user.id, email: user.email, role: user.role } : undefined,
-      entityId: savedRun.id,
+      entityId: finalRun.id,
       entityType: 'SalaryRun',
-      newValues: { ...savedRun, staffIds: dto.staffIds },
+      newValues: { ...finalRun, staffIds: dto.staffIds },
     });
     
-    return savedRun;
+    return finalRun;
   }
 
   async getRun(id: string, schoolId: string) {
@@ -462,6 +426,12 @@ export class PayrollService {
     if (existingItems.length > 0) {
       // Items already exist, just update run status and totals
       const updatedRun = await this.calculateRunTotals(id, schoolId);
+
+      // Block preparing when totals are zero
+      if (Number(updatedRun.totalGross) === 0 && Number(updatedRun.totalNet) === 0) {
+        throw new BadRequestException('Cannot prepare a salary run with zero gross and net amounts.');
+      }
+
       updatedRun.status = 'PREPARED';
       updatedRun.preparedBy = user.sub || user.id;
       await this.runRepo.save(updatedRun);
@@ -612,6 +582,11 @@ export class PayrollService {
       salaryItems.push(salaryItem);
       totalGross += grossPay;
       totalNet += netPay;
+    }
+
+    // If no items or totals are zero, block preparation
+    if (salaryItems.length === 0 || (Number(totalGross) === 0 && Number(totalNet) === 0)) {
+      throw new BadRequestException('Cannot prepare a salary run with zero gross and net amounts.');
     }
 
     // Save all salary items in a transaction

@@ -3,7 +3,9 @@ import { PayComponent } from './pay-component.entity';
 import { User } from '../../user/entities/user.entity';
 
 @Entity('staff_pay_assignments')
-@Index(['schoolId', 'userId', 'componentId', 'effectiveFrom', 'effectiveTo'])
+@Index(['schoolId', 'userId', 'componentId'])
+@Index(['schoolId', 'isActive'])
+@Index(['userId', 'isActive'])
 export class StaffPayAssignment extends BaseEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -22,13 +24,13 @@ export class StaffPayAssignment extends BaseEntity {
   @JoinColumn({ name: 'componentId' })
   component: PayComponent;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
   amount: number;
 
-  @Column({ type: 'date', nullable: true })
+  @Column({ type: 'timestamp', nullable: true })
   effectiveFrom: Date | null;
 
-  @Column({ type: 'date', nullable: true })
+  @Column({ type: 'timestamp', nullable: true })
   effectiveTo: Date | null;
 
   @Column({ type: 'boolean', default: true })

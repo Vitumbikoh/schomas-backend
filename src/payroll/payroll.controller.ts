@@ -132,19 +132,6 @@ export class PayrollController {
     return this.payrollService.getStaffWithSalaries(req.user.schoolId);
   }
 
-  // Debug endpoint to check staff assignments
-  @Get('debug/staff-assignments/:staffId')
-  @Roles(Role.FINANCE, Role.ADMIN)
-  @ApiOperation({ summary: 'Debug staff assignments for a specific staff member' })
-  async debugStaffAssignments(@Request() req, @Param('staffId') staffId: string) {
-    const assignments = await this.payrollService.listStaffAssignments(staffId);
-    return {
-      staffId,
-      assignments,
-      count: assignments.length,
-    };
-  }
-
   // Staff Pay Assignments
   @Get('assignments')
   @Roles(Role.FINANCE, Role.ADMIN)
