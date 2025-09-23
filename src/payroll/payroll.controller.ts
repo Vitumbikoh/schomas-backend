@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Query, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Query, Request, UseGuards, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -8,6 +8,7 @@ import { PayrollService } from './payroll.service';
 import { CreateRunDto } from './dtos/create-run.dto';
 import { CreatePayComponentDto, UpdatePayComponentDto } from './dtos/pay-component.dto';
 import { CreateStaffAssignmentDto, UpdateStaffAssignmentDto } from './dtos/staff-assignment.dto';
+import { Response } from 'express';
 
 @ApiTags('Payroll')
 @ApiBearerAuth()
@@ -88,6 +89,50 @@ export class PayrollController {
   @ApiOperation({ summary: 'Get approval history for a run' })
   async getApprovalHistory(@Request() req, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return this.payrollService.getApprovalHistory(id, req.user.schoolId);
+  }
+
+  @Get('runs/:id/payslip/:staffId')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Generate payslip for a staff member' })
+  async generatePayslip(
+    @Request() req,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Param('staffId', new ParseUUIDPipe({ version: '4' })) staffId: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.payrollService.generatePayslip(id, staffId, req.user.schoolId);
+    
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="payslip-${staffId}-${id}.pdf"`,
+      'Content-Length': buffer.length,
+    });
+    
+    res.send(buffer);
+  }
+
+  @Get('runs/:id/export')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Export payroll data' })
+  @ApiQuery({ name: 'format', enum: ['pdf', 'excel'], required: true })
+  async exportPayroll(
+    @Request() req,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Query('format') format: 'pdf' | 'excel',
+    @Res() res: Response,
+  ) {
+    const buffer = await this.payrollService.exportPayroll(id, format, req.user.schoolId);
+    
+    const mimeType = format === 'pdf' ? 'application/pdf' : 'application/vnd.ms-excel';
+    const extension = format === 'pdf' ? 'pdf' : 'xlsx';
+    
+    res.set({
+      'Content-Type': mimeType,
+      'Content-Disposition': `attachment; filename="payroll-${id}.${extension}"`,
+      'Content-Length': buffer.length,
+    });
+    
+    res.send(buffer);
   }
 
   // Pay Components

@@ -531,12 +531,14 @@ export class PayrollService {
     const salaryItems: any[] = [];
     let totalGross = 0;
     let totalNet = 0;
+    let totalEmployerCost = 0;
 
     for (const [staffId, payroll] of staffPayrolls) {
       const breakdown: any = {};
       let grossPay = 0;
       let taxablePay = 0;
       let deductions = 0;
+      let employerContrib = 0;
 
       for (const assignment of payroll.assignments) {
         const amount = Number(assignment.amount);
@@ -557,6 +559,8 @@ export class PayrollService {
           }
         } else if (assignment.component.type === 'DEDUCTION') {
           deductions += amount;
+        } else if (assignment.component.type === 'EMPLOYER_CONTRIBUTION') {
+          employerContrib += amount;
         }
       }
 
@@ -576,12 +580,14 @@ export class PayrollService {
         nssf: 0,
         otherDeductions: deductions,
         netPay: netPay,
+        employerContrib: employerContrib,
         schoolId,
       });
 
       salaryItems.push(salaryItem);
       totalGross += grossPay;
       totalNet += netPay;
+      totalEmployerCost += employerContrib;
     }
 
     // If no items or totals are zero, block preparation
@@ -600,11 +606,12 @@ export class PayrollService {
       run.staffCount = salaryItems.length;
       run.totalGross = totalGross;
       run.totalNet = totalNet;
+      run.employerCost = totalEmployerCost;
       run.preparedBy = user.sub || user.id;
       await runRepo.save(run);
     });
 
-    console.log('Run prepared successfully:', { staffCount: salaryItems.length, totalGross, totalNet });
+    console.log('Run prepared successfully:', { staffCount: salaryItems.length, totalGross, totalNet, totalEmployerCost });
 
     await this.logger.logAction({
       action: 'PAYROLL_RUN_PREPARED',
@@ -613,7 +620,7 @@ export class PayrollService {
       schoolId,
       entityId: run.id,
       entityType: 'SalaryRun',
-      metadata: { staffCount: salaryItems.length, totalGross, totalNet }
+      metadata: { staffCount: salaryItems.length, totalGross, totalNet, totalEmployerCost }
     });
 
     return run;
@@ -660,11 +667,12 @@ export class PayrollService {
       if (run.postedExpenseId) return run;
 
       // Create an approved Personnel expense so it feeds into finance reports
+      const totalExpenseAmount = Number(run.totalNet) + Number(run.employerCost);
       const expense = expenseRepo.create({
         expenseNumber: `PAY-${run.period}-${Date.now()}`,
         title: `Payroll ${run.period}`,
         description: `Payroll for period ${run.period}`,
-        amount: Number(run.employerCost || run.totalNet || 0),
+        amount: totalExpenseAmount,
         category: ExpenseCategory.PERSONNEL,
         department: 'Finance',
         requestedBy: 'Payroll System',
@@ -674,7 +682,7 @@ export class PayrollService {
         approvalLevel: 1,
         priority: ExpensePriority.MEDIUM,
         schoolId: user.schoolId,
-        approvedAmount: Number(run.employerCost || run.totalNet || 0),
+        approvedAmount: totalExpenseAmount,
         approvedDate: new Date(),
         approvedBy: 'System',
       });
@@ -978,5 +986,102 @@ export class PayrollService {
       entityId: assignment.id,
       entityType: 'StaffPayAssignment',
     });
+  }
+
+  // Generate payslip for a specific staff member
+  async generatePayslip(runId: string, staffId: string, schoolId: string): Promise<Buffer> {
+    const run = await this.runRepo.findOne({ where: { id: runId, schoolId } });
+    if (!run) throw new NotFoundException('Salary run not found');
+
+    if (run.status !== 'FINALIZED') {
+      throw new BadRequestException('Payslips can only be generated for finalized salary runs');
+    }
+
+    const item = await this.itemRepo.findOne({
+      where: { runId, userId: staffId, schoolId },
+      relations: ['user', 'user.teacher', 'user.finance'],
+    });
+
+    if (!item) {
+      throw new NotFoundException('Salary item not found for this staff member');
+    }
+
+    // For now, return a simple text-based payslip as PDF
+    // In a real implementation, you'd use a PDF library like pdfkit or puppeteer
+    const payslipContent = `
+PAYSLIP - ${run.period}
+========================
+
+Staff Name: ${this.getStaffName(item.user)}
+Department: ${this.getDepartmentFromUser(item.user)}
+
+Gross Pay: $${item.grossPay.toLocaleString()}
+Taxable Pay: $${item.taxablePay.toLocaleString()}
+PAYE: $${item.paye.toLocaleString()}
+NHIF: $${item.nhif.toLocaleString()}
+NSSF: $${item.nssf.toLocaleString()}
+Other Deductions: $${item.otherDeductions.toLocaleString()}
+
+Net Pay: $${item.netPay.toLocaleString()}
+
+Generated on: ${new Date().toLocaleDateString()}
+    `.trim();
+
+    // Convert to Buffer (in a real implementation, this would be a PDF buffer)
+    return Buffer.from(payslipContent, 'utf-8');
+  }
+
+  // Export payroll data
+  async exportPayroll(runId: string, format: 'pdf' | 'excel', schoolId: string): Promise<Buffer> {
+    const run = await this.runRepo.findOne({ where: { id: runId, schoolId } });
+    if (!run) throw new NotFoundException('Salary run not found');
+
+    const items = await this.itemRepo.find({
+      where: { runId, schoolId },
+      relations: ['user', 'user.teacher', 'user.finance'],
+      order: { staffName: 'ASC' },
+    });
+
+    if (format === 'excel') {
+      // For now, return CSV format as Excel
+      // In a real implementation, you'd use a library like exceljs
+      const headers = ['Staff Name', 'Department', 'Gross Pay', 'Taxable Pay', 'PAYE', 'NHIF', 'NSSF', 'Other Deductions', 'Net Pay'];
+      const csvData = [
+        headers.join(','),
+        ...items.map(item => [
+          `"${this.getStaffName(item.user)}"`,
+          `"${this.getDepartmentFromUser(item.user)}"`,
+          item.grossPay,
+          item.taxablePay,
+          item.paye,
+          item.nhif,
+          item.nssf,
+          item.otherDeductions,
+          item.netPay,
+        ].join(','))
+      ].join('\n');
+
+      return Buffer.from(csvData, 'utf-8');
+    } else {
+      // PDF format - simple text-based for now
+      const pdfContent = `
+PAYROLL REPORT - ${run.period}
+==============================
+
+Total Staff: ${run.staffCount}
+Total Gross: $${run.totalGross.toLocaleString()}
+Total Net: $${run.totalNet.toLocaleString()}
+
+STAFF DETAILS:
+${items.map(item => `
+${this.getStaffName(item.user)} (${this.getDepartmentFromUser(item.user)})
+  Gross: $${item.grossPay.toLocaleString()} | Net: $${item.netPay.toLocaleString()}
+`).join('')}
+
+Generated on: ${new Date().toLocaleDateString()}
+      `.trim();
+
+      return Buffer.from(pdfContent, 'utf-8');
+    }
   }
 }
