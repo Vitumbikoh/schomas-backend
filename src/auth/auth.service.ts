@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { User } from '../user/entities/user.entity';
@@ -10,6 +10,9 @@ export class AuthService {
     private usersService: UsersService,
     private jwtService: JwtService,
   ) {}
+
+  // NOTE: For production, store refresh tokens in DB with rotation and revocation support.
+  private refreshTokens = new Map<string, { userId: string; expiresAt: number }>();
 
   async validateUser(identifier: string, password: string): Promise<any> {
     // identifier is expected to be username, but we fallback to email for backward compatibility
@@ -76,8 +79,11 @@ export class AuthService {
       role: user.role,
       schoolId: user.schoolId || null,
     };
+    const access_token = this.jwtService.sign(payload);
+    const refresh_token = this.issueRefreshToken(user.id);
     return {
-      access_token: this.jwtService.sign(payload),
+      access_token,
+      refresh_token,
       user: {
         id: user.id,
         username: user.username,
@@ -88,6 +94,35 @@ export class AuthService {
         forcePasswordReset: (user as any).forcePasswordReset ?? false,
       },
     };
+  }
+
+  private issueRefreshToken(userId: string) {
+    const token = this.generateRandomToken();
+    const ttlMs = 1000 * 60 * 60 * 24 * 7; // 7 days
+    this.refreshTokens.set(token, { userId, expiresAt: Date.now() + ttlMs });
+    return token;
+  }
+
+  private generateRandomToken() {
+    // Simple random; in production use crypto.randomBytes(32).toString('hex')
+    return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  }
+
+  async refresh(refreshToken: string) {
+    const record = this.refreshTokens.get(refreshToken);
+    if (!record) throw new UnauthorizedException('Invalid refresh token');
+    if (Date.now() > record.expiresAt) {
+      this.refreshTokens.delete(refreshToken);
+      throw new UnauthorizedException('Refresh token expired');
+    }
+    const user = await this.usersService.findById(record.userId);
+    if (!user || user.isActive === false) throw new UnauthorizedException('User inactive');
+    const payload = { username: user.username, sub: user.id, role: user.role, schoolId: user.schoolId || null };
+    const access_token = this.jwtService.sign(payload);
+    // Optional rotation
+    this.refreshTokens.delete(refreshToken);
+    const new_refresh_token = this.issueRefreshToken(user.id);
+    return { access_token, refresh_token: new_refresh_token };
   }
 
   async validateToken(userId: string): Promise<User> {

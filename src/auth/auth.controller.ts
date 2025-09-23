@@ -39,4 +39,13 @@ export class AuthController {
       return { valid: false };
     }
   }
+
+  @Public()
+  @Post('refresh')
+  async refresh(@Body() body: { refresh_token: string }) {
+    if (!body?.refresh_token) {
+      return { error: 'refresh_token required' } as any;
+    }
+    return this.authService.refresh(body.refresh_token);
+  }
 }

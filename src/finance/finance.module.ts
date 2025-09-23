@@ -20,6 +20,7 @@ import { ConfigModule } from '../config/config.module';
 import { FeeAnalyticsService } from './services/fee-analytics.service';
 import { StudentFeeExpectationService } from './student-fee-expectation.service';
 import { Expense } from '../expenses/entities/expense.entity';
+import { CreditLedger } from './entities/credit-ledger.entity';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { Expense } from '../expenses/entities/expense.entity';
       Term,
       Class,
       Expense,
+      CreditLedger,
     ]),
     SettingsModule,
     LogsModule,

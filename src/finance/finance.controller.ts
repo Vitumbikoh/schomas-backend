@@ -226,6 +226,24 @@ export class FinanceController {
     }
   }
 
+  @Get('credits')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'List active credits (overpayments) for a student or school' })
+  async listCredits(
+    @Request() req,
+    @Query('studentId') studentId?: string,
+    @Query('status') status: 'active' | 'applied' | 'refunded' | 'all' = 'active',
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.financeService.listCredits({
+      studentId,
+      status,
+      schoolId: superAdmin ? (req.query.schoolId || user.schoolId) : user.schoolId,
+      superAdmin,
+    });
+  }
+
   // ---------------- Fee Structure Management ----------------
 
   @Post('fee-structure')

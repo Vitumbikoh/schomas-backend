@@ -23,6 +23,8 @@ import * as bcrypt from 'bcrypt';
 import { SettingsService } from 'src/settings/settings.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { Expense } from '../expenses/entities/expense.entity';
+import { CreditLedger } from './entities/credit-ledger.entity';
+import { StudentFeeExpectationService } from './student-fee-expectation.service';
 
 @Injectable()
 export class FinanceService {
@@ -43,8 +45,11 @@ export class FinanceService {
     private readonly userRepository: Repository<User>,
   @InjectRepository(Expense)
   private readonly expenseRepository: Repository<Expense>,
+  @InjectRepository(CreditLedger)
+  private readonly creditRepository: Repository<CreditLedger>,
     private settingsService: SettingsService,
     private systemLoggingService: SystemLoggingService,
+    private studentFeeExpectationService: StudentFeeExpectationService,
   ) {}
 
   // Aggregated financial report: fees by type and approved expenses
@@ -231,6 +236,33 @@ export class FinanceService {
     };
   }
 
+  async listCredits(params: { studentId?: string; status?: 'active' | 'applied' | 'refunded' | 'all'; schoolId?: string; superAdmin?: boolean }) {
+    const { studentId, status = 'active', schoolId, superAdmin = false } = params || {};
+    const where: any = {};
+    if (studentId) where.student = { id: studentId } as any;
+    if (status && status !== 'all') where.status = status;
+    if (!superAdmin) {
+      if (!schoolId) return [];
+      where.schoolId = schoolId;
+    } else if (schoolId) {
+      where.schoolId = schoolId;
+    }
+    const credits = await this.creditRepository.find({
+      where,
+      relations: ['student', 'sourcePayment'],
+      order: { createdAt: 'DESC' },
+    });
+    return credits.map((c: any) => ({
+      id: c.id,
+      studentId: c.student?.id,
+      amount: Number(c.amount),
+      remainingAmount: Number(c.remainingAmount),
+      status: c.status,
+      sourcePaymentId: c.sourcePayment?.id,
+      createdAt: c.createdAt,
+    }));
+  }
+
   async processPayment(user: { id: string; role: Role; schoolId?: string }, processPaymentDto: ProcessPaymentDto, request?: any, superAdmin = false) {
     const startTime = Date.now();
     
@@ -290,7 +322,7 @@ export class FinanceService {
         'uniform',
         'other',
       ];
-      if (!validPaymentTypes.includes(processPaymentDto.paymentType)) {
+      if (!validPaymentTypes.includes(processPaymentDto.paymentType.toLowerCase())) {
         throw new BadRequestException('Invalid payment type');
       }
 
@@ -319,6 +351,42 @@ export class FinanceService {
       console.log('Payment object created with schoolId:', payment.schoolId);
 
       const savedPayment = await this.paymentRepository.save(payment);
+
+      // Overpayment handling: compute outstanding for the student and term
+      let creditCreated = false;
+      let creditAmount = 0;
+      try {
+        const feeStatus = await this.studentFeeExpectationService.getStudentFeeStatus(student.id, currentTerm.id, user.schoolId, superAdmin);
+        const outstanding = Number(feeStatus?.outstanding || 0);
+        const paidNow = Number(processPaymentDto.amount || 0);
+        if (paidNow > outstanding) {
+          creditAmount = Number((paidNow - outstanding).toFixed(2));
+          if (creditAmount > 0) {
+            const credit = this.creditRepository.create({
+              student: { id: student.id } as any,
+              termId: currentTerm.id,
+              schoolId: user.schoolId || null,
+              sourcePayment: { id: savedPayment.id } as any,
+              amount: creditAmount as any,
+              remainingAmount: creditAmount as any,
+              status: 'active',
+              notes: `Surplus from payment ${savedPayment.id}`,
+            });
+            await this.creditRepository.save(credit);
+            creditCreated = true;
+          }
+        }
+      } catch (e) {
+        // Log but do not fail payment if credit computation fails
+        await this.systemLoggingService.logAction({
+          action: 'CREDIT_COMPUTE_FAILED',
+          module: 'FINANCE',
+          level: 'warn',
+          performedBy: { id: processingUser.id, role: processingUser.role, email: processingUser.email ?? '' },
+          metadata: { error: (e as Error)?.message, studentId: student.id, termId: currentTerm.id },
+          schoolId: user.schoolId,
+        });
+      }
       
       // Enhanced logging
       await this.systemLoggingService.logFeePaymentProcessed(
@@ -345,6 +413,7 @@ export class FinanceService {
           studentName: `${student.firstName} ${student.lastName}`,
           processedByName: processingUser.username,
         },
+        credit: creditCreated ? { created: true, amount: creditAmount } : { created: false, amount: 0 },
         message: 'Payment processed successfully',
       };
     } catch (error) {
