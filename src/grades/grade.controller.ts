@@ -100,4 +100,38 @@ async getStudentOwnGrades(@Request() req) {
   async getGradesReport(@Query() query: GradesReportQueryDto, @Request() req) {
     return this.gradeService.getGradesReport(query, req.user.sub, req.user.schoolId);
   }
+
+  // Comprehensive filtered results endpoint
+  @UseGuards(JwtAuthGuard)
+  @Get('filtered')
+  async getFilteredResults(
+    @Request() req,
+    @Query('classId') classId?: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
+    @Query('termId') termId?: string,
+    @Query('studentId') studentId?: string,
+    @Query('examType') examType?: string,
+    @Query('search') search?: string,
+    @Query('minGrade') minGrade?: number,
+    @Query('maxGrade') maxGrade?: number,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.gradeService.getFilteredResults(
+      req.user.sub,
+      req.user.schoolId,
+      {
+        classId,
+        academicCalendarId,
+        termId,
+        studentId,
+        examType,
+        search,
+        minGrade,
+        maxGrade,
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined,
+      }
+    );
+  }
 }

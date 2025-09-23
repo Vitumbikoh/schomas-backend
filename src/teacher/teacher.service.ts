@@ -1198,6 +1198,11 @@ async submitExamGrades(
     throw new ForbiddenException('You are not authorized to grade this exam');
   }
 
+  // Check if exam has been administered
+  if (exam.status !== 'administered') {
+    throw new BadRequestException('Exam must be administered before grading can begin');
+  }
+
   // Get the current term
   const Term = await this.settingsService.getCurrentTerm();
   if (!Term) {

@@ -319,12 +319,16 @@ export class GradeService {
       .createQueryBuilder('grade')
       .leftJoinAndSelect('grade.student', 'student')
       .leftJoinAndSelect('grade.course', 'course')
+      .leftJoinAndSelect('grade.exam', 'exam') // Join with exam to check status
       .where('grade.classId = :classId', { classId });
 
     // Add schoolId filtering for multi-tenancy
     if (schoolId) {
       query.andWhere('grade.schoolId = :schoolId', { schoolId });
     }
+
+    // Only show results for administered exams
+    query.andWhere('exam.status = :administeredStatus', { administeredStatus: 'administered' });
 
     if (Term) {
       query.andWhere('EXTRACT(YEAR FROM grade.date) = :year', {
@@ -528,12 +532,16 @@ export class GradeService {
       .leftJoinAndSelect('grade.course', 'course')
       .leftJoinAndSelect('grade.class', 'class')
       .leftJoinAndSelect('grade.term', 'term')
+      .leftJoinAndSelect('grade.exam', 'exam') // Join with exam to check status
       .where('grade.student = :studentId', { studentId: student.id });
 
     // Strictly scope to current class if provided (prevents historical class grades leaking)
     if (classId) {
       query.andWhere('grade.classId = :classId', { classId });
     }
+
+    // Only show results for administered exams
+    query.andWhere('exam.status = :administeredStatus', { administeredStatus: 'administered' });
 
     // Direct term filter (preferred)
     if (termId) {
@@ -601,14 +609,17 @@ export class GradeService {
       throw new NotFoundException('Student not found');
     }
 
-    // Get all grades for this student, filtered by schoolId for multi-tenancy
-    const grades = await this.gradeRepository.find({
-      where: { 
-        student: { id: student.id },
-        schoolId: student.schoolId,
-      },
-      relations: ['course', 'class', 'term'],
-    });
+    // Get all grades for this student, filtered by schoolId for multi-tenancy and exam status
+    const grades = await this.gradeRepository
+      .createQueryBuilder('grade')
+      .leftJoinAndSelect('grade.course', 'course')
+      .leftJoinAndSelect('grade.class', 'class')
+      .leftJoinAndSelect('grade.term', 'term')
+      .leftJoinAndSelect('grade.exam', 'exam') // Join with exam to check status
+      .where('grade.student = :studentId', { studentId: student.id })
+      .andWhere('grade.schoolId = :schoolId', { schoolId: student.schoolId })
+      .andWhere('exam.status = :administeredStatus', { administeredStatus: 'administered' })
+      .getMany();
 
     const visibleGrades = grades.filter(g => !g.termId || g.term?.resultsPublished);
 
@@ -911,5 +922,231 @@ export class GradeService {
       },
       students: responseStudents,
     };
+  }
+
+  async getFilteredResults(
+    userId: string,
+    schoolId: string | undefined,
+    filters: {
+      classId?: string;
+      academicCalendarId?: string;
+      termId?: string;
+      studentId?: string;
+      examType?: string;
+      search?: string;
+      minGrade?: number;
+      maxGrade?: number;
+      startDate?: Date;
+      endDate?: Date;
+    }
+  ): Promise<any> {
+    // Build the base query
+    const query = this.gradeRepository
+      .createQueryBuilder('grade')
+      .leftJoinAndSelect('grade.student', 'student')
+      .leftJoinAndSelect('grade.course', 'course')
+      .leftJoinAndSelect('grade.class', 'class')
+      .leftJoinAndSelect('grade.term', 'term')
+      .leftJoinAndSelect('grade.exam', 'exam')
+      .where('exam.status = :administeredStatus', { administeredStatus: 'administered' });
+
+    // Add school scoping
+    if (schoolId) {
+      query.andWhere('grade.schoolId = :schoolId', { schoolId });
+    }
+
+    // Apply filters
+    if (filters.classId) {
+      query.andWhere('grade.classId = :classId', { classId: filters.classId });
+    }
+
+    if (filters.termId) {
+      query.andWhere('grade.termId = :termId', { termId: filters.termId });
+    }
+
+    if (filters.academicCalendarId) {
+      query.andWhere('term.academicCalendarId = :academicCalendarId', {
+        academicCalendarId: filters.academicCalendarId
+      });
+    }
+
+    if (filters.studentId) {
+      query.andWhere('grade.student = :studentId', { studentId: filters.studentId });
+    }
+
+    if (filters.examType) {
+      query.andWhere('grade.assessmentType = :examType', { examType: filters.examType });
+    }
+
+    if (filters.minGrade !== undefined) {
+      query.andWhere('CAST(grade.grade AS DECIMAL) >= :minGrade', { minGrade: filters.minGrade });
+    }
+
+    if (filters.maxGrade !== undefined) {
+      query.andWhere('CAST(grade.grade AS DECIMAL) <= :maxGrade', { maxGrade: filters.maxGrade });
+    }
+
+    if (filters.startDate) {
+      query.andWhere('grade.date >= :startDate', { startDate: filters.startDate });
+    }
+
+    if (filters.endDate) {
+      query.andWhere('grade.date <= :endDate', { endDate: filters.endDate });
+    }
+
+    if (filters.search) {
+      query.andWhere(
+        '(student.firstName ILIKE :search OR student.lastName ILIKE :search OR student.studentId ILIKE :search OR course.name ILIKE :search)',
+        { search: `%${filters.search}%` }
+      );
+    }
+
+    // Execute query
+    const grades = await query.getMany();
+
+    // Group by student for class view, or return individual results for student view
+    if (filters.studentId) {
+      // Individual student results
+      const results = await Promise.all(grades.map(async (grade) => ({
+        id: grade.gradeId,
+        examTitle: grade.course.name,
+        subject: grade.course.name,
+        marksObtained: parseFloat(grade.grade) || 0,
+        totalMarks: 100,
+        percentage: parseFloat(grade.grade) || 0,
+        grade: await this.calculateLetterGradeDynamic(parseFloat(grade.grade) || 0, grade.schoolId),
+        date: grade.date,
+        examType: grade.assessmentType,
+        termId: grade.termId,
+        term: grade.term ? {
+          id: grade.term.id,
+          name: `Term ${grade.term.termNumber}`,
+          termNumber: grade.term.termNumber,
+        } : null,
+      })));
+
+      return {
+        student: {
+          id: grades[0]?.student.id,
+          firstName: grades[0]?.student.firstName,
+          lastName: grades[0]?.student.lastName,
+          studentId: grades[0]?.student.studentId,
+        },
+        results,
+        overallGPA: await this.calculateGPA(results, grades[0]?.schoolId),
+        totalExams: results.length,
+      };
+    } else {
+      // Class results - group by student
+      const studentMap = new Map<string, any>();
+
+      for (const grade of grades) {
+        const studentId = grade.student.id;
+        if (!studentMap.has(studentId)) {
+          studentMap.set(studentId, {
+            student: {
+              id: grade.student.id,
+              studentId: grade.student.studentId,
+              firstName: grade.student.firstName,
+              lastName: grade.student.lastName,
+            },
+            results: [],
+            totalMarks: 0,
+            totalPossible: 0,
+          });
+        }
+
+        const studentData = studentMap.get(studentId);
+        const marks = parseFloat(grade.grade) || 0;
+
+        const result = {
+          id: grade.gradeId,
+          examTitle: grade.course.name,
+          subject: grade.course.name,
+          marksObtained: marks,
+          totalMarks: 100,
+          percentage: marks,
+          grade: await this.calculateLetterGradeDynamic(marks, grade.schoolId),
+          date: grade.date,
+          examType: grade.assessmentType,
+        };
+
+        studentData.results.push(result);
+        studentData.totalMarks += marks;
+        studentData.totalPossible += 100;
+      }
+
+      // Calculate final metrics for each student
+      const students = await Promise.all(Array.from(studentMap.values()).map(async (studentData) => {
+        const averageScore = studentData.totalPossible > 0
+          ? (studentData.totalMarks / studentData.totalPossible) * 100
+          : 0;
+
+        return {
+          ...studentData,
+          averageScore,
+          overallGPA: await this.calculateGPA(studentData.results, schoolId),
+          totalExams: studentData.results.length,
+          remarks: this.getRemarks(averageScore),
+        };
+      }));
+
+      return {
+        classInfo: filters.classId ? { id: filters.classId } : null,
+        students,
+        filters: {
+          applied: Object.fromEntries(
+            Object.entries(filters).filter(([_, value]) => value !== undefined && value !== '')
+          ),
+          totalResults: students.length,
+        },
+      };
+    }
+  }
+
+  async exportToCSV(data: any): Promise<string> {
+    const rows: string[] = [];
+
+    if (data.student) {
+      // Individual student export
+      rows.push('Student ID,Student Name,Exam Title,Subject,Exam Type,Date,Marks Obtained,Total Marks,Percentage,Grade');
+
+      data.results.forEach((result: any) => {
+        rows.push([
+          data.student.studentId,
+          `${data.student.firstName} ${data.student.lastName}`,
+          result.examTitle,
+          result.subject,
+          result.examType,
+          result.date,
+          result.marksObtained,
+          result.totalMarks,
+          result.percentage,
+          result.grade,
+        ].join(','));
+      });
+    } else {
+      // Class export
+      rows.push('Student ID,Student Name,Average Score,Overall GPA,Total Exams,Remarks');
+
+      data.students.forEach((student: any) => {
+        rows.push([
+          student.student.studentId,
+          `${student.student.firstName} ${student.student.lastName}`,
+          student.averageScore.toFixed(1),
+          student.overallGPA.toFixed(1),
+          student.totalExams,
+          student.remarks,
+        ].join(','));
+      });
+    }
+
+    return rows.join('\n');
+  }
+
+  async exportToExcel(data: any): Promise<Buffer> {
+    // For now, return CSV as Excel format (can be enhanced with actual Excel library later)
+    const csv = await this.exportToCSV(data);
+    return Buffer.from(csv, 'utf-8');
   }
 }

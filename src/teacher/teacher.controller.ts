@@ -1103,7 +1103,7 @@ export class TeacherController {
 
     return {
       success: true,
-      exams: exams.filter((exam) => exam.status !== 'graded'), // Only show ungraded exams
+      exams: exams.filter((exam) => exam.status === 'administered'), // Only show administered exams for grading
     };
   }
 

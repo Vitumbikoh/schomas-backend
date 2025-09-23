@@ -1,5 +1,5 @@
 // src/exam/exam.service.ts
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CreateExamDto } from './dto/create-exam.dto';
@@ -460,6 +460,35 @@ async getExamCountByCourse(courseIds: string[], schoolId?: string, superAdmin = 
       throw new NotFoundException(`Exam with ID ${id} not found`);
     }
     return exam;
+  }
+
+  async administerExam(id: string, userId: string, schoolId?: string, superAdmin = false): Promise<Exam> {
+    const exam = await this.findOne(id, schoolId, superAdmin);
+    
+    // Get the teacher profile to verify authorization
+    const teacher = await this.teacherRepository.findOne({
+      where: { user: { id: userId } },
+      relations: ['user'],
+    });
+    if (!teacher) {
+      throw new ForbiddenException('Teacher profile not found');
+    }
+    
+    // Verify the teacher is authorized for this exam
+    if (exam.teacher.id !== teacher.id) {
+      throw new ForbiddenException('You are not authorized to administer this exam');
+    }
+
+    // Check if exam can be administered
+    if (exam.status !== 'upcoming') {
+      throw new BadRequestException(`Exam is already ${exam.status}`);
+    }
+
+    // Update status to administered
+    await this.examRepository.update(id, { status: 'administered' });
+    
+    // Return updated exam
+    return this.findOne(id, schoolId, superAdmin);
   }
 
   async findByCourseAndTeacher(courseId: string, teacherId: string, schoolId?: string, superAdmin = false): Promise<Exam[]> {

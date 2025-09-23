@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Body, Query, UsePipes, ValidationPipe, Param, Request, UseGuards } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import { ExamService } from './exam.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { CreateExamDto } from './dto/create-exam.dto';
@@ -118,6 +119,25 @@ export class ExamController {
     const isSuper = req.user?.role === Role.SUPER_ADMIN;
     const schoolScope = isSuper ? (schoolIdOverride || req.user?.schoolId) : req.user?.schoolId;
     return this.examService.findOne(id, schoolScope, isSuper);
+  }
+
+  @Post(':id/administer')
+  @UseGuards(JwtAuthGuard)
+  async administerExam(@Request() req, @Param('id') id: string, @Query('schoolId') schoolIdOverride?: string): Promise<Exam> {
+    const isSuper = req.user?.role === Role.SUPER_ADMIN;
+    const schoolScope = isSuper ? (schoolIdOverride || req.user?.schoolId) : req.user?.schoolId;
+    const userId = req.user?.sub || req.user?.id;
+    const updatedExam = await this.examService.administerExam(id, userId, schoolScope, isSuper);
+    await this.systemLoggingService.logAction({
+      action: 'EXAM_ADMINISTERED',
+      module: 'EXAMS',
+      level: 'info',
+      entityId: id,
+      entityType: 'Exam',
+      newValues: { status: 'administered' },
+      metadata: { description: 'Exam administered by teacher', schoolId: updatedExam.schoolId }
+    });
+    return updatedExam;
   }
 
   @Get('debug/data')
