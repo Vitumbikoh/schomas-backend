@@ -336,56 +336,59 @@ export class GradeService {
       });
     });
 
-    // Now get exam grade records from the new exam_grade table instead of legacy grades
-    let examGradeQuery = this.examGradeRecordRepository
-      .createQueryBuilder('eg')
-      .leftJoinAndSelect('eg.student', 'student')
-      .leftJoinAndSelect('eg.course', 'course')
-      .leftJoinAndSelect('eg.exam', 'exam')
+    // Get aggregated exam results from exam_result table for course-level performance
+    let examResultQuery = this.examResultRepository
+      .createQueryBuilder('er')
+      .leftJoinAndSelect('er.student', 'student')
+      .leftJoinAndSelect('er.course', 'course')
+      .leftJoinAndSelect('er.term', 'term')
       .where('student.id IN (:...studentIds)', { 
         studentIds: Array.from(studentDetailsMap.keys()) 
       })
-      .andWhere('eg.status = :status', { status: 'PUBLISHED' });
+      .andWhere('er.status = :status', { status: 'COMPLETE' }); // Include only completed aggregated results
 
     // Add schoolId filtering for multi-tenancy
     if (schoolId) {
-      examGradeQuery.andWhere('eg.schoolId = :schoolId', { schoolId });
+      examResultQuery.andWhere('er.schoolId = :schoolId', { schoolId });
     }
 
     if (termId) {
-      examGradeQuery.andWhere('eg.termId = :termId', { termId });
+      examResultQuery.andWhere('er.termId = :termId', { termId });
     }
     if (academicCalendarId) {
-      examGradeQuery.leftJoin('eg.term', 'tTerm').andWhere('tTerm.academicCalendarId = :acal', { acal: academicCalendarId });
+      examResultQuery.andWhere('term.academicCalendarId = :acal', { acal: academicCalendarId });
     }
 
-    const examGrades = await examGradeQuery.getMany();
+    const examResults = await examResultQuery.getMany();
 
-    // Populate exam results for students who have them
-    examGrades.forEach((examGrade) => {
-      const studentDetails = studentDetailsMap.get(examGrade.student.id);
+    // Populate aggregated exam results for students who have them
+    examResults.forEach((examResult) => {
+      const studentDetails = studentDetailsMap.get(examResult.student.id);
       if (!studentDetails) return;
 
       const studentResult = studentResultsMap.get(studentDetails.studentId);
       if (!studentResult) return;
 
-      const rawScore = parseFloat(examGrade.rawScore) || 0;
-      const percentage = parseFloat(examGrade.percentage) || 0;
+      const percentage = parseFloat(examResult.finalPercentage || '0') || 0;
 
       studentResult.results.push({
-        gradeId: examGrade.id,
-        examTitle: examGrade.exam.title,
-        subject: examGrade.course.name,
-        marksObtained: rawScore,
-        totalMarks: examGrade.exam.totalMarks || 100,
+        resultId: examResult.id,
+        courseId: examResult.courseId,
+        courseName: examResult.course.name,
+        courseCode: examResult.course.code,
+        finalPercentage: percentage,
+        finalGradeCode: examResult.finalGradeCode,
+        pass: examResult.pass,
+        marksObtained: percentage, // For aggregated results, use percentage as marks
+        totalMarks: 100, // Standardized for aggregated results
         percentage: percentage,
-        grade: 'TEMP', // placeholder, replaced later
-        date: examGrade.exam.date,
-        examType: examGrade.exam.examType,
+        grade: examResult.finalGradeCode || 'TEMP',
+        computedAt: examResult.computedAt,
+        termId: examResult.termId,
       });
 
-      studentResult.totalMarks += rawScore;
-      studentResult.totalPossible += (examGrade.exam.totalMarks || 100);
+      studentResult.totalMarks += percentage;
+      studentResult.totalPossible += 100; // Standardized total for aggregated results
     });
 
   let results = await Promise.all(Array.from(studentResultsMap.values()).map(
@@ -420,78 +423,7 @@ export class GradeService {
       },
     ));
 
-    // Fallback / augmentation using aggregated exam_result when:
-    // 1. No legacy grades found for this class & a termId is supplied, OR
-    // 2. Explicit aggregated context (termId provided) even if some grades exist – merge aggregated finals as summary rows
-    if ((results.length === 0 && termId) || termId) {
-      try {
-        // Collect courseIds for this class
-        const courseIds = (await this.courseRepository.find({ where: { classId: classEntity.id } })).map(c=> c.id);
-        const aggregatedByStudent: Record<string, { totals:number; entries:number; finals:any[] }> = {};
-        for (const cid of courseIds) {
-          const agg = await this.aggregationService.getResultsForCourseTerm(cid, termId!);
-          for (const row of agg) {
-            if (!aggregatedByStudent[row.studentId]) aggregatedByStudent[row.studentId] = { totals:0, entries:0, finals: [] };
-            const pct = row.finalPercentage? parseFloat(row.finalPercentage): null;
-            if (pct!=null){
-              aggregatedByStudent[row.studentId].totals += pct;
-              aggregatedByStudent[row.studentId].entries += 1;
-            }
-            aggregatedByStudent[row.studentId].finals.push(row);
-          }
-        }
-
-        // Create student lookup from actual class students
-        const studentLookup = new Map<string, any>();
-        classEntity.students.forEach(student => {
-          studentLookup.set(student.id, student);
-        });
-
-        // Merge into results map (create student rows if missing)
-        const resultsByStudentId = new Map(results.map(r=> [r.student.studentId, r]));
-        for (const [studentUuid, aggData] of Object.entries(aggregatedByStudent)) {
-          const avg = aggData.entries>0? (aggData.totals/aggData.entries): 0;
-          const studentInfo = studentLookup.get(studentUuid);
-          if (!studentInfo) continue; // Skip if student not in class
-          
-          if (!resultsByStudentId.has(studentInfo.studentId)) {
-            results.push({
-              student: { 
-                id: studentInfo.id, 
-                studentId: studentInfo.studentId, 
-                firstName: studentInfo.firstName, 
-                lastName: studentInfo.lastName 
-              },
-              results: [],
-              totalMarks: avg, // interpret as avg for compatibility
-              totalPossible: 100,
-              averageScore: avg,
-              overallGPA: await this.calculateGPA([{ percentage: avg, grade: await this.calculateLetterGradeDynamic(avg, schoolId) } as any], schoolId),
-              totalExams: aggData.entries,
-              remarks: this.getRemarks(avg),
-              aggregatedFinals: aggData.finals,
-              aggregated: true,
-            });
-          } else {
-            const existing = resultsByStudentId.get(studentInfo.studentId)!;
-            existing.aggregatedFinals = aggData.finals;
-            existing.aggregated = true;
-            // Optionally update average if no legacy grades
-            if (existing.totalExams === 0) {
-              existing.averageScore = avg;
-              existing.totalMarks = avg;
-              existing.totalPossible = 100;
-              existing.overallGPA = await this.calculateGPA([{ percentage: avg, grade: await this.calculateLetterGradeDynamic(avg, schoolId) } as any], schoolId);
-              existing.remarks = this.getRemarks(avg);
-            }
-          }
-        }
-      } catch (e) {
-        // Non-fatal; log server side
-        // eslint-disable-next-line no-console
-        console.warn('[GradeService] Aggregated fallback failed', e);
-      }
-    }
+    // Now using exam_result table directly as primary source for aggregated course results
 
     return {
       classInfo: {
@@ -528,32 +460,34 @@ export class GradeService {
       throw new NotFoundException('Student not found');
     }
 
-    // Create query using student's id for grades
-    const query = this.gradeRepository
-      .createQueryBuilder('grade')
-      .leftJoinAndSelect('grade.course', 'course')
-      .leftJoinAndSelect('grade.class', 'class')
-      .leftJoinAndSelect('grade.term', 'term')
-      .leftJoinAndSelect('grade.exam', 'exam') // Join with exam to check status
-      .where('grade.student = :studentId', { studentId: student.id });
+    // Query exam grade records from the exam_grade table instead of legacy grades
+    let examGradeQuery = this.examGradeRecordRepository
+      .createQueryBuilder('eg')
+      .leftJoinAndSelect('eg.student', 'student')
+      .leftJoinAndSelect('eg.course', 'course')
+      .leftJoinAndSelect('eg.exam', 'exam')
+      .leftJoinAndSelect('eg.term', 'term')
+      .where('eg.studentId = :studentId', { studentId: student.id })
+      .andWhere('eg.status = :status', { status: 'PUBLISHED' });
+
+    // Add school scoping if available
+    if (student.schoolId) {
+      examGradeQuery.andWhere('eg.schoolId = :schoolId', { schoolId: student.schoolId });
+    }
 
     // Strictly scope to current class if provided (prevents historical class grades leaking)
     if (classId) {
-      query.andWhere('grade.classId = :classId', { classId });
+      examGradeQuery.andWhere('eg.courseId IN (SELECT c.id FROM course c WHERE c."classId" = :classId)', { classId });
     }
-
-    // Only show results for administered exams
-    query.andWhere('exam.status = :administeredStatus', { administeredStatus: 'administered' });
 
     // Direct term filter (preferred)
     if (termId) {
-      query.andWhere('grade.termId = :termId', { termId });
+      examGradeQuery.andWhere('eg.termId = :termId', { termId });
     }
 
     // Academic calendar filter via joined term
     if (academicCalendarId) {
-      // Term has foreign key academicCalendarId generated by TypeORM
-      query.andWhere('term.academicCalendarId = :academicCalendarId', { academicCalendarId });
+      examGradeQuery.andWhere('term.academicCalendarId = :academicCalendarId', { academicCalendarId });
     }
 
     // Legacy year-based filter retained for backward compatibility
@@ -561,30 +495,43 @@ export class GradeService {
       try {
         const year = Term.split('-')[0];
         if (year) {
-          query.andWhere('EXTRACT(YEAR FROM grade.date) = :year', { year });
+          examGradeQuery.andWhere('EXTRACT(YEAR FROM exam.date) = :year', { year });
         }
       } catch (_) {
         // ignore malformed legacy Term param
       }
     }
 
-  const grades = await query.getMany();
+    const examGrades = await examGradeQuery.getMany();
 
-  // If any term referenced has not published results, hide those grades
-  const visibleGrades = grades.filter(g => !g.termId || g.term?.resultsPublished);
+    // Check if results are published for the terms involved
+    const visibleGrades = examGrades.filter(eg => !eg.termId || eg.term?.resultsPublished);
 
-  const results = await Promise.all(visibleGrades.map(async (grade) => ({
-      gradeId: grade.gradeId,
-      examTitle: grade.course.name,
-      subject: grade.course.name,
-      termId: grade.termId,
-      marksObtained: parseFloat(grade.grade) || 0,
-      totalMarks: 100,
-      percentage: parseFloat(grade.grade) || 0,
-      grade: await this.calculateLetterGradeDynamic(parseFloat(grade.grade) || 0, grade.schoolId),
-      date: grade.date,
-      examType: grade.assessmentType,
-    })));
+    const results = await Promise.all(visibleGrades.map(async (examGrade) => {
+      const rawScore = parseFloat(examGrade.rawScore) || 0;
+      const percentage = parseFloat(examGrade.percentage) || 0;
+      
+      return {
+        gradeId: examGrade.id,
+        examTitle: examGrade.exam.title,
+        subject: examGrade.course.name,
+        termId: examGrade.termId,
+        marksObtained: rawScore,
+        totalMarks: examGrade.exam.totalMarks || 100,
+        percentage: percentage,
+        grade: await this.calculateLetterGradeDynamic(percentage, examGrade.schoolId),
+        date: examGrade.exam.date,
+        examType: examGrade.exam.examType,
+        courseName: examGrade.course.name,
+        courseCode: examGrade.course.code,
+        examStatus: examGrade.exam.status,
+      };
+    }));
+
+    // Calculate overall metrics
+    const totalPossible = results.reduce((sum, r) => sum + r.totalMarks, 0);
+    const totalObtained = results.reduce((sum, r) => sum + r.marksObtained, 0);
+    const averageScore = totalPossible > 0 ? (totalObtained / totalPossible) * 100 : 0;
 
     return {
       student: {
@@ -594,9 +541,13 @@ export class GradeService {
         studentId: student.studentId,
       },
       results,
-  overallGPA: await this.calculateGPA(results, student.schoolId),
-  totalExams: results.length,
-  hiddenResults: grades.length - visibleGrades.length,
+      overallGPA: await this.calculateGPA(results, student.schoolId),
+      totalExams: results.length,
+      averageScore: averageScore,
+      totalMarks: totalObtained,
+      totalPossible: totalPossible,
+      remarks: this.getRemarks(averageScore),
+      hiddenResults: examGrades.length - visibleGrades.length,
     };
   }
 
