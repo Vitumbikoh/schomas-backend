@@ -307,8 +307,10 @@ export class AggregationService {
     const examMap = new Map(exams.map(e=> [e.id, e]));
 
     const breakdown: any[] = [];
-    let pending = false;
-    let total = 0;
+    let hasAnyGrades = false;
+    let totalWeightedScore = 0;
+    let totalAvailableWeight = 0;
+    let allRequiredCompleted = true;
 
     for(const comp of scheme.components){
       // Collect percentages of exams matching componentType
@@ -318,39 +320,78 @@ export class AggregationService {
         const exNorm = this.normalizeExamType(ex.examType) || ex.examType; // fall back to original for non mid/end components
         return exNorm === comp.componentType; 
       });
+      
       if(compGrades.length === 0){
-        if(comp.required) pending = true; // missing required component
-        breakdown.push({ componentType: comp.componentType, weight: comp.weight, earnedPercentage: null, weighted: 0 });
+        if(comp.required) allRequiredCompleted = false;
+        breakdown.push({ 
+          componentType: comp.componentType, 
+          weight: comp.weight, 
+          earnedPercentage: null, 
+          weighted: 0,
+          status: 'MISSING'
+        });
         continue;
       }
+      
+      hasAnyGrades = true;
       const avg = compGrades.reduce((s,g)=> s + parseFloat(g.percentage), 0) / compGrades.length;
       const weighted = (avg * (comp.weight/100));
-      total += weighted;
-      breakdown.push({ componentType: comp.componentType, weight: comp.weight, earnedPercentage: parseFloat(avg.toFixed(2)), weighted: parseFloat(weighted.toFixed(2)) });
+      totalWeightedScore += weighted;
+      totalAvailableWeight += comp.weight;
+      
+      breakdown.push({ 
+        componentType: comp.componentType, 
+        weight: comp.weight, 
+        earnedPercentage: parseFloat(avg.toFixed(2)), 
+        weighted: parseFloat(weighted.toFixed(2)),
+        status: 'COMPLETED'
+      });
     }
 
     let result = await this.resultRepo.findOne({ where: { studentId: studentUuid, courseId, termId } });
     if(!result){
-      result = this.resultRepo.create({ studentId: studentUuid, courseId, termId, schoolId: scheme.schoolId, schemeVersion: scheme.version, status: AggregatedResultStatus.PENDING });
+      result = this.resultRepo.create({ 
+        studentId: studentUuid, 
+        courseId, 
+        termId, 
+        schoolId: scheme.schoolId, 
+        schemeVersion: scheme.version, 
+        status: AggregatedResultStatus.PENDING 
+      });
     }
 
-    if(pending){
+    // Progressive calculation: Always show current progress based on available components
+    if(hasAnyGrades && totalAvailableWeight > 0) {
+      // Calculate progressive percentage based on available components
+      // Option 1: Scale up current score to full weight (more optimistic)
+      // Option 2: Use current score as-is (more conservative)
+      // Using Option 1 for better user experience
+      const progressivePct = (totalWeightedScore / totalAvailableWeight) * 100;
+      const finalPct = parseFloat(progressivePct.toFixed(2));
+      const passThreshold = scheme.passThreshold ?? 50;
+      
+      result.finalPercentage = finalPct.toFixed(2);
+      result.finalGradeCode = this.gradingScale(finalPct);
+      result.pass = finalPct >= passThreshold;
+      result.breakdown = breakdown;
+      result.schemeVersion = scheme.version;
+      
+      // Set status based on completion
+      if(allRequiredCompleted) {
+        result.status = AggregatedResultStatus.COMPLETE;
+        result.computedAt = new Date();
+      } else {
+        result.status = AggregatedResultStatus.PENDING;
+        result.computedAt = new Date(); // Still computed, just pending more components
+      }
+    } else {
+      // No grades available yet
       result.status = AggregatedResultStatus.PENDING;
       result.finalPercentage = null;
       result.finalGradeCode = null;
       result.pass = null;
       result.breakdown = breakdown;
       result.computedAt = null;
-    } else {
-      const finalPct = parseFloat(total.toFixed(2));
-      const passThreshold = scheme.passThreshold ?? 50;
-      result.finalPercentage = finalPct.toFixed(2);
-      result.finalGradeCode = this.gradingScale(finalPct);
-      result.pass = finalPct >= passThreshold;
-      result.breakdown = breakdown;
-      result.schemeVersion = scheme.version;
-      result.status = AggregatedResultStatus.COMPLETE;
-      result.computedAt = new Date();
     }
 
     await this.resultRepo.save(result);
