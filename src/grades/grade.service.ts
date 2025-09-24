@@ -318,75 +318,74 @@ export class GradeService {
       });
     });
 
-  const query = this.gradeRepository
-      .createQueryBuilder('grade')
-      .leftJoinAndSelect('grade.student', 'student')
-      .leftJoinAndSelect('grade.course', 'course')
-      .leftJoinAndSelect('grade.exam', 'exam') // Join with exam to check status
-      .where('grade.classId = :classId', { classId });
+    // Initialize results for ALL enrolled students first (empty results)
+    const studentResultsMap = new Map<string, any>();
+    classEntity.students.forEach((student) => {
+      if (schoolId && student.schoolId !== schoolId) return; // Skip if school filtering applied
+      
+      studentResultsMap.set(student.studentId, {
+        student: {
+          id: student.id,
+          studentId: student.studentId,
+          firstName: student.firstName,
+          lastName: student.lastName,
+        },
+        results: [],
+        totalMarks: 0,
+        totalPossible: 0,
+      });
+    });
+
+    // Now get exam grade records from the new exam_grade table instead of legacy grades
+    let examGradeQuery = this.examGradeRecordRepository
+      .createQueryBuilder('eg')
+      .leftJoinAndSelect('eg.student', 'student')
+      .leftJoinAndSelect('eg.course', 'course')
+      .leftJoinAndSelect('eg.exam', 'exam')
+      .where('student.id IN (:...studentIds)', { 
+        studentIds: Array.from(studentDetailsMap.keys()) 
+      })
+      .andWhere('eg.status = :status', { status: 'PUBLISHED' });
 
     // Add schoolId filtering for multi-tenancy
     if (schoolId) {
-      query.andWhere('grade.schoolId = :schoolId', { schoolId });
-    }
-
-    // Only show results for administered exams
-    query.andWhere('exam.status = :administeredStatus', { administeredStatus: 'administered' });
-
-    if (Term) {
-      query.andWhere('EXTRACT(YEAR FROM grade.date) = :year', {
-        year: Term.split('-')[0],
-      });
+      examGradeQuery.andWhere('eg.schoolId = :schoolId', { schoolId });
     }
 
     if (termId) {
-      query.andWhere('grade.termId = :tid', { tid: termId });
+      examGradeQuery.andWhere('eg.termId = :termId', { termId });
     }
     if (academicCalendarId) {
-      query.leftJoin('grade.term', 'tTerm').andWhere('tTerm.academicCalendarId = :acal', { acal: academicCalendarId });
+      examGradeQuery.leftJoin('eg.term', 'tTerm').andWhere('tTerm.academicCalendarId = :acal', { acal: academicCalendarId });
     }
 
-    const grades = await query.getMany();
+    const examGrades = await examGradeQuery.getMany();
 
-    const studentResultsMap = new Map<string, any>();
-    grades.forEach((grade) => {
-      const studentDetails = studentDetailsMap.get(grade.student.id) || {
-        studentId: 'N/A',
-        firstName: 'Unknown',
-        lastName: 'Student',
-      };
-
-      if (!studentResultsMap.has(studentDetails.studentId)) {
-        studentResultsMap.set(studentDetails.studentId, {
-          student: {
-            id: grade.student.id,
-            studentId: studentDetails.studentId,
-            firstName: studentDetails.firstName,
-            lastName: studentDetails.lastName,
-          },
-          results: [],
-          totalMarks: 0,
-          totalPossible: 0,
-        });
-      }
+    // Populate exam results for students who have them
+    examGrades.forEach((examGrade) => {
+      const studentDetails = studentDetailsMap.get(examGrade.student.id);
+      if (!studentDetails) return;
 
       const studentResult = studentResultsMap.get(studentDetails.studentId);
-      const marks = parseFloat(grade.grade) || 0;
+      if (!studentResult) return;
+
+      const rawScore = parseFloat(examGrade.rawScore) || 0;
+      const percentage = parseFloat(examGrade.percentage) || 0;
 
       studentResult.results.push({
-        gradeId: grade.gradeId,
-        examTitle: grade.course.name,
-        subject: grade.course.name,
-        marksObtained: marks,
-        totalMarks: 100,
-        percentage: marks,
+        gradeId: examGrade.id,
+        examTitle: examGrade.exam.title,
+        subject: examGrade.course.name,
+        marksObtained: rawScore,
+        totalMarks: examGrade.exam.totalMarks || 100,
+        percentage: percentage,
         grade: 'TEMP', // placeholder, replaced later
-        date: grade.date,
-        examType: grade.assessmentType,
+        date: examGrade.exam.date,
+        examType: examGrade.exam.examType,
       });
 
-      studentResult.totalMarks += marks;
-      studentResult.totalPossible += 100;
+      studentResult.totalMarks += rawScore;
+      studentResult.totalPossible += (examGrade.exam.totalMarks || 100);
     });
 
   let results = await Promise.all(Array.from(studentResultsMap.values()).map(
