@@ -22,6 +22,7 @@ import { IsNull } from 'typeorm';
 import { AggregationService } from '../aggregation/aggregation.service';
 import { Exam } from '../exams/entities/exam.entity';
 import { ExamResultAggregate } from '../aggregation/entities/exam-result-aggregate.entity';
+import { ExamGradeRecord } from '../aggregation/aggregation.entity';
 
 @Injectable()
 export class GradeService {
@@ -48,6 +49,8 @@ export class GradeService {
     private examRepository: Repository<Exam>,
     @InjectRepository(ExamResultAggregate)
     private examResultRepository: Repository<ExamResultAggregate>,
+    @InjectRepository(ExamGradeRecord)
+    private examGradeRecordRepository: Repository<ExamGradeRecord>,
     private aggregationService: AggregationService,
   ) {}
 
@@ -932,6 +935,7 @@ export class GradeService {
       academicCalendarId?: string;
       termId?: string;
       studentId?: string;
+      examId?: string;
       examType?: string;
       search?: string;
       minGrade?: number;
@@ -940,7 +944,24 @@ export class GradeService {
       endDate?: Date;
     }
   ): Promise<any> {
-    // Build the base query
+    // Special case: if only examId is provided, return count of graded students for exam details
+    console.log(`[DEBUG] getFilteredResults called with filters:`, JSON.stringify(filters));
+    if (filters.examId && !filters.studentId && !filters.classId && !filters.termId && !filters.academicCalendarId && !filters.examType && !filters.search && filters.minGrade === undefined && filters.maxGrade === undefined && !filters.startDate && !filters.endDate) {
+      console.log(`[DEBUG] Special case triggered for examId: ${filters.examId}, schoolId: ${schoolId}`);
+      const qb = this.examGradeRecordRepository.createQueryBuilder('eg')
+        .select('COUNT(DISTINCT eg.studentId)', 'gradedCount')
+        .where('eg.examId = :examId', { examId: filters.examId })
+        .andWhere('eg.status = :status', { status: 'PUBLISHED' });
+      if (schoolId) {
+        qb.andWhere('eg.schoolId = :schoolId', { schoolId });
+      }
+      const raw = await qb.getRawOne<{ gradedCount: string }>();
+      const gradedCount = raw ? parseInt(raw.gradedCount, 10) : 0;
+      console.log(`[DEBUG] Exam ${filters.examId} has ${gradedCount} distinct graded students`);
+      return { gradedCount };
+    }
+
+    // Build the base query for legacy grade table (for other use cases)
     const query = this.gradeRepository
       .createQueryBuilder('grade')
       .leftJoinAndSelect('grade.student', 'student')
@@ -948,7 +969,7 @@ export class GradeService {
       .leftJoinAndSelect('grade.class', 'class')
       .leftJoinAndSelect('grade.term', 'term')
       .leftJoinAndSelect('grade.exam', 'exam')
-      .where('exam.status = :administeredStatus', { administeredStatus: 'administered' });
+      .where('exam.status IN (:...statuses)', { statuses: ['administered', 'graded'] });
 
     // Add school scoping
     if (schoolId) {
@@ -972,6 +993,10 @@ export class GradeService {
 
     if (filters.studentId) {
       query.andWhere('grade.student = :studentId', { studentId: filters.studentId });
+    }
+
+    if (filters.examId) {
+      query.andWhere('grade.examId = :examId', { examId: filters.examId });
     }
 
     if (filters.examType) {

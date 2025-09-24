@@ -7,11 +7,11 @@ import { Role } from '../user/enums/role.enum';
 
 @Controller('analytics')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles(Role.ADMIN)
 export class AnalyticsController {
   constructor(private analyticsService: AnalyticsService) {}
 
   @Get('class-performance')
+  @Roles(Role.ADMIN)
   async classPerformance(
     @Request() req,
     @Query('classId') classId: string, 
@@ -24,6 +24,7 @@ export class AnalyticsController {
   }
 
   @Get('course-averages')
+  @Roles(Role.ADMIN)
   async courseAverages(
     @Request() req,
     @Query('TermId') TermId?: string,
@@ -36,6 +37,7 @@ export class AnalyticsController {
   }
 
   @Get('attendance-overview')
+  @Roles(Role.ADMIN)
   async attendanceOverview(
     @Request() req,
     @Query('TermId') TermId?: string,
@@ -75,6 +77,7 @@ export class AnalyticsController {
   }
 
   @Get('dashboard-summary')
+  @Roles(Role.ADMIN)
   async dashboardSummary(
     @Request() req,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
@@ -85,6 +88,7 @@ export class AnalyticsController {
   }
 
   @Get('teacher-performance')
+  @Roles(Role.ADMIN)
   async teacherPerformance(
     @Request() req,
     @Query('termId') termId?: string,

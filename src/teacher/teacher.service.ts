@@ -1264,7 +1264,8 @@ async submitExamGrades(
   if (Object.keys(submitGradesDto.grades).length === 0) {
     throw new BadRequestException('No valid student IDs found');
   }
-  await this.examRepository.update(exam.id, { status: 'graded' });
+  // Update exam record: mark graded and set studentsCompleted to number of distinct graded students (successfulGrades length)
+  await this.examRepository.update(exam.id, { status: 'graded', studentsCompleted: successfulGrades.length });
 
   return {
     examId: exam.id,
