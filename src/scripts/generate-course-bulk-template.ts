@@ -20,9 +20,42 @@ const sampleRows = [
 ];
 
 function main() {
+  // Create the main worksheet with sample data
   const worksheet = XLSX.utils.json_to_sheet(sampleRows, { header: headers });
+  
+  // Add school branding information at the top
+  const brandingInfo = [
+    ['School Management System - Course Bulk Upload Template'],
+    ['Generated on:', new Date().toLocaleDateString()],
+    ['Instructions: Fill in the course data below and upload the file.'],
+    ['Required fields: code, name, description, status, className'],
+    [''] // Empty row for spacing
+  ];
+  
+  // Insert branding rows at the top
+  XLSX.utils.sheet_add_aoa(worksheet, brandingInfo, { origin: 'A1' });
+  
+  // Shift the actual data down by the number of branding rows
+  const dataStartRow = brandingInfo.length + 1;
+  const newHeaders = [headers];
+  XLSX.utils.sheet_add_aoa(worksheet, newHeaders, { origin: `A${dataStartRow}` });
+  
+  // Add the sample data
+  XLSX.utils.sheet_add_json(worksheet, sampleRows, { 
+    origin: `A${dataStartRow + 1}`, 
+    skipHeader: true 
+  });
+  
+  // Apply styling to branding rows
+  for (let i = 0; i < brandingInfo.length - 1; i++) {
+    const cellRef = XLSX.utils.encode_cell({ c: 0, r: i });
+    if (!worksheet[cellRef]) worksheet[cellRef] = { t: 's', v: '' };
+    worksheet[cellRef].s = { font: { bold: true } };
+  }
+  
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Courses');
+  
   const outPath = path.join(process.cwd(), 'course-bulk-template.xlsx');
   // If locked, fallback to a versioned filename
   try {

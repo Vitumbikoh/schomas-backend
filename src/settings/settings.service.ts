@@ -181,8 +181,8 @@ export class SettingsService {
         this.logger.debug(`Final phone for ${user.role}: ${response.user.phone}`);
       }
 
-      // Rest of your admin-specific settings...
-      if (user.role === Role.ADMIN && user.schoolId) {
+      // School settings - scoped by user's schoolId (available to all users in the school)
+      if (user.schoolId) {
         // School settings - scoped by user's schoolId
         let schoolSettings = await this.schoolSettingsRepository.findOne({
           where: { schoolId: user.schoolId },
@@ -208,8 +208,10 @@ export class SettingsService {
           schoolAbout: schoolSettings.schoolAbout || '',
           schoolLogo: schoolSettings.schoolLogo || '',
         };
+      }
 
-        // Academic calendar - with proper date handling (scoped to admin's school)
+      // Academic calendar - available to all users with schoolId
+      if (user.schoolId) {
         const academicCalendar = await this.academicCalendarRepository.findOne({
           where: { schoolId: user.schoolId, isActive: true },
         });
