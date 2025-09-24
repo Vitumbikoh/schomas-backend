@@ -358,7 +358,7 @@ export class AggregationService {
   }
 
   async getResultsForCourseTerm(courseId: string, termId: string){
-    return this.resultRepo.find({ where: { courseId, termId } });
+    return this.resultRepo.find({ where: { courseId, termId }, relations: ['student'] });
   }
 
   async getStudentResult(courseId: string, termId: string, studentId: string){
