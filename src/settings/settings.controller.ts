@@ -15,6 +15,8 @@ import {
   NotFoundException,
   InternalServerErrorException,
   BadRequestException,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags, ApiQuery, ApiParam } from '@nestjs/swagger';
 import { SettingsService } from './settings.service';
@@ -35,11 +37,24 @@ import { CreateTermPeriodDto, TermPeriodDto } from './dtos/term-period.dto';
 import { User } from '../user/entities/user.entity';
 import { AcademicCalendarClosureDto } from './dtos/academic-calendar.dto';
 import { CreateTermHolidayDto, UpdateTermHolidayDto } from './dtos/term-holiday.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
+import type { Multer } from 'multer';
 
 @ApiTags('settings')
 @Controller('settings')
 export class SettingsController {
   private readonly logger = new Logger(SettingsController.name);
+
+  static storageOptions = diskStorage({
+    destination: './uploads/logos',
+    filename: (req, file, callback) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      const ext = extname(file.originalname);
+      callback(null, `school-logo-${uniqueSuffix}${ext}`);
+    },
+  });
 
   constructor(
     private readonly settingsService: SettingsService,
@@ -98,10 +113,36 @@ export class SettingsController {
 
   @UseGuards(JwtAuthGuard)
   @Patch()
+  @UseInterceptors(FileInterceptor('logo', {
+    storage: SettingsController.storageOptions,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+    fileFilter: (req, file, callback) => {
+      if (!file.mimetype.match(/\/(jpg|jpeg|png|gif)$/)) {
+        return callback(new BadRequestException('Only image files are allowed!'), false);
+      }
+      callback(null, true);
+    },
+  }))
   async updateSettings(
     @Request() req,
-    @Body() updateDto: UpdateSettingsDto,
+    @Body() body: any,
+    @UploadedFile() logo?: Multer.File,
   ): Promise<SettingsResponseDto> {
+    // Parse updateDto from body
+    let updateDto: UpdateSettingsDto;
+    if (body.schoolSettings) {
+      try {
+        updateDto = {
+          ...body,
+          schoolSettings: JSON.parse(body.schoolSettings)
+        };
+      } catch (error) {
+        throw new BadRequestException('Invalid schoolSettings JSON');
+      }
+    } else {
+      updateDto = body;
+    }
+
     if (!req.user || !req.user.sub) {
       throw new UnauthorizedException('Invalid user credentials');
     }
@@ -114,6 +155,13 @@ export class SettingsController {
       if (!req.user.schoolId) {
         throw new UnauthorizedException('Administrator must be associated with a school to update school settings');
       }
+    }
+
+    // Handle logo upload
+    if (logo) {
+      const schoolSettings = updateDto.schoolSettings || ({} as any);
+      schoolSettings.schoolLogo = `/uploads/logos/${logo.filename}`;
+      updateDto.schoolSettings = schoolSettings;
     }
 
     const before = await this.settingsService.getSettings(req.user.sub);

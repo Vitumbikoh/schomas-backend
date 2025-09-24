@@ -36,6 +36,10 @@ export class SchoolSettingsDto {
 
   @IsString()
   schoolAbout: string;
+
+  @IsOptional()
+  @IsString()
+  schoolLogo?: string;
 }
 
 export class PeriodDto {

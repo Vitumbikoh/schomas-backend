@@ -27,4 +27,7 @@ export class SchoolSettings {
 
   @Column({ type: 'text', nullable: true })
   schoolAbout: string;
+
+  @Column({ nullable: true })
+  schoolLogo: string;
 }

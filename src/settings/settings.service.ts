@@ -206,6 +206,7 @@ export class SettingsService {
           schoolPhone: schoolSettings.schoolPhone || '',
           schoolAddress: schoolSettings.schoolAddress || '',
           schoolAbout: schoolSettings.schoolAbout || '',
+          schoolLogo: schoolSettings.schoolLogo || '',
         };
 
         // Academic calendar - with proper date handling (scoped to admin's school)
@@ -1878,6 +1879,7 @@ export class SettingsService {
           schoolPhone: '',
           schoolAddress: '',
           schoolAbout: '',
+          schoolLogo: '',
         } as Partial<SchoolSettings>);
       }
 

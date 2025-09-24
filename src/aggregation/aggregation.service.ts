@@ -297,11 +297,13 @@ export class AggregationService {
 
   async recomputeStudent(courseId: string, termId: string, studentUuid: string){
     const scheme = await this.schemeRepo.findOne({ where: { courseId, termId }, relations:['components'] });
-    if(!scheme) return; // cannot compute
+    if(!scheme) {
+      return; // cannot compute
+    }
 
     const grades = await this.examGradeRepo.find({ where: { courseId, termId, studentId: studentUuid } });
-    // Group grades by examType via exam join (optimize later)
-    // For now assume examType present in exam entity
+    
+    // Group grades by examType via exam join
     const examIds = grades.map(g=> g.examId);
     const exams = examIds.length ? await this.examRepo.find({ where: { id: In(examIds) } }) : [];
     const examMap = new Map(exams.map(e=> [e.id, e]));
@@ -313,11 +315,12 @@ export class AggregationService {
     let allRequiredCompleted = true;
 
     for(const comp of scheme.components){
+      
       // Collect percentages of exams matching componentType
       const compGrades = grades.filter(gr => {
         const ex = examMap.get(gr.examId); 
         if(!ex) return false;
-        const exNorm = this.normalizeExamType(ex.examType) || ex.examType; // fall back to original for non mid/end components
+        const exNorm = this.normalizeExamType(ex.examType) || ex.examType;
         return exNorm === comp.componentType; 
       });
       
@@ -361,16 +364,12 @@ export class AggregationService {
     }
 
     // Progressive calculation: Always show current progress based on available components
-    if(hasAnyGrades && totalAvailableWeight > 0) {
-      // Calculate progressive percentage based on available components
-      // Option 1: Scale up current score to full weight (more optimistic)
-      // Option 2: Use current score as-is (more conservative)
-      // Using Option 1 for better user experience
-      const progressivePct = (totalWeightedScore / totalAvailableWeight) * 100;
-      const finalPct = parseFloat(progressivePct.toFixed(2));
+    if(hasAnyGrades && totalWeightedScore >= 0) {
+      // Use actual weighted score as the progressive percentage
+      const finalPct = parseFloat(totalWeightedScore.toFixed(2));
       const passThreshold = scheme.passThreshold ?? 50;
       
-      result.finalPercentage = finalPct.toFixed(2);
+      result.finalPercentage = finalPct.toString();
       result.finalGradeCode = this.gradingScale(finalPct);
       result.pass = finalPct >= passThreshold;
       result.breakdown = breakdown;
@@ -382,7 +381,7 @@ export class AggregationService {
         result.computedAt = new Date();
       } else {
         result.status = AggregatedResultStatus.PENDING;
-        result.computedAt = new Date(); // Still computed, just pending more components
+        result.computedAt = new Date();
       }
     } else {
       // No grades available yet
