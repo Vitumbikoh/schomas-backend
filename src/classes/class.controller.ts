@@ -10,11 +10,14 @@ import {
   Get,
   Request,
   Query,
+  Put,
+  Patch,
+  Param,
 } from '@nestjs/common';
 import { ClassService } from './class.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
-import { ClassResponseDto, CreateClassDto } from './dtos/class.dto';
+import { ClassResponseDto, CreateClassDto, UpdateClassDto } from './dtos/class.dto';
 import { Role } from 'src/user/enums/role.enum';
 
 @Controller('classes')
@@ -53,5 +56,39 @@ export class ClassController {
     const schoolScope = isSuper ? (schoolIdOverride || req.user?.schoolId) : req.user?.schoolId;
     
     return this.classService.getAllClasses(schoolScope, isElevated);
+  }
+
+  @Put(':id')
+  @UseGuards(JwtAuthGuard)
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async updateClass(@Param('id') id: string, @Body() updateClassDto: UpdateClassDto, @Request() req) {
+    const schoolId = req.user?.schoolId;
+    const updated = await this.classService.updateClass(id, updateClassDto, schoolId);
+    await this.systemLoggingService.logAction({
+      action: 'CLASS_UPDATED',
+      module: 'CLASS',
+      level: 'info',
+      entityId: updated.id,
+      entityType: 'Class',
+      oldValues: {}, // Could be improved to track changes
+      newValues: updated as any
+    });
+    return updated;
+  }
+
+  @Patch(':id/deactivate')
+  @UseGuards(JwtAuthGuard)
+  async deactivateClass(@Param('id') id: string, @Request() req) {
+    const schoolId = req.user?.schoolId;
+    const updated = await this.classService.deactivateClass(id, schoolId);
+    await this.systemLoggingService.logAction({
+      action: 'CLASS_DEACTIVATED',
+      module: 'CLASS',
+      level: 'info',
+      entityId: updated.id,
+      entityType: 'Class',
+      newValues: updated as any
+    });
+    return updated;
   }
 }

@@ -756,8 +756,14 @@ export class PayrollService {
   async createPayComponent(dto: CreatePayComponentDto, user: any): Promise<PayComponent> {
     if (!user?.schoolId) throw new ForbiddenException('schoolId required');
     
+    // Generate unique code from name and department
+    let code = dto.name.toUpperCase().replace(/\s+/g, '_');
+    if (dto.department) {
+      code = `${code}_${dto.department.toUpperCase().replace(/\s+/g, '_')}`;
+    }
+    
     const component = this.compRepo.create({
-      code: dto.name.toUpperCase().replace(/\s+/g, '_'), // Generate code from name
+      code: code,
       name: dto.name,
       type: dto.type as any, // Cast to match entity type
       taxable: dto.type !== 'DEDUCTION', // Basic and allowances are taxable
@@ -792,6 +798,17 @@ export class PayrollService {
 
   async updatePayComponent(id: string, dto: any, user: any): Promise<PayComponent> {
     const component = await this.getPayComponent(id, user.schoolId);
+    
+    // If name or department is being updated, regenerate the code
+    if (dto.name || dto.department !== undefined) {
+      let code = (dto.name || component.name).toUpperCase().replace(/\s+/g, '_');
+      const dept = dto.department !== undefined ? dto.department : component.department;
+      if (dept) {
+        code = `${code}_${dept.toUpperCase().replace(/\s+/g, '_')}`;
+      }
+      dto.code = code;
+    }
+    
     Object.assign(component, dto);
     await this.compRepo.save(component);
     

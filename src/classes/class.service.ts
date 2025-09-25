@@ -1,8 +1,8 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Class } from './entity/class.entity';
-import { ClassResponseDto, CreateClassDto } from './dtos/class.dto';
+import { ClassResponseDto, CreateClassDto, UpdateClassDto } from './dtos/class.dto';
 
 @Injectable()
 export class ClassService {
@@ -58,6 +58,7 @@ export class ClassService {
       name: savedClass.name,
       numericalName: savedClass.numericalName,
       description: savedClass.description || null,
+      isActive: savedClass.isActive,
       createdAt: savedClass.createdAt,
       updatedAt: savedClass.updatedAt,
     };
@@ -83,9 +84,78 @@ export class ClassService {
       name: classItem.name,
       numericalName: classItem.numericalName,
       description: classItem.description || null,
+      isActive: classItem.isActive,
       createdAt: classItem.createdAt,
       updatedAt: classItem.updatedAt
     }));
   }
-  
+
+  async updateClass(id: string, updateClassDto: UpdateClassDto, schoolId?: string): Promise<ClassResponseDto> {
+    const classEntity = await this.classRepository.findOne({ where: { id, schoolId } });
+    if (!classEntity) {
+      throw new NotFoundException('Class not found');
+    }
+
+    // Check for duplicates if name or numericalName is being updated
+    if (updateClassDto.name || updateClassDto.numericalName !== undefined) {
+      const qb = this.classRepository
+        .createQueryBuilder('class')
+        .where('class.id != :id', { id });
+
+      if (updateClassDto.name) {
+        qb.andWhere('LOWER(class.name) = LOWER(:name)', { name: updateClassDto.name.trim() });
+      }
+      if (updateClassDto.numericalName !== undefined) {
+        qb.andWhere('class.numericalName = :numericalName', { numericalName: updateClassDto.numericalName });
+      }
+      if (schoolId) {
+        qb.andWhere('class.schoolId = :schoolId', { schoolId });
+      } else {
+        qb.andWhere('class.schoolId IS NULL');
+      }
+
+      const existingClass = await qb.getOne();
+      if (existingClass) {
+        throw new BadRequestException('Class name or numerical name already exists');
+      }
+    }
+
+    // Update fields
+    if (updateClassDto.name) classEntity.name = updateClassDto.name.trim();
+    if (updateClassDto.numericalName !== undefined) classEntity.numericalName = updateClassDto.numericalName;
+    if (updateClassDto.description !== undefined) classEntity.description = updateClassDto.description?.trim();
+    if (updateClassDto.isActive !== undefined) classEntity.isActive = updateClassDto.isActive;
+
+    const savedClass = await this.classRepository.save(classEntity);
+
+    return {
+      id: savedClass.id,
+      name: savedClass.name,
+      numericalName: savedClass.numericalName,
+      description: savedClass.description || null,
+      isActive: savedClass.isActive,
+      createdAt: savedClass.createdAt,
+      updatedAt: savedClass.updatedAt
+    };
+  }
+
+  async deactivateClass(id: string, schoolId?: string): Promise<ClassResponseDto> {
+    const classEntity = await this.classRepository.findOne({ where: { id, schoolId } });
+    if (!classEntity) {
+      throw new NotFoundException('Class not found');
+    }
+
+    classEntity.isActive = false;
+    const savedClass = await this.classRepository.save(classEntity);
+
+    return {
+      id: savedClass.id,
+      name: savedClass.name,
+      numericalName: savedClass.numericalName,
+      description: savedClass.description || null,
+      isActive: savedClass.isActive,
+      createdAt: savedClass.createdAt,
+      updatedAt: savedClass.updatedAt
+    };
+  }
 }
