@@ -670,6 +670,7 @@ export class TeachersService {
     limit: number,
     search?: string,
     includeExams: boolean = false,
+    classId?: string,
   ): Promise<{ courses: any[]; total: number }> {
     console.log(
       `Fetching courses for teacher ID: ${teacherId}, includeExams: ${includeExams}`,
@@ -695,6 +696,10 @@ export class TeachersService {
 
     if (search) {
       where.name = Like(`%${search}%`);
+    }
+
+    if (classId && classId.trim() !== '') {
+      where.class = { id: classId };
     }
 
     const relations = ['enrollments', 'class'];

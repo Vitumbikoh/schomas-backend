@@ -479,6 +479,7 @@ export class TeacherController {
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
     @Query('search') search?: string,
+    @Query('classId') classId?: string,
     @Query('includeExams') includeExams?: string,
   ) {
     try {
@@ -510,6 +511,7 @@ export class TeacherController {
         limitNum,
         search,
         shouldIncludeExams,
+        classId,
       );
       console.log(`Total courses found: ${total}`);
 
