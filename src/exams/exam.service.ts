@@ -426,6 +426,52 @@ async getExamCountByCourse(courseIds: string[], schoolId?: string, superAdmin = 
   return examCountMap;
 }
 
+  async getUngradedExamCountByCourse(courseIds: string[], schoolId?: string, superAdmin = false): Promise<Map<string, number>> {
+    if (!courseIds || courseIds.length === 0) {
+      console.log('No course IDs provided for ungraded exam count query');
+      return new Map<string, number>();
+    }
+
+    console.log('Querying ungraded exam counts for course IDs:', courseIds);
+
+    const params: any = { courseIds };
+    let sql = `SELECT "courseId", COUNT(id) AS "ungradedExamCount" FROM exam WHERE "courseId" = ANY($1) AND status != 'graded'`;
+    if (!superAdmin) {
+      if (schoolId) {
+        sql += ' AND "schoolId" = $2';
+        params.schoolId = schoolId;
+      } else {
+        return new Map<string, number>();
+      }
+    } else if (schoolId) {
+      sql += ' AND "schoolId" = $2';
+      params.schoolId = schoolId;
+    }
+    sql += ' GROUP BY "courseId"';
+
+    // Build parameter array preserving order
+    const paramArray = [courseIds];
+    if (params.schoolId) paramArray.push(params.schoolId);
+
+    const ungradedExamCounts = await this.examRepository.query(sql, paramArray);
+
+    console.log('Raw ungraded exam counts:', ungradedExamCounts);
+
+    const ungradedExamCountMap = new Map<string, number>();
+    ungradedExamCounts.forEach((ec: any) => {
+      ungradedExamCountMap.set(ec.courseId, parseInt(ec.ungradedExamCount));
+    });
+
+    courseIds.forEach((courseId) => {
+      if (!ungradedExamCountMap.has(courseId)) {
+        ungradedExamCountMap.set(courseId, 0);
+      }
+    });
+
+    console.log('Ungraded exam count map:', Array.from(ungradedExamCountMap.entries()));
+    return ungradedExamCountMap;
+  }
+
   async getDistinctTerms(): Promise<string[]> {
     // Get all terms with their calendar relations
     const Terms = await this.termRepository.find({

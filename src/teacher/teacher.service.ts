@@ -731,16 +731,22 @@ export class TeachersService {
 
     // Get exam counts as a fallback
     let examCountMap = new Map<string, number>();
+    let ungradedExamCountMap = new Map<string, number>();
     if (includeExams) {
       const courseIds = courses.map((c) => c.id);
       console.log('Course IDs for exam count query:', courseIds);
-  examCountMap = await this.examService.getExamCountByCourse(courseIds, teacher.schoolId, false);
+      examCountMap = await this.examService.getExamCountByCourse(courseIds, teacher.schoolId, false);
+      ungradedExamCountMap = await this.examService.getUngradedExamCountByCourse(courseIds, teacher.schoolId, false);
       console.log('Exam count map:', Array.from(examCountMap.entries()));
+      console.log('Ungraded exam count map:', Array.from(ungradedExamCountMap.entries()));
     }
 
     const formattedCourses = courses.map((course) => {
       const examsCount = includeExams
         ? examCountMap.get(course.id) || course.exams?.length || 0
+        : 0;
+      const ungradedExamsCount = includeExams
+        ? ungradedExamCountMap.get(course.id) || 0
         : 0;
       return {
         id: course.id,
@@ -756,6 +762,8 @@ export class TeachersService {
           : null,
         exams: includeExams ? course.exams || [] : undefined,
         examsCount,
+        ungradedExamsCount,
+        hasUngradedExams: ungradedExamsCount > 0,
         createdAt: course.createdAt,
         updatedAt: course.updatedAt,
       };

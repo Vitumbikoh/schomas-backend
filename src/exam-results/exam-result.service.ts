@@ -51,13 +51,15 @@ export class ExamResultService {
     }
 
     // Build query for student's exam results
+    // Include both COMPLETE and PENDING results to show progressive calculations
     let query = this.examResultRepository
       .createQueryBuilder('er')
-      .leftJoinAndSelect('er.student', 'student')
+      .leftJoinAndSelect('er.student', 'student')  
       .leftJoinAndSelect('er.course', 'course')
       .leftJoinAndSelect('er.term', 'term')
       .where('er.studentId = :studentId', { studentId })
-      .andWhere('er.status = :status', { status: 'COMPLETE' });
+      .andWhere('er.status IN (:...statuses)', { statuses: ['COMPLETE', 'PENDING'] })
+      .andWhere('er.finalPercentage IS NOT NULL'); // Only show results that have been calculated
 
     // Add filtering conditions
     if (student.schoolId) {
@@ -172,6 +174,7 @@ export class ExamResultService {
     }
 
     // Get all exam results for students in this class
+    // Include both COMPLETE and PENDING results to show progressive calculations
     let query = this.examResultRepository
       .createQueryBuilder('er')
       .leftJoinAndSelect('er.student', 'student')
@@ -180,7 +183,8 @@ export class ExamResultService {
       .where('student.id IN (:...studentIds)', { 
         studentIds: classEntity.students.map(s => s.id)
       })
-      .andWhere('er.status = :status', { status: 'COMPLETE' });
+      .andWhere('er.status IN (:...statuses)', { statuses: ['COMPLETE', 'PENDING'] })
+      .andWhere('er.finalPercentage IS NOT NULL'); // Only show results that have been calculated
 
     // Add filtering conditions
     if (schoolId) {
