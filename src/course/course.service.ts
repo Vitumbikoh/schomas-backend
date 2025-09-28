@@ -374,12 +374,25 @@ export class CourseService {
               try {
                 const simplified = rawClass.toLowerCase();
                 const numCandidate = parseInt(simplified.replace(/[^0-9]/g, ''), 10);
+                
+                // Try multiple variations of the class name
+                const nameVariations = [
+                  simplified, // "form one"
+                  rawClass,   // "Form one"
+                  simplified.replace('one', '1').replace('two', '2').replace('three', '3').replace('four', '4').replace('five', '5'), // "form 1"
+                  rawClass.replace('one', '1').replace('two', '2').replace('three', '3').replace('four', '4').replace('five', '5'), // "Form 1"
+                ];
+
+                let classEntity: any = null;
 
                 // Try direct case-insensitive name match first
-                let classEntity = await this.classRepository.createQueryBuilder('c')
-                  .where('LOWER(c.name) = :name', { name: simplified })
-                  .andWhere(schoolId ? 'c.schoolId = :sid' : '1=1', schoolId ? { sid: schoolId } : {})
-                  .getOne();
+                for (const nameVar of nameVariations) {
+                  classEntity = await this.classRepository.createQueryBuilder('c')
+                    .where('LOWER(c.name) = :name', { name: nameVar })
+                    .andWhere(schoolId ? 'c.schoolId = :sid' : '1=1', schoolId ? { sid: schoolId } : {})
+                    .getOne();
+                  if (classEntity) break;
+                }
 
                 // Fallback: if not found and we have a numeric part, try numericalName
                 if (!classEntity && !isNaN(numCandidate)) {
@@ -400,8 +413,32 @@ export class CourseService {
                 if (classEntity) {
                   normalized.classId = classEntity.id;
                 } else {
-                  this.logger.warn(`Class '${rawClass}' not found for course ${normalized.code} at line ${lineNumber}`);
-                  // Don't fail the import for missing class, just log warning
+                  // Try to create the class if it doesn't exist
+                  try {
+                    // Extract numerical name from class name (e.g., "Form 3" -> 3, "Grade 3" -> 3)
+                    const numMatch = rawClass.match(/(\d+)/);
+                    const numericalName = numMatch ? parseInt(numMatch[1], 10) : 
+                      (rawClass.toLowerCase().includes('one') ? 1 :
+                       rawClass.toLowerCase().includes('two') ? 2 :
+                       rawClass.toLowerCase().includes('three') ? 3 :
+                       rawClass.toLowerCase().includes('four') ? 4 :
+                       rawClass.toLowerCase().includes('five') ? 5 : 1);
+
+                    // Create the class
+                    const newClass = this.classRepository.create({
+                      name: rawClass,
+                      numericalName,
+                      description: `Auto-created class for course import`,
+                      schoolId,
+                      isActive: true
+                    });
+                    const savedClass = await this.classRepository.save(newClass);
+                    normalized.classId = savedClass.id;
+                    this.logger.log(`Created new class '${rawClass}' for course ${normalized.code}`);
+                  } catch (createError) {
+                    this.logger.error(`Failed to create class '${rawClass}': ${createError.message}`);
+                    // Continue without classId
+                  }
                 }
               } catch (e) {
                 this.logger.error(`Error looking up class '${rawClass}': ${e.message}`);
@@ -494,5 +531,65 @@ export class CourseService {
       this.logger.error(`Bulk create failed: ${e.message}`);
       throw new BadRequestException('Failed to process uploaded file: ' + e.message);
     }
+  }
+
+  async updateExistingCoursesClassIds(schoolId?: string) {
+    // Find courses that don't have classId set
+    const coursesWithoutClass = await this.courseRepository.find({
+      where: {
+        classId: null as any,
+        ...(schoolId && { schoolId })
+      }
+    });
+
+    this.logger.log(`Found ${coursesWithoutClass.length} courses without classId`);
+
+    for (const course of coursesWithoutClass) {
+      // Try to determine class from course name or code
+      const courseName = course.name.toLowerCase();
+      const courseCode = course.code.toLowerCase();
+      
+      let className = '';
+      let numericalName = 1;
+
+      // Try to extract class info from course name/code
+      if (courseName.includes('form 1') || courseCode.includes('101')) {
+        className = 'Form one';
+        numericalName = 1;
+      } else if (courseName.includes('form 2') || courseCode.includes('201')) {
+        className = 'Form two';
+        numericalName = 2;
+      } else if (courseName.includes('form 3') || courseCode.includes('301')) {
+        className = 'Form Three';
+        numericalName = 3;
+      }
+
+      if (className) {
+        // Find or create the class
+        let classEntity = await this.classRepository.findOne({
+          where: {
+            name: className,
+            ...(schoolId && { schoolId })
+          }
+        });
+
+        if (!classEntity) {
+          classEntity = await this.classRepository.save({
+            name: className,
+            numericalName,
+            description: `Auto-created class`,
+            schoolId,
+            isActive: true
+          });
+          this.logger.log(`Created class '${className}'`);
+        }
+
+        // Update the course
+        await this.courseRepository.update(course.id, { classId: classEntity.id });
+        this.logger.log(`Updated course ${course.code} with classId ${classEntity.id}`);
+      }
+    }
+
+    return { updated: coursesWithoutClass.length };
   }
 }

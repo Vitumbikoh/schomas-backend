@@ -401,6 +401,19 @@ async getAllCourses(
     return res.send(buffer);
   }
 
+  @Post('fix-class-ids')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Fix class IDs for existing courses that don\'t have them set' })
+  @ApiResponse({ status: 200, description: 'Class IDs updated successfully' })
+  async fixClassIds(@Request() req) {
+    const result = await this.courseService.updateExistingCoursesClassIds(req.user?.schoolId);
+    return {
+      success: true,
+      ...result,
+      message: `Updated class IDs for ${result.updated} courses`
+    };
+  }
+
   @Post(':courseId/assign-teacher')
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Assign a teacher to a course' })

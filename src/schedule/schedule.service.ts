@@ -7,7 +7,7 @@ import { Teacher } from 'src/user/entities/teacher.entity';
 import { Classroom } from 'src/classroom/entity/classroom.entity';
 import { Class } from 'src/classes/entity/class.entity';
 import { getDayName } from 'src/common/utils/date-utils';
-import { CreateScheduleDto, UpdateScheduleDto, WeeklyTimetableResponse, UpsertWeeklyGridDto, GridItemDto, ConflictValidationResult, ExportScheduleCsvDto } from './dtos/schedule.dto';
+import { CreateScheduleDto, UpdateScheduleDto, WeeklyTimetableResponse, UpsertWeeklyGridDto, GridItemDto, ConflictValidationResult, ExportScheduleCsvDto, BulkImportScheduleDto } from './dtos/schedule.dto';
 import * as XLSX from 'xlsx';
 
 @Injectable()
@@ -729,15 +729,49 @@ export class ScheduleService {
     for (let idx = 0; idx < rows.length; idx++) {
       const r = rows[idx];
       try {
+        // Lookup class by name
+        const classEntity = await this.classRepository.findOne({
+          where: { name: r.className, schoolId }
+        });
+        if (!classEntity) {
+          throw new Error(`Class "${r.className}" not found`);
+        }
+
+        // Lookup course by code
+        const courseEntity = await this.courseRepository.findOne({
+          where: { code: r.courseCode, schoolId },
+          relations: ['teacher']
+        });
+        if (!courseEntity) {
+          throw new Error(`Course "${r.courseCode}" not found`);
+        }
+
+        // Get teacher from course
+        if (!courseEntity.teacherId) {
+          throw new Error(`Course "${r.courseCode}" has no assigned teacher`);
+        }
+
+        // Lookup classroom by name if provided
+        let classroomId: string | undefined;
+        if (r.classroomName && r.classroomName.trim()) {
+          const classroomEntity = await this.classroomRepository.findOne({
+            where: { name: r.classroomName.trim() }
+          });
+          if (classroomEntity) {
+            classroomId = classroomEntity.id;
+          }
+          // If classroom not found, just skip it (optional field)
+        }
+
         const dto: CreateScheduleDto = {
-          classId: r.classId,
+          classId: classEntity.id,
           date: r.date,
           day: r.day,
           startTime: r.startTime,
           endTime: r.endTime,
-          courseId: r.courseId,
-          teacherId: r.teacherId,
-          classroomId: r.classroomId || undefined,
+          courseId: courseEntity.id,
+          teacherId: courseEntity.teacherId,
+          classroomId: classroomId,
           isActive: r.isActive !== 'false',
         };
         await this.create(dto, schoolId);

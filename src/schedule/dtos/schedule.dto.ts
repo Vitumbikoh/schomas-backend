@@ -185,6 +185,37 @@ export class ScheduleTemplateDto {
   days?: string[];
 }
 
+export class BulkImportScheduleDto {
+  @IsNotEmpty()
+  @IsString()
+  className: string;
+
+  @IsNotEmpty()
+  @IsString()
+  @IsIn(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])
+  day: string;
+
+  @IsNotEmpty()
+  @IsString()
+  startTime: string; // HH:mm
+
+  @IsNotEmpty()
+  @IsString()
+  endTime: string; // HH:mm
+
+  @IsNotEmpty()
+  @IsString()
+  courseCode: string;
+
+  @IsOptional()
+  @IsString()
+  classroomName?: string; // optional room name
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
 export type WeeklyTimetableResponse = {
   classId: string;
   days: Array<{
