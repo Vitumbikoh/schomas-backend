@@ -409,11 +409,12 @@ export class AggregationService {
     return this.schemeRepo.findOne({ where: { courseId, termId }, relations:['components'] });
   }
 
-  async listSchemesForTeacher(teacherUserId: string, termId?: string){
+  async listSchemesForTeacher(teacherUserId: string, termId?: string, courseId?: string){
     const teacher = await this.teacherRepo.findOne({ where: { userId: teacherUserId } });
     if(!teacher) return [];
     const where: any = { teacherId: teacher.id };
     if(termId) where.termId = termId;
+    if(courseId) where.courseId = courseId;
     return this.schemeRepo.find({ where, relations:['components'] });
   }
 }

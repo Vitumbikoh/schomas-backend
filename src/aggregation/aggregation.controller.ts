@@ -32,7 +32,7 @@ export class AggregationController {
   }
 
   @Get('schemes')
-  async listSchemes(@Query('termId') termId: string, @Req() req: any){
-    return this.aggService.listSchemesForTeacher(req.user?.id, termId);
+  async listSchemes(@Query('courseId') courseId: string, @Query('termId') termId: string, @Req() req: any){
+    return this.aggService.listSchemesForTeacher(req.user?.id, termId, courseId);
   }
 }
