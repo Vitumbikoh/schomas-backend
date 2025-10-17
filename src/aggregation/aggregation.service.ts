@@ -1,8 +1,8 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
-import { CourseTermGradeScheme, CourseTermGradeComponent, ExamGradeRecord, ExamResultAggregate, AssessmentComponentType, AggregatedResultStatus } from './aggregation.entity';
-import { CreateOrUpdateSchemeDto, RecordExamGradeDto } from './dto';
+import { CourseTermGradeScheme, CourseTermGradeComponent, ExamGradeRecord, ExamResultAggregate, DefaultWeightingScheme, DefaultWeightingComponent, AssessmentComponentType, AggregatedResultStatus } from './aggregation.entity';
+import { CreateOrUpdateSchemeDto, CreateOrUpdateDefaultSchemeDto, RecordExamGradeDto } from './dto';
 import { Course } from '../course/entities/course.entity';
 import { Exam } from '../exams/entities/exam.entity';
 import { Student } from '../user/entities/student.entity';
@@ -14,6 +14,8 @@ export class AggregationService {
   constructor(
     @InjectRepository(CourseTermGradeScheme) private schemeRepo: Repository<CourseTermGradeScheme>,
     @InjectRepository(CourseTermGradeComponent) private componentRepo: Repository<CourseTermGradeComponent>,
+    @InjectRepository(DefaultWeightingScheme) private defaultSchemeRepo: Repository<DefaultWeightingScheme>,
+    @InjectRepository(DefaultWeightingComponent) private defaultComponentRepo: Repository<DefaultWeightingComponent>,
     @InjectRepository(ExamGradeRecord) private examGradeRepo: Repository<ExamGradeRecord>,
     @InjectRepository(ExamResultAggregate) private resultRepo: Repository<ExamResultAggregate>,
     @InjectRepository(Course) private courseRepo: Repository<Course>,
@@ -405,8 +407,36 @@ export class AggregationService {
     return this.resultRepo.findOne({ where: { courseId, termId, studentId } });
   }
 
-  async getScheme(courseId: string, termId: string){
-    return this.schemeRepo.findOne({ where: { courseId, termId }, relations:['components'] });
+  async getScheme(courseId: string, termId: string) {
+    // First try to find a course-specific scheme
+    let scheme = await this.schemeRepo.findOne({
+      where: { courseId, termId },
+      relations: ['components']
+    });
+
+    if (!scheme) {
+      // Fall back to default scheme for this school
+      const course = await this.courseRepo.findOne({ where: { id: courseId } });
+      if (course?.schoolId) {
+        const defaultScheme = await this.getDefaultScheme(course.schoolId);
+        if (defaultScheme) {
+          // Convert DefaultWeightingScheme to CourseTermGradeScheme format for compatibility
+          return {
+            ...defaultScheme,
+            courseId: courseId,
+            course: course,
+            teacherId: defaultScheme.createdByTeacherId,
+            teacher: defaultScheme.createdBy,
+            components: defaultScheme.components.map(c => ({
+              ...c,
+              scheme: null // Avoid circular reference
+            }))
+          } as any;
+        }
+      }
+    }
+
+    return scheme;
   }
 
   async listSchemesForTeacher(teacherUserId: string, termId?: string, courseId?: string){
@@ -417,4 +447,86 @@ export class AggregationService {
     if(courseId) where.courseId = courseId;
     return this.schemeRepo.find({ where, relations:['components'] });
   }
+
+  // Admin methods for managing default schemes
+  async createOrUpdateDefaultScheme(dto: CreateOrUpdateDefaultSchemeDto, adminUserId: string, schoolId: string) {
+    // For default schemes, we don't need to find the admin in teacher table
+    // The JWT guard and roles guard already validate the user has ADMIN role
+    // and the controller validates they have a schoolId
+
+    if(!dto.components || dto.components.length === 0) throw new BadRequestException('Components required');
+    const sum = dto.components.reduce((s,c)=> s + c.weight, 0);
+    if(sum !== 100) throw new BadRequestException('Weights must sum to 100');
+
+    const dup = new Set<string>();
+    for(const c of dto.components){
+      if(dup.has(c.componentType)) throw new BadRequestException('Duplicate component '+c.componentType);
+      dup.add(c.componentType);
+    }
+
+    // Find or create default scheme for this school (only one per school)
+    let scheme = await this.defaultSchemeRepo.findOne({ 
+      where: { schoolId }, 
+      relations:['components'] 
+    });
+
+    if(!scheme){
+      // Get current term for the school to associate with the default scheme
+      const currentTerm = await this.termRepo.findOne({ 
+        where: { schoolId, isCurrent: true } 
+      });
+      
+      scheme = this.defaultSchemeRepo.create({ 
+        schoolId: schoolId,
+        termId: currentTerm?.id || null,
+        createdByTeacherId: null, // School admins are not teachers
+        passThreshold: dto.passThreshold ?? null, 
+        totalWeight: sum, 
+        version: 1, 
+        components: [] 
+      });
+    } else {
+      // Update the existing scheme
+      scheme.passThreshold = dto.passThreshold ?? scheme.passThreshold ?? null;
+      scheme.totalWeight = sum;
+      scheme.createdByTeacherId = null; // School admins are not teachers
+      scheme.version += 1;
+      // Remove previous components
+      await this.defaultComponentRepo.delete({ schemeId: scheme.id });
+      scheme.components = [];
+    }
+
+    // Persist base scheme first (to get id)
+    scheme = await this.defaultSchemeRepo.save(scheme);
+
+    const components = dto.components.map(c=> this.defaultComponentRepo.create({ 
+      schemeId: scheme.id, 
+      componentType: c.componentType, 
+      weight: c.weight, 
+      required: c.required ?? true 
+    }));
+    await this.defaultComponentRepo.save(components);
+    scheme.components = components;
+
+    return scheme;
+  }
+
+  async getDefaultScheme(schoolId: string, termId?: string) {
+    // Since there's only one default scheme per school, we don't need termId
+    return this.defaultSchemeRepo.findOne({
+      where: { schoolId },
+      relations: ['components']
+    });
+  }
+
+  async listDefaultSchemes(schoolId: string) {
+    // Returns array with at most one element since there's only one default scheme per school
+    const defaultScheme = await this.defaultSchemeRepo.findOne({
+      where: { schoolId },
+      relations: ['components', 'term']
+    });
+    
+    return defaultScheme ? [defaultScheme] : [];
+  }
+
 }

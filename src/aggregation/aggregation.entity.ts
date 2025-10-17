@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, OneToMany, Unique, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, OneToMany, Unique, Index, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { Course } from '../course/entities/course.entity';
 import { Term } from '../settings/entities/term.entity';
 import { Teacher } from '../user/entities/teacher.entity';
@@ -83,4 +83,34 @@ export class ExamResultAggregate {
   @Column({ type:'timestamptz', nullable:true }) computedAt: Date | null;
   @CreateDateColumn() createdAt: Date;
   @UpdateDateColumn() updatedAt: Date;
+}
+
+@Entity('default_weighting_scheme')
+@Unique(['schoolId']) // One default scheme per school
+export class DefaultWeightingScheme {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Column({ type:'uuid' }) schoolId: string;
+  @ManyToOne(()=>School,{ onDelete:'CASCADE'}) @JoinColumn({name:'schoolId'}) school: School;
+  @Column({ type:'uuid', nullable: true }) termId: string | null;
+  @ManyToOne(()=>Term,{ onDelete:'CASCADE'}) @JoinColumn({name:'termId'}) term: Term;
+  @Column({ type:'uuid', nullable:true }) createdByTeacherId: string | null; // admin who created it
+  @ManyToOne(()=>Teacher,{ onDelete:'SET NULL'}) @JoinColumn({name:'createdByTeacherId'}) createdBy: Teacher;
+  @OneToMany(()=>DefaultWeightingComponent,c=>c.scheme,{ cascade:true, eager:true }) components: DefaultWeightingComponent[];
+  @Column({ type:'int', default:0 }) totalWeight: number;
+  @Column({ type:'int', nullable:true }) passThreshold: number | null; // percentage based
+  @Column({ default:false }) isLocked: boolean;
+  @Column({ type:'int', default:1 }) version: number;
+  @CreateDateColumn() createdAt: Date;
+  @UpdateDateColumn() updatedAt: Date;
+}
+
+@Entity('default_weighting_component')
+@Unique(['schemeId','componentType'])
+export class DefaultWeightingComponent {
+  @PrimaryGeneratedColumn('uuid') id: string;
+  @Column({ type:'uuid' }) schemeId: string;
+  @ManyToOne(()=>DefaultWeightingScheme, s=>s.components, { onDelete:'CASCADE'}) @JoinColumn({name:'schemeId'}) scheme: DefaultWeightingScheme;
+  @Column({ type:'enum', enum: AssessmentComponentType }) componentType: AssessmentComponentType;
+  @Column({ type:'int' }) weight: number; // must sum to 100 in scheme
+  @Column({ type:'boolean', default:true }) required: boolean;
 }
