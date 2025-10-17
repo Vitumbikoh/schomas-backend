@@ -10,34 +10,55 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 export class AggregationController {
   constructor(private readonly aggService: AggregationService) {}
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
   @Post('scheme')
   async createOrUpdateScheme(@Body() dto: CreateOrUpdateSchemeDto, @Req() req: any){
-    return this.aggService.createOrUpdateScheme(dto, req.user?.id, req.user?.schoolId);
+    return this.aggService.createOrUpdateScheme(dto, req.user?.sub, req.user?.schoolId);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
   @Post('exam-grade')
   async recordExamGrade(@Body() dto: RecordExamGradeDto, @Req() req: any){
-    return this.aggService.recordExamGrade(dto, req.user?.id, req.user?.schoolId);
+    return this.aggService.recordExamGrade(dto, req.user?.sub, req.user?.schoolId);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.TEACHER)
   @Get('results')
-  async getResults(@Query('courseId') courseId: string, @Query('termId') termId: string){
+  async getResults(@Query('courseId') courseId: string, @Query('termId') termId: string, @Req() req: any){
+    if (req.user?.role === Role.TEACHER) {
+      return this.aggService.getResultsForCourseTermForTeacher(req.user?.sub, req.user?.schoolId, courseId, termId);
+    }
     return this.aggService.getResultsForCourseTerm(courseId, termId);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.TEACHER)
   @Get('result')
-  async getResult(@Query('courseId') courseId: string, @Query('termId') termId: string, @Query('studentId') studentId: string){
+  async getResult(@Query('courseId') courseId: string, @Query('termId') termId: string, @Query('studentId') studentId: string, @Req() req: any){
+    if (req.user?.role === Role.TEACHER) {
+      return this.aggService.getStudentResultForTeacher(req.user?.sub, req.user?.schoolId, courseId, termId, studentId);
+    }
     return this.aggService.getStudentResult(courseId, termId, studentId);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.TEACHER)
   @Get('scheme')
-  async getScheme(@Query('courseId') courseId: string, @Query('termId') termId: string){
+  async getScheme(@Query('courseId') courseId: string, @Query('termId') termId: string, @Req() req: any){
+    if (req.user?.role === Role.TEACHER) {
+      return this.aggService.getSchemeForTeacher(req.user?.sub, req.user?.schoolId, courseId, termId);
+    }
     return this.aggService.getScheme(courseId, termId);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
   @Get('schemes')
   async listSchemes(@Query('courseId') courseId: string, @Query('termId') termId: string, @Req() req: any){
-    return this.aggService.listSchemesForTeacher(req.user?.id, termId, courseId);
+    return this.aggService.listSchemesForTeacher(req.user?.sub, termId, courseId);
   }
 
   // Admin endpoints for default schemes

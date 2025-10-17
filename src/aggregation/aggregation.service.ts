@@ -407,6 +407,47 @@ export class AggregationService {
     return this.resultRepo.findOne({ where: { courseId, termId, studentId } });
   }
 
+  // Secure variants for teachers - enforce ownership and school boundary
+  private async ensureTeacherOwnsCourse(teacherUserId: string, schoolId: string | undefined, courseId: string, termId?: string) {
+    const teacher = await this.teacherRepo.findOne({ where: { userId: teacherUserId } });
+    if (!teacher) throw new ForbiddenException('Teacher profile not found');
+
+    const course = await this.courseRepo.findOne({ where: { id: courseId }, relations: ['teacher', 'exams', 'exams.teacher', 'class'] });
+    if (!course) throw new NotFoundException('Course not found');
+    if (schoolId && course.schoolId && course.schoolId !== schoolId) {
+      throw new ForbiddenException('Cross-school access');
+    }
+
+    let owns = false;
+    // direct assignment
+    if (course.teacherId === teacher.id || course.teacher?.id === teacher.id) owns = true;
+    // legacy mistaken userId in teacherId
+    if (!owns && (course as any).teacherId === teacher.userId) owns = true;
+    if (!owns && course.teacher?.userId === teacherUserId) owns = true;
+    // any exam in the course owned by teacher
+    if (!owns && course.exams?.some(ex => ex.teacher?.id === teacher.id)) owns = true;
+    // class teacher owns
+    if (!owns && (course as any).class?.teacherId === teacher.id) owns = true;
+    // existing scheme for this term created by this teacher
+    if (!owns && termId) {
+      const existingScheme = await this.schemeRepo.findOne({ where: { courseId, termId } });
+      if (existingScheme && existingScheme.teacherId === teacher.id) owns = true;
+    }
+
+    if (!owns) throw new ForbiddenException('Not course owner');
+    return { teacher, course };
+  }
+
+  async getResultsForCourseTermForTeacher(teacherUserId: string, schoolId: string | undefined, courseId: string, termId: string){
+    await this.ensureTeacherOwnsCourse(teacherUserId, schoolId, courseId, termId);
+    return this.getResultsForCourseTerm(courseId, termId);
+  }
+
+  async getStudentResultForTeacher(teacherUserId: string, schoolId: string | undefined, courseId: string, termId: string, studentId: string){
+    await this.ensureTeacherOwnsCourse(teacherUserId, schoolId, courseId, termId);
+    return this.getStudentResult(courseId, termId, studentId);
+  }
+
   async getScheme(courseId: string, termId: string) {
     // First try to find a course-specific scheme
     let scheme = await this.schemeRepo.findOne({
@@ -437,6 +478,11 @@ export class AggregationService {
     }
 
     return scheme;
+  }
+
+  async getSchemeForTeacher(teacherUserId: string, schoolId: string | undefined, courseId: string, termId: string){
+    await this.ensureTeacherOwnsCourse(teacherUserId, schoolId, courseId, termId);
+    return this.getScheme(courseId, termId);
   }
 
   async listSchemesForTeacher(teacherUserId: string, termId?: string, courseId?: string){
