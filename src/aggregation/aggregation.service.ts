@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, IsNull } from 'typeorm';
 import { CourseTermGradeScheme, CourseTermGradeComponent, ExamGradeRecord, ExamResultAggregate, DefaultWeightingScheme, DefaultWeightingComponent, AssessmentComponentType, AggregatedResultStatus } from './aggregation.entity';
 import { CreateOrUpdateSchemeDto, CreateOrUpdateDefaultSchemeDto, RecordExamGradeDto } from './dto';
 import { Course } from '../course/entities/course.entity';
@@ -8,6 +8,7 @@ import { Exam } from '../exams/entities/exam.entity';
 import { Student } from '../user/entities/student.entity';
 import { Term } from '../settings/entities/term.entity';
 import { Teacher } from '../user/entities/teacher.entity';
+import { GradeFormat } from '../grades/entity/grade-format.entity';
 
 @Injectable()
 export class AggregationService {
@@ -18,6 +19,7 @@ export class AggregationService {
     @InjectRepository(DefaultWeightingComponent) private defaultComponentRepo: Repository<DefaultWeightingComponent>,
     @InjectRepository(ExamGradeRecord) private examGradeRepo: Repository<ExamGradeRecord>,
     @InjectRepository(ExamResultAggregate) private resultRepo: Repository<ExamResultAggregate>,
+  @InjectRepository(GradeFormat) private gradeFormatRepo: Repository<GradeFormat>,
     @InjectRepository(Course) private courseRepo: Repository<Course>,
     @InjectRepository(Exam) private examRepo: Repository<Exam>,
     @InjectRepository(Student) private studentRepo: Repository<Student>,
@@ -290,18 +292,42 @@ export class AggregationService {
   }
 
   private gradingScale(pct: number){
-    if(pct >= 80) return 'A';
-    if(pct >= 70) return 'B';
-    if(pct >= 60) return 'C';
-    if(pct >= 50) return 'D';
+    // This method now acts as a final fallback only. Prefer school-specific grade formats when possible.
+    if(pct >= 90) return 'A';
+    if(pct >= 80) return 'B';
+    if(pct >= 70) return 'C';
+    if(pct >= 60) return 'D';
     return 'F';
   }
 
-  async recomputeStudent(courseId: string, termId: string, studentUuid: string){
-    const scheme = await this.schemeRepo.findOne({ where: { courseId, termId }, relations:['components'] });
-    if(!scheme) {
-      return; // cannot compute
+  private async resolveGradeFormats(schoolId?: string | null): Promise<GradeFormat[]> {
+    // Try school-specific active formats first
+    let formats: GradeFormat[] = [];
+    if (schoolId) {
+      formats = await this.gradeFormatRepo.find({ where: { schoolId, isActive: true }, order: { minPercentage: 'DESC' } });
     }
+    if (formats.length === 0) {
+      formats = await this.gradeFormatRepo.find({ where: { schoolId: IsNull(), isActive: true }, order: { minPercentage: 'DESC' } });
+    }
+    return formats;
+  }
+
+  private async dynamicLetterGrade(pct: number, schoolId?: string | null): Promise<string> {
+    const formats = await this.resolveGradeFormats(schoolId);
+    for (const f of formats) {
+      if (pct >= f.minPercentage && pct <= f.maxPercentage) return f.grade;
+    }
+    return this.gradingScale(pct);
+  }
+
+  async recomputeStudent(courseId: string, termId: string, studentUuid: string){
+    // Use getScheme to allow fallback to default weighting scheme when course-specific doesn't exist
+    const schemeAny = await this.getScheme(courseId, termId);
+    if(!schemeAny) {
+      return; // cannot compute without any scheme
+    }
+    // schemeAny can be DefaultWeightingScheme mapped as any; ensure we can access fields compatibly
+    const scheme = schemeAny as any;
 
     const grades = await this.examGradeRepo.find({ where: { courseId, termId, studentId: studentUuid } });
     
@@ -359,8 +385,8 @@ export class AggregationService {
         studentId: studentUuid, 
         courseId, 
         termId, 
-        schoolId: scheme.schoolId, 
-        schemeVersion: scheme.version, 
+        schoolId: scheme.schoolId ?? (scheme.school?.id ?? null), 
+        schemeVersion: scheme.version ?? 1, 
         status: AggregatedResultStatus.PENDING 
       });
     }
@@ -369,13 +395,14 @@ export class AggregationService {
     if(hasAnyGrades && totalWeightedScore >= 0) {
       // Use actual weighted score as the progressive percentage
       const finalPct = parseFloat(totalWeightedScore.toFixed(2));
-      const passThreshold = scheme.passThreshold ?? 50;
+  const passThreshold = (scheme.passThreshold ?? 50);
       
-      result.finalPercentage = finalPct.toString();
-      result.finalGradeCode = this.gradingScale(finalPct);
+  result.finalPercentage = finalPct.toString();
+  // Use dynamic grade mapping based on school's grade formats when available
+  result.finalGradeCode = await this.dynamicLetterGrade(finalPct, result.schoolId);
       result.pass = finalPct >= passThreshold;
       result.breakdown = breakdown;
-      result.schemeVersion = scheme.version;
+  result.schemeVersion = scheme.version ?? 1;
       
       // Set status based on completion
       if(allRequiredCompleted) {
