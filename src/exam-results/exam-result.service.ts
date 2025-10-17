@@ -66,9 +66,8 @@ export class ExamResultService {
       query = query.andWhere('er.schoolId = :schoolId', { schoolId: student.schoolId });
     }
 
-    if (classId) {
-      query = query.andWhere('course."classId" = :classId', { classId });
-    }
+    // Note: Do not hard-filter by course.classId; we already scoped to student's class via student ids
+    // Some courses may not have the classId set or may be cross-listed; filtering here can hide valid results
 
     if (termId) {
       query = query.andWhere('er.termId = :termId', { termId });
@@ -98,16 +97,15 @@ export class ExamResultService {
       schemeVersion: result.schemeVersion,
     }));
 
-    // Calculate summary statistics
-    const validResults = results.filter(r => r.finalPercentage > 0);
-    const totalResults = validResults.length;
+    // Calculate summary statistics (include PENDING results with 0%)
+    const totalResults = results.length;
     const averageScore = totalResults > 0 
-      ? validResults.reduce((sum, r) => sum + r.finalPercentage, 0) / totalResults 
+      ? results.reduce((sum, r) => sum + (r.finalPercentage || 0), 0) / totalResults 
       : 0;
 
     // Calculate GPA (assuming 4.0 scale)
-    const gpaPoints = validResults.map(result => {
-      const percentage = result.finalPercentage;
+    const gpaPoints = results.map(result => {
+      const percentage = result.finalPercentage || 0;
       if (percentage >= 90) return 4.0;
       if (percentage >= 80) return 3.0;
       if (percentage >= 70) return 2.0;
@@ -191,9 +189,7 @@ export class ExamResultService {
       query = query.andWhere('er.schoolId = :schoolId', { schoolId });
     }
 
-    if (classId) {
-      query = query.andWhere('course."classId" = :classId', { classId });
-    }
+    // Do not apply additional course.classId filtering to avoid hiding results recorded for students in this class
 
     if (termId) {
       query = query.andWhere('er.termId = :termId', { termId });
@@ -224,18 +220,14 @@ export class ExamResultService {
     const studentResults = classEntity.students.map(student => {
       const studentExamResults = resultsByStudent.get(student.studentId) || [];
       
-      // Calculate student's aggregated statistics
-      const validResults = studentExamResults.filter(r => 
-        r.finalPercentage && parseFloat(r.finalPercentage) > 0
-      );
-      
-      const totalResults = validResults.length;
+      // Calculate student's aggregated statistics (include PENDING results with 0%)
+      const totalResults = studentExamResults.length;
       const averageScore = totalResults > 0 
-        ? validResults.reduce((sum, r) => sum + parseFloat(r.finalPercentage || '0'), 0) / totalResults 
+        ? studentExamResults.reduce((sum, r) => sum + parseFloat(r.finalPercentage || '0'), 0) / totalResults 
         : 0;
 
       // Calculate GPA
-      const gpaPoints = validResults.map(result => {
+      const gpaPoints = studentExamResults.map(result => {
         const percentage = parseFloat(result.finalPercentage || '0');
         if (percentage >= 90) return 4.0;
         if (percentage >= 80) return 3.0;
