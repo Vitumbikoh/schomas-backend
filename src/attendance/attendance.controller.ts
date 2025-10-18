@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Request, UseGuards, ValidationPipe } from '@nestjs/common';
+import { Controller, Post, Body, Request, UseGuards, ValidationPipe, Get, Param } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
 import { CreateAttendanceDto, AttendanceResponseDto } from './dtos/attendance.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -44,5 +44,20 @@ export class AttendanceController {
       isPresent: attendance.isPresent,
       date: attendance.date.toISOString(),
     }));
+  }
+}
+
+// Separate controller for student attendance endpoints
+@Controller('attendance/student')
+@UseGuards(JwtAuthGuard)
+export class StudentAttendanceController {
+  constructor(private readonly attendanceService: AttendanceService) {}
+
+  @Get(':studentId/rate')
+  async getStudentAttendanceRate(
+    @Param('studentId') studentId: string,
+    @Request() req,
+  ) {
+    return this.attendanceService.getStudentAttendanceRate(studentId, req.user.sub);
   }
 }

@@ -26,6 +26,13 @@ export class ExamResultService {
   ) {}
 
   /**
+   * Helper method to find student by userId
+   */
+  async findStudentByUserId(userId: string) {
+    return this.studentRepository.findOne({ where: { userId } });
+  }
+
+  /**
    * Get aggregated exam results for a specific student
    */
   async getStudentResults(

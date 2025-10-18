@@ -28,7 +28,7 @@ export class ExamResultController {
     if (studentId === 'me') {
       // Try to resolve student entity by userId
       const userId = req.user?.userId || req.user?.sub || req.user?.id;
-      const student = await this.examResultService['studentRepository'].findOne({ where: { userId } });
+      const student = await this.examResultService.findStudentByUserId(userId);
       if (!student) {
         // If the student record is not found, return a clear error
         throw new NotFoundException('Student record not found for the authenticated user');

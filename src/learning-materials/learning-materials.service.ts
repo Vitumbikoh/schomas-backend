@@ -174,9 +174,9 @@ export class LearningMaterialsService {
       const query = this.learningMaterialRepository
         .createQueryBuilder('material')
         .leftJoinAndSelect('material.course', 'course')
-        .leftJoinAndSelect('material.Term', 'Term')
+        .leftJoinAndSelect('material.term', 'term')
         .where('material.courseId IN (:...courseIds)', { courseIds })
-        .andWhere('material.TermId = :TermId', { TermId: currentTerm.id });
+        .andWhere('material.termId = :termId', { termId: currentTerm.id });
 
       if (courseId) {
         query.andWhere('material.courseId = :courseId', { courseId });

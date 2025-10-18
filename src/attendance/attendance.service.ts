@@ -125,4 +125,46 @@ export class AttendanceService {
     // Save to database
     return this.attendanceRepository.save(attendanceRecords);
   }
+
+  /**
+   * Get student attendance rate
+   * Returns the percentage of classes attended
+   */
+  async getStudentAttendanceRate(studentId: string, userId: string) {
+    // Fetch the student to verify they exist
+    const student = await this.studentRepository.findOne({
+      where: { id: studentId },
+      relations: ['class'],
+    });
+
+    if (!student) {
+      throw new BadRequestException('Student not found');
+    }
+
+    // Query all attendance records for this student (student field in attendance refers to User entity)
+    const allAttendance = await this.attendanceRepository.find({
+      where: { student: { id: studentId } },
+    });
+
+    if (allAttendance.length === 0) {
+      return {
+        attendanceRate: 0,
+        totalDays: 0,
+        presentDays: 0,
+        absentDays: 0,
+      };
+    }
+
+    const presentDays = allAttendance.filter(a => a.isPresent).length;
+    const totalDays = allAttendance.length;
+    const absentDays = totalDays - presentDays;
+    const attendanceRate = (presentDays / totalDays) * 100;
+
+    return {
+      attendanceRate: Math.round(attendanceRate * 10) / 10,
+      totalDays,
+      presentDays,
+      absentDays,
+    };
+  }
 }
