@@ -47,4 +47,17 @@ export class ExamResultController {
       academicCalendarId,
     );
   }
+
+  @Get('debug/class/:classId')
+  async debugClassResults(
+    @Param('classId') classId: string,
+    @Query('termId') termId?: string,
+    @Request() req?: any,
+  ) {
+    return this.examResultService.debugClassResults(
+      classId,
+      req.user.userId,
+      termId,
+    );
+  }
 }
