@@ -5,6 +5,7 @@ import {
   Query,
   UseGuards,
   Request,
+  NotFoundException,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ExamResultService } from './exam-result.service';
@@ -22,8 +23,21 @@ export class ExamResultController {
     @Query('academicCalendarId') academicCalendarId?: string,
     @Request() req?: any,
   ) {
+    // Support 'me' alias so students don't need to know their internal student UUID
+    let resolvedStudentId = studentId;
+    if (studentId === 'me') {
+      // Try to resolve student entity by userId
+      const userId = req.user?.userId || req.user?.sub || req.user?.id;
+      const student = await this.examResultService['studentRepository'].findOne({ where: { userId } });
+      if (!student) {
+        // If the student record is not found, return a clear error
+        throw new NotFoundException('Student record not found for the authenticated user');
+      }
+      resolvedStudentId = student.id;
+    }
+
     return this.examResultService.getStudentResults(
-      studentId,
+      resolvedStudentId,
       req.user.userId,
       classId,
       termId,

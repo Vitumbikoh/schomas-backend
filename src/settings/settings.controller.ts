@@ -633,8 +633,8 @@ async createTermPeriod(
     @Request() req,
     @Query('academicCalendarId') academicCalendarId?: string,
   ) {
-    if (!['ADMIN','FINANCE','TEACHER'].includes(req.user.role)) {
-      throw new UnauthorizedException('Only admins, finance or teacher can access terms');
+    if (!['ADMIN','FINANCE','TEACHER','STUDENT'].includes(req.user.role)) {
+      throw new UnauthorizedException('Only admins, finance, teacher, or students can access terms');
     }
     return this.settingsService.getTerms(academicCalendarId, req.user.schoolId);
   }
@@ -644,12 +644,12 @@ async createTermPeriod(
   async getActiveAcademicCalendar(
     @Request() req,
   ): Promise<AcademicCalendarDto | null> {
-    if (req.user.role !== 'ADMIN') {
-      throw new UnauthorizedException('Only school administrators can access academic calendar');
+    if (!['ADMIN','STUDENT','TEACHER','FINANCE'].includes(req.user.role)) {
+      throw new UnauthorizedException('Only school users can access academic calendar');
     }
 
     if (!req.user.schoolId) {
-      throw new UnauthorizedException('Administrator must be associated with a school');
+      throw new UnauthorizedException('User must be associated with a school');
     }
 
     const activeCalendar = await this.academicCalendarRepository.findOne({
