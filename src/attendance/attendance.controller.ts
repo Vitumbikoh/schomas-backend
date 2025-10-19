@@ -58,11 +58,18 @@ export class StudentAttendanceController {
     @Param('studentId') studentId: string,
     @Request() req,
   ) {
-    // Support 'me' alias for current user
-    if (studentId === 'me') {
-      // Use the user ID directly since attendance references User entity
-      return this.attendanceService.getStudentAttendanceRate(req.user.sub, req.user.sub);
+    try {
+      // Support 'me' alias for current user
+      if (studentId === 'me') {
+        console.log('Attendance request for current user, userId:', req.user?.sub);
+        // Use the user ID directly since attendance references User entity
+        return this.attendanceService.getStudentAttendanceRate(req.user.sub, req.user.sub);
+      }
+      console.log('Attendance request for student ID:', studentId);
+      return this.attendanceService.getStudentAttendanceRate(studentId, req.user.sub);
+    } catch (error) {
+      console.error('Attendance rate error:', error);
+      throw error;
     }
-    return this.attendanceService.getStudentAttendanceRate(studentId, req.user.sub);
   }
 }

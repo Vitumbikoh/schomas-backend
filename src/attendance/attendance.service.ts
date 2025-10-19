@@ -131,34 +131,49 @@ export class AttendanceService {
    * Returns the percentage of classes attended
    */
   async getStudentAttendanceRate(userId: string, requestUserId: string) {
-    // Verify the user exists and is a student
+    console.log('Getting attendance rate for userId:', userId);
+    
+    // First, verify the user exists
     const user = await this.userRepository.findOne({
       where: { id: userId },
-      relations: ['student'],
     });
 
-    if (!user || !user.student) {
-      throw new BadRequestException('Student not found');
+    if (!user) {
+      console.log('User not found for ID:', userId);
+      throw new BadRequestException('User not found');
     }
+
+    console.log('User found, role:', user.role);
+
+    // Check if user has student role
+    if (user.role !== Role.STUDENT) {
+      throw new BadRequestException('User is not a student');
+    }
+
+    // Find the student record for this user
+    const student = await this.studentRepository.findOne({
+      where: { userId: userId },
+    });
+
+    if (!student) {
+      console.log('Student record not found for userId:', userId);
+      throw new BadRequestException('Student record not found for this user');
+    }
+
+    console.log('Student record found, ID:', student.id);
 
     // Query all attendance records for this user (attendance references User entity directly)
     const allAttendance = await this.attendanceRepository.find({
       where: { student: { id: userId } },
     });
 
-    if (allAttendance.length === 0) {
-      return {
-        attendanceRate: 0,
-        totalDays: 0,
-        presentDays: 0,
-        absentDays: 0,
-      };
-    }
+    console.log('Found attendance records:', allAttendance.length);
 
+    // Always return a valid response, even with no attendance records
     const presentDays = allAttendance.filter(a => a.isPresent).length;
     const totalDays = allAttendance.length;
     const absentDays = totalDays - presentDays;
-    const attendanceRate = (presentDays / totalDays) * 100;
+    const attendanceRate = totalDays > 0 ? (presentDays / totalDays) * 100 : 0;
 
     return {
       attendanceRate: Math.round(attendanceRate * 10) / 10,
