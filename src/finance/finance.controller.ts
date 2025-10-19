@@ -11,11 +11,16 @@ import {
   Request,
   ParseUUIDPipe,
   BadRequestException,
+  ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { FinanceService } from './finance.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Role } from '../user/enums/role.enum';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Student } from '../user/entities/student.entity';
 import {
   ApiBearerAuth,
   ApiTags,
@@ -40,6 +45,8 @@ export class FinanceController {
     private readonly financeService: FinanceService,
     private readonly systemLoggingService: SystemLoggingService,
     private readonly studentFeeExpectationService: StudentFeeExpectationService,
+    @InjectRepository(Student)
+    private readonly studentRepository: Repository<Student>,
   ) {}
 
   @Get('dashboard')
@@ -397,7 +404,7 @@ export class FinanceController {
   }
 
   @Get('fee-status/:studentId')
-  @Roles(Role.ADMIN, Role.FINANCE)
+  @Roles(Role.ADMIN, Role.FINANCE, Role.STUDENT)
   @ApiOperation({ summary: 'Get detailed fee status for a single student' })
   async studentFeeStatus(
     @Request() req,
@@ -406,8 +413,30 @@ export class FinanceController {
   ) {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
+    
+    let actualStudentId = studentId;
+    
+    // If the user is a student, they can only access their own fee status
+    // and we need to convert user ID to student ID
+    if (user.role === 'STUDENT') {
+      if (user.sub !== studentId) {
+        throw new ForbiddenException('Students can only access their own fee status');
+      }
+      
+      // Find the student record for this user
+      const student = await this.studentRepository.findOne({
+        where: { userId: user.sub }
+      });
+      
+      if (!student) {
+        throw new NotFoundException('Student record not found for this user');
+      }
+      
+      actualStudentId = student.id;
+    }
+    
     return this.studentFeeExpectationService.getStudentFeeStatus(
-      studentId,
+      actualStudentId,
       termId,
       superAdmin ? req.query.schoolId : user.schoolId,
       superAdmin,

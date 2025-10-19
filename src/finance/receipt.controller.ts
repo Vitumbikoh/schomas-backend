@@ -32,9 +32,15 @@ export class ReceiptController {
         throw new Error('Invalid amount format');
       }
 
-      // Extract additional information with better formatting
+      // Extract school information dynamically - no hardcoded fallbacks
       const schoolName = payment.school?.name || 'School Management System';
-      const schoolAbout = payment.school?.metadata?.about || payment.school?.metadata?.description || 'Excellence in Education • Nurturing Future Leaders';
+      const schoolMotto = payment.school?.metadata?.motto || '';
+      const schoolEmail = payment.school?.metadata?.email || '';
+      const schoolPhone = payment.school?.metadata?.phone || '';
+      const schoolWebsite = payment.school?.metadata?.website || '';
+      const schoolAddress = payment.school?.metadata?.address || '';
+      
+      // Student information
       const studentFullName = `${payment.student?.firstName || ''} ${payment.student?.lastName || ''}`.trim() || 'Unknown Student';
       const humanStudentId = payment.student?.studentId || 'N/A';
       
@@ -66,152 +72,238 @@ export class ReceiptController {
         hour12: true
       });
       
-      // Create PDF document with professional layout
+      // Create PDF document with professional layout optimized for one page
       const doc = new PDFDocument({ 
-        margin: 40,
+        margin: 30,
         size: 'A4'
       });
       
       // Pipe directly to response - no caching
       doc.pipe(res);
 
-      // Professional Header with border
-      const headerHeight = 100;
+      // Add watermark first (behind all content)
+      doc.fontSize(60)
+         .font('Helvetica-Bold')
+         .fillColor('#fafafa')
+         .text(schoolName.split(' ')[0] || 'RECEIPT', 0, 350, {
+           align: 'center',
+           width: doc.page.width,
+           angle: -45
+         });
+
+      // Clean Header with system consistency
+      const headerHeight = 80;
+      
+      // Simple header border
       doc.rect(40, 40, doc.page.width - 80, headerHeight)
-         .fillAndStroke('#f8f9fa', '#ddd');
+         .stroke('#e0e0e0');
       
-      // School logo area (placeholder circle)
-      doc.circle(70, 80, 20)
-         .fillAndStroke('#007bff', '#005bb5');
+      // School logo area (simple circle)
+      doc.circle(70, 75, 15)
+         .fillAndStroke('#6b7280', '#4b5563');
       
+      // School initials
+      const initials = schoolName.split(' ').map(word => word[0]).join('').substring(0, 2);
+      doc.fontSize(10)
+         .font('Helvetica-Bold')
+         .fillColor('white')
+         .text(initials, initials.length === 1 ? 67 : 64, 71);
+      
+      // School name
       doc.fontSize(20)
          .font('Helvetica-Bold')
-         .fillColor('#2c3e50')
-         .text(schoolName, 110, 65);
+         .fillColor('#374151')
+         .text(schoolName, 100, 55);
       
-      doc.fontSize(10)
-         .font('Helvetica-Oblique')
-         .fillColor('#6c757d')
-         .text(schoolAbout, 110, 90);
+      // School information section below school name
+      let infoY = 75;
       
-      // Academic info bar
-      doc.rect(40, 150, doc.page.width - 80, 25)
-         .fillAndStroke('#e9ecef', '#dee2e6');
+      // School motto/about (only if exists)
+      if (schoolMotto) {
+        doc.fontSize(9)
+           .font('Helvetica-Oblique')
+           .fillColor('#6b7280')
+           .text(schoolMotto, 100, infoY);
+        infoY += 12;
+      }
+      
+      // Email (if exists)
+      if (schoolEmail) {
+        doc.fontSize(8)
+           .font('Helvetica')
+           .fillColor('#9ca3af')
+           .text(`Email: ${schoolEmail}`, 100, infoY);
+        infoY += 10;
+      }
+      
+      // Phone (if exists)
+      if (schoolPhone) {
+        doc.fontSize(8)
+           .font('Helvetica')
+           .fillColor('#9ca3af')
+           .text(`Phone: ${schoolPhone}`, 100, infoY);
+        infoY += 10;
+      }
+      
+      // Website (if exists)
+      if (schoolWebsite) {
+        doc.fontSize(8)
+           .font('Helvetica')
+           .fillColor('#9ca3af')
+           .text(`Website: ${schoolWebsite}`, 100, infoY);
+        infoY += 10;
+      }
+      
+      // Address (if exists)
+      if (schoolAddress) {
+        doc.fontSize(8)
+           .font('Helvetica')
+           .fillColor('#9ca3af')
+           .text(`Address: ${schoolAddress}`, 100, infoY);
+        infoY += 10;
+      }
+      
+      // Receipt number in top right (properly positioned)
+      doc.fontSize(9)
+         .font('Helvetica-Bold')
+         .fillColor('#374151')
+         .text('Receipt No:', doc.page.width - 150, 50);
       
       doc.fontSize(11)
          .font('Helvetica-Bold')
-         .fillColor('#495057')
-         .text(`Academic Year: ${academicYear}`, 60, 160);
-      doc.text(`${termName}`, doc.page.width - 180, 160);
-
-      // Receipt Title Section
-      doc.moveDown(3);
-      const titleY = 200;
+         .fillColor('#1f2937')
+         .text(receiptNumber, doc.page.width - 150, 62);
       
-      // Title background
-      doc.rect(40, titleY, doc.page.width - 80, 40)
-         .fillAndStroke('#007bff', '#0056b3');
+      // Date
+      doc.fontSize(8)
+         .font('Helvetica')
+         .fillColor('#6b7280')
+         .text(formattedDate, doc.page.width - 150, 76);
       
-      doc.fontSize(18)
+      // Academic calendar info (properly visible)
+      doc.fontSize(8)
          .font('Helvetica-Bold')
-         .fillColor('white')
-         .text('PAYMENT RECEIPT', 40, titleY + 12, { 
+         .fillColor('#374151')
+         .text(`Academic Year: ${academicYear}`, doc.page.width - 150, 95);
+      
+      doc.fontSize(8)
+         .font('Helvetica')
+         .fillColor('#6b7280')
+         .text(termName, doc.page.width - 150, 107);
+
+      // Clean Title Section
+      const titleY = 140;
+      
+      // Simple title background
+      doc.rect(40, titleY, doc.page.width - 80, 30)
+         .fillAndStroke('#f9fafb', '#e5e7eb');
+      
+      // Title with system-consistent styling
+      doc.fontSize(16)
+         .font('Helvetica-Bold')
+         .fillColor('#374151')
+         .text('PAYMENT RECEIPT', 40, titleY + 8, { 
            align: 'center',
            width: doc.page.width - 80
          });
 
-      // Main content area
-      const contentY = titleY + 60;
-      doc.rect(40, contentY, doc.page.width - 80, 320)
-         .stroke('#dee2e6');
+      // Clean content area
+      const contentY = titleY + 45;
+      
+      // Simple content border
+      doc.rect(40, contentY, doc.page.width - 80, 400)
+         .stroke('#e5e7eb');
 
-      // Receipt details with professional formatting
-      const leftColumn = 70;
-      const rightColumn = 320;
-      const lineHeight = 28; // Increased from 22 for better readability
-      let currentY = contentY + 30;
+      // Receipt details with clean formatting
+      const leftColumn = 60;
+      const rightColumn = 300;
+      const lineHeight = 18;
+      let currentY = contentY + 20;
 
-      // Helper function for labeled rows with better readability
+      // Clean row styling function
       const addRow = (label: string, value: string, isBold = false) => {
-        doc.fontSize(12) // Increased from 11 for better readability
+        doc.fontSize(10)
            .font('Helvetica-Bold')
-           .fillColor('#495057')
+           .fillColor('#374151')
            .text(label, leftColumn, currentY);
         
-        doc.fontSize(12) // Increased from 11 for better readability
+        doc.fontSize(10)
            .font(isBold ? 'Helvetica-Bold' : 'Helvetica')
-           .fillColor(isBold ? '#2c3e50' : '#495057')
+           .fillColor(isBold ? '#1f2937' : '#4b5563')
            .text(value, rightColumn, currentY);
         
-        // Add subtle separator line
-        if (!isBold) {
-          doc.strokeColor('#f1f3f4')
-             .moveTo(leftColumn, currentY + 22)
-             .lineTo(doc.page.width - 70, currentY + 22)
-             .stroke();
-        }
+        // Simple separator line
+        doc.strokeColor('#f3f4f6')
+           .moveTo(leftColumn, currentY + 15)
+           .lineTo(doc.page.width - 60, currentY + 15)
+           .stroke();
         
         currentY += lineHeight;
       };
 
-      // Receipt Information Section
-      doc.fontSize(12)
-         .font('Helvetica-Bold')
-         .fillColor('#2c3e50')
-         .text('RECEIPT DETAILS', leftColumn, currentY);
-      currentY += 25;
+      // Clean section headers
+      const addSectionHeader = (title: string) => {
+        doc.rect(leftColumn - 10, currentY - 2, doc.page.width - 100, 20)
+           .fillAndStroke('#f8f9fa', '#dee2e6');
+        
+        doc.fontSize(11)
+           .font('Helvetica-Bold')
+           .fillColor('#495057')
+           .text(title, leftColumn, currentY + 3);
+        
+        currentY += 25;
+      };
 
-      addRow('Receipt Number:', receiptNumber);
-      addRow('Issue Date:', formattedDate);
-      addRow('Issue Time:', formattedTime);
+      // STUDENT & TRANSACTION DETAILS
+      addSectionHeader('STUDENT & TRANSACTION DETAILS');
       
-      currentY += 20; // Increased spacing between sections
-
-      // Student Information Section
-      doc.fontSize(12)
-         .font('Helvetica-Bold')
-         .fillColor('#2c3e50')
-         .text('STUDENT INFORMATION', leftColumn, currentY);
-      currentY += 30; // Increased spacing
-
       addRow('Student Name:', studentFullName, true);
       addRow('Student ID:', humanStudentId);
+      addRow('Transaction Date:', formattedDate);
+      addRow('Transaction Time:', formattedTime);
+      
+      currentY += 10;
+
+      // ACADEMIC INFORMATION
+      addSectionHeader('ACADEMIC INFORMATION');
+      
       addRow('Academic Year:', academicYear);
-      addRow('Term:', termName);
+      addRow('Academic Term:', termName);
+      addRow('Fee Category:', paymentType, true);
+      addRow('Payment Method:', paymentMethod);
+      addRow('Payment Status:', paymentStatus, true);
 
-      currentY += 20; // Increased spacing between sections
+      currentY += 10;
 
-      // Payment Information Section
+      // Clean amount section
+      const amountBoxY = currentY;
+      
+      // Simple amount box
+      doc.rect(leftColumn - 10, amountBoxY - 5, doc.page.width - 100, 40)
+         .fillAndStroke('#f8f9fa', '#6c757d');
+      
+      // Amount label
       doc.fontSize(12)
          .font('Helvetica-Bold')
-         .fillColor('#2c3e50')
-         .text('PAYMENT INFORMATION', leftColumn, currentY);
-      currentY += 30; // Increased spacing
-
-      addRow('Payment Type:', paymentType);
-      addRow('Payment Method:', paymentMethod);
-      addRow('Transaction Status:', paymentStatus, true);
-
-      // Amount section with prominent styling
-      currentY += 20;
-      const amountBoxY = currentY;
-      doc.rect(leftColumn - 15, amountBoxY - 10, doc.page.width - 110, 50)
-         .fillAndStroke('#28a745', '#1e7e34');
+         .fillColor('#495057')
+         .text('TOTAL AMOUNT PAID', leftColumn, amountBoxY + 8);
       
-      doc.fontSize(14)
+      // Amount display with currency
+      const currency = 'MK'; // Malawi Kwacha
+      const formattedAmount = amount.toLocaleString('en-US', { minimumFractionDigits: 2 });
+      
+      doc.fontSize(16)
          .font('Helvetica-Bold')
-         .fillColor('white')
-         .text('TOTAL AMOUNT PAID', leftColumn, amountBoxY + 5);
-      
-      doc.fontSize(18)
-         .text(`$${amount.toFixed(2)}`, rightColumn, amountBoxY + 5);
+         .fillColor('#212529')
+         .text(`${currency} ${formattedAmount}`, rightColumn, amountBoxY + 8);
 
-      // Authorization section
-      currentY += 80;
+      currentY += 55;
+
+      // Clean verification section
       const authBy = payment.processedBy?.user?.username || payment.processedByAdmin?.username || 'System Administrator';
       const processedDate = new Date().toLocaleDateString('en-US', {
         year: 'numeric',
-        month: 'long',
+        month: 'short',
         day: 'numeric'
       });
       const processedTime = new Date().toLocaleTimeString('en-US', {
@@ -220,54 +312,83 @@ export class ReceiptController {
         hour12: true
       });
       
-      doc.fontSize(10)
-         .font('Helvetica')
-         .fillColor('#6c757d')
-         .text(`Authorized by: ${authBy}`, leftColumn, currentY);
+      // Simple verification box
+      doc.rect(leftColumn - 10, currentY - 5, doc.page.width - 100, 50)
+         .fillAndStroke('#f8f9fa', '#dee2e6');
       
-      doc.text(`Processing Date: ${processedDate}`, leftColumn, currentY + 15);
-      doc.text(`Processing Time: ${processedTime}`, leftColumn, currentY + 30);
-
-      // Professional Footer
-      const footerY = doc.page.height - 120;
-      
-      // Footer separator
-      doc.strokeColor('#dee2e6')
-         .moveTo(40, footerY)
-         .lineTo(doc.page.width - 40, footerY)
-         .stroke();
-      
-      // Important notice
-      doc.rect(40, footerY + 10, doc.page.width - 80, 30)
-         .fillAndStroke('#fff3cd', '#ffeaa7');
-      
+      // Security header
       doc.fontSize(10)
          .font('Helvetica-Bold')
-         .fillColor('#856404')
+         .fillColor('#495057')
+         .text('VERIFICATION & AUTHORIZATION', leftColumn, currentY + 5);
+      
+      // Verification details
+      doc.fontSize(8)
+         .font('Helvetica-Bold')
+         .fillColor('#6c757d')
+         .text('Authorized by:', leftColumn, currentY + 20);
+      
+      doc.fontSize(8)
+         .font('Helvetica')
+         .fillColor('#495057')
+         .text(authBy, leftColumn + 65, currentY + 20);
+      
+      doc.fontSize(8)
+         .font('Helvetica-Bold')
+         .fillColor('#6c757d')
+         .text('Transaction ID:', leftColumn, currentY + 30);
+      
+      doc.fontSize(8)
+         .font('Helvetica')
+         .fillColor('#495057')
+         .text(id.slice(0, 8).toUpperCase(), leftColumn + 65, currentY + 30);
+      
+      doc.fontSize(8)
+         .font('Helvetica-Bold')
+         .fillColor('#6c757d')
+         .text('Processed:', rightColumn - 60, currentY + 20);
+      
+      doc.fontSize(8)
+         .font('Helvetica')
+         .fillColor('#495057')
+         .text(`${processedDate} ${processedTime}`, rightColumn - 10, currentY + 20);
+
+      currentY += 75;
+
+      // Clean footer section
+      const footerY = currentY;
+      
+      // Elegant footer separator with gradient effect
+      doc.strokeColor('#1976d2')
+         .lineWidth(2)
+         .moveTo(25, footerY)
+         .lineTo(doc.page.width - 25, footerY)
+         .stroke()
+         .lineWidth(1);
+      
+      // Important notice
+      doc.rect(40, footerY + 10, doc.page.width - 80, 20)
+         .fillAndStroke('#f8f9fa', '#6c757d');
+      
+      doc.fontSize(8)
+         .font('Helvetica-Bold')
+         .fillColor('#495057')
          .text('IMPORTANT: This receipt serves as official proof of payment. Please retain for your records.', 
-               50, footerY + 22, { 
+               45, footerY + 18, { 
                  align: 'center',
-                 width: doc.page.width - 100 
+                 width: doc.page.width - 90 
                });
 
       // Thank you message
-      doc.fontSize(12)
+      doc.fontSize(10)
          .font('Helvetica-Bold')
-         .fillColor('#007bff')
-         .text('Thank you for choosing our institution!', 40, footerY + 55, { 
+         .fillColor('#6c757d')
+         .text('Thank you for your payment!', 40, footerY + 40, {
            align: 'center',
            width: doc.page.width - 80 
          });
 
-      // Watermark-style school name
-      doc.fontSize(60)
-         .font('Helvetica-Bold')
-         .fillColor('#f8f9fa')
-         .text(schoolName, 0, 300, {
-           align: 'center',
-           width: doc.page.width,
-           angle: -45
-         });
+
 
       doc.end();
 
