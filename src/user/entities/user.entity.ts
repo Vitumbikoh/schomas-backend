@@ -79,6 +79,12 @@ export class User {
   @Column({ default: false })
   forcePasswordReset: boolean;
 
+  @Column({ type: 'timestamp', nullable: true })
+  lastLoginAt?: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  lastActivityAt?: Date;
+
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;
 

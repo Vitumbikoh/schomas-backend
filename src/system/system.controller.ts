@@ -7,7 +7,7 @@ import { Role } from '../user/enums/role.enum';
 
 @Controller('system')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.SUPER_ADMIN)
+@Roles(Role.SUPER_ADMIN, Role.ADMIN)
 export class SystemController {
   constructor(private readonly systemService: SystemService) {}
 

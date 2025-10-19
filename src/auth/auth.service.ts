@@ -73,6 +73,10 @@ export class AuthService {
   
 
   async login(user: User) {
+    // Update login and activity timestamps
+    const now = new Date();
+    await this.usersService.updateLoginActivity(user.id, now, now);
+    
     const payload = { 
       username: user.username,
       sub: user.id,

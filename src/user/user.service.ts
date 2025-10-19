@@ -66,6 +66,29 @@ export class UsersService {
     });
   }
 
+  async updateLoginActivity(userId: string, loginAt: Date, activityAt: Date): Promise<void> {
+    try {
+      await this.userRepository.update(userId, {
+        lastLoginAt: loginAt,
+        lastActivityAt: activityAt,
+      });
+    } catch (error) {
+      // Silently fail if columns don't exist yet (migration pending)
+      console.warn('Failed to update login activity (columns may not exist):', error.message);
+    }
+  }
+
+  async updateActivity(userId: string): Promise<void> {
+    try {
+      await this.userRepository.update(userId, {
+        lastActivityAt: new Date(),
+      });
+    } catch (error) {
+      // Silently fail if column doesn't exist yet (migration pending)
+      console.warn('Failed to update activity (column may not exist):', error.message);
+    }
+  }
+
   async createUser(createUserDto: CreateUserDto): Promise<User> {
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
     const userSettings = new UserSettings();
