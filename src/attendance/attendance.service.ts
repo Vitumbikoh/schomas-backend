@@ -130,20 +130,20 @@ export class AttendanceService {
    * Get student attendance rate
    * Returns the percentage of classes attended
    */
-  async getStudentAttendanceRate(studentId: string, userId: string) {
-    // Fetch the student to verify they exist
-    const student = await this.studentRepository.findOne({
-      where: { id: studentId },
-      relations: ['class'],
+  async getStudentAttendanceRate(userId: string, requestUserId: string) {
+    // Verify the user exists and is a student
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      relations: ['student'],
     });
 
-    if (!student) {
+    if (!user || !user.student) {
       throw new BadRequestException('Student not found');
     }
 
-    // Query all attendance records for this student (student field in attendance refers to User entity)
+    // Query all attendance records for this user (attendance references User entity directly)
     const allAttendance = await this.attendanceRepository.find({
-      where: { student: { id: studentId } },
+      where: { student: { id: userId } },
     });
 
     if (allAttendance.length === 0) {

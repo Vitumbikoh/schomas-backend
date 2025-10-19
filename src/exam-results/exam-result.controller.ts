@@ -38,7 +38,7 @@ export class ExamResultController {
 
     return this.examResultService.getStudentResults(
       resolvedStudentId,
-      req.user.userId,
+      req.user?.userId || req.user?.sub || req.user?.id,
       classId,
       termId,
       academicCalendarId,
@@ -55,7 +55,7 @@ export class ExamResultController {
   ) {
     return this.examResultService.getClassResults(
       classId,
-      req.user.userId,
+      req.user?.userId || req.user?.sub || req.user?.id,
       schoolId,
       termId,
       academicCalendarId,
@@ -70,7 +70,7 @@ export class ExamResultController {
   ) {
     return this.examResultService.debugClassResults(
       classId,
-      req.user.userId,
+      req.user?.userId || req.user?.sub || req.user?.id,
       termId,
     );
   }
