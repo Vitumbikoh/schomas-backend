@@ -109,24 +109,59 @@ export class PayrollService {
     // Load auto-assign pay components for virtual inclusion
     const autoAssignComponents = await this.compRepo.find({
       where: { schoolId, autoAssign: true },
+      order: { department: 'ASC', createdAt: 'ASC' }, // Prioritize department-specific first
     });
 
     // Create salary items
     const salaryItems: any[] = [];
     for (const staff of staffWithAssignments) {
       const userAssignments = staffAssignments.get(staff.id) || [];
-
-      // Virtual auto-assignments by department
       const staffDepartment = this.getDepartmentFromUser(staff);
-      const virtualAssignments = autoAssignComponents
-        .filter(component => component.department === staffDepartment || !component.department)
-        .map(component => ({ component, amount: component.defaultAmount || 0, isAutoAssigned: true }));
 
-      const allAssignments = [...userAssignments, ...virtualAssignments];
+      // Create a map to track which components this staff already has manual assignments for
+      const manualComponentIds = new Set(userAssignments.map(a => a.componentId));
+
+      // Apply auto-assign logic with proper hierarchy:
+      // 1. Individual assignments (already loaded)
+      // 2. Department-specific auto-assignments (only if no individual assignment exists)
+      // 3. System-wide auto-assignments (only if no department or individual assignment exists)
+      
+      const autoAssignments: any[] = [];
+      const assignedComponentTypes = new Set<string>();
+
+      // First, track what component types are already manually assigned
+      userAssignments.forEach(assignment => {
+        assignedComponentTypes.add(`${assignment.component.type}-${assignment.component.name}`);
+      });
+
+      // Apply auto-assignments with hierarchy
+      for (const component of autoAssignComponents) {
+        // Skip if staff already has a manual assignment for this exact component
+        if (manualComponentIds.has(component.id)) {
+          continue;
+        }
+
+        // Check component applicability based on department hierarchy
+        const isApplicable = this.isAutoAssignComponentApplicable(component, staffDepartment, assignedComponentTypes);
+        
+        if (isApplicable) {
+          autoAssignments.push({
+            component,
+            amount: component.defaultAmount || 0,
+            isAutoAssigned: true,
+          });
+          
+          // Mark this component type as assigned to prevent duplicate auto-assignments
+          assignedComponentTypes.add(`${component.type}-${component.name}`);
+        }
+      }
+
+      const allAssignments = [...userAssignments, ...autoAssignments];
       
       let grossPay = 0;
       let taxablePay = 0;
       let deductions = 0;
+      let employerContrib = 0;
       const breakdown: any = {};
 
       for (const assignment of allAssignments) {
@@ -136,15 +171,22 @@ export class PayrollService {
           amount: amount,
           type: assignment.component.type,
           autoAssigned: assignment.isAutoAssigned || false,
+          componentId: assignment.component.id,
         };
 
         if (assignment.component.type === 'BASIC' || assignment.component.type === 'ALLOWANCE') {
+          // Basic pay and allowances ADD to gross pay
           grossPay += amount;
           if (assignment.component.taxable !== false) {
             taxablePay += amount;
           }
         } else if (assignment.component.type === 'DEDUCTION') {
+          // Deductions SUBTRACT from net pay
           deductions += amount;
+        } else if (assignment.component.type === 'EMPLOYER_CONTRIBUTION') {
+          // Employer contributions don't affect employee's gross/net pay
+          // but add to total employer cost
+          employerContrib += amount;
         }
       }
 
@@ -166,6 +208,7 @@ export class PayrollService {
         nssf: 0,
         otherDeductions: deductions,
         netPay,
+        employerContrib,
         schoolId,
       });
 
@@ -174,6 +217,24 @@ export class PayrollService {
 
     if (salaryItems.length > 0) {
       await this.itemRepo.save(salaryItems);
+    }
+  }
+
+  private isAutoAssignComponentApplicable(component: any, staffDepartment: string, assignedComponentTypes: Set<string>): boolean {
+    // Check if this component type and name combination is already assigned
+    const componentKey = `${component.type}-${component.name}`;
+    if (assignedComponentTypes.has(componentKey)) {
+      return false;
+    }
+
+    // Department-specific components have priority over system-wide
+    if (component.department) {
+      // Only apply if staff is in the specified department
+      return component.department === staffDepartment;
+    } else {
+      // System-wide component: only apply if no department-specific component of same type exists
+      // This prevents system-wide from overriding department-specific
+      return true;
     }
   }
 
@@ -337,29 +398,54 @@ export class PayrollService {
     // Load auto-assign pay components
     const autoAssignComponents = await this.compRepo.find({
       where: { schoolId, autoAssign: true },
+      order: { department: 'ASC', createdAt: 'ASC' }, // Prioritize department-specific first
     });
 
     // Calculate salary for each staff member
     const staffWithSalaries = staff.map(staffMember => {
       const userAssignments = staffAssignments.get(staffMember.id) || [];
       const staffDepartment = this.getDepartmentFromUser(staffMember);
-      
-      // Add auto-assigned components based on department
-      const virtualAssignments = autoAssignComponents
-        .filter(component => 
-          component.department === staffDepartment || !component.department
-        )
-        .map(component => ({
-          component,
-          amount: component.defaultAmount || 0,
-          isAutoAssigned: true,
-        }));
 
-      const allAssignments = [...userAssignments, ...virtualAssignments];
+      // Create a map to track which components this staff already has manual assignments for
+      const manualComponentIds = new Set(userAssignments.map(a => a.componentId));
+
+      // Apply auto-assign logic with proper hierarchy
+      const autoAssignments: any[] = [];
+      const assignedComponentTypes = new Set<string>();
+
+      // First, track what component types are already manually assigned
+      userAssignments.forEach(assignment => {
+        assignedComponentTypes.add(`${assignment.component.type}-${assignment.component.name}`);
+      });
+
+      // Apply auto-assignments with hierarchy
+      for (const component of autoAssignComponents) {
+        // Skip if staff already has a manual assignment for this exact component
+        if (manualComponentIds.has(component.id)) {
+          continue;
+        }
+
+        // Check component applicability based on department hierarchy
+        const isApplicable = this.isAutoAssignComponentApplicable(component, staffDepartment, assignedComponentTypes);
+        
+        if (isApplicable) {
+          autoAssignments.push({
+            component,
+            amount: component.defaultAmount || 0,
+            isAutoAssigned: true,
+          });
+          
+          // Mark this component type as assigned to prevent duplicate auto-assignments
+          assignedComponentTypes.add(`${component.type}-${component.name}`);
+        }
+      }
+
+      const allAssignments = [...userAssignments, ...autoAssignments];
       
       let grossPay = 0;
       let taxablePay = 0;
       let deductions = 0;
+      let employerContrib = 0;
       const breakdown: any = {};
 
       for (const assignment of allAssignments) {
@@ -372,15 +458,21 @@ export class PayrollService {
           amount: amount,
           type: assignment.component.type,
           autoAssigned: assignment.isAutoAssigned || false,
+          componentId: assignment.component.id,
         };
 
         if (assignment.component.type === 'BASIC' || assignment.component.type === 'ALLOWANCE') {
+          // Basic pay and allowances ADD to gross pay
           grossPay += amount;
           if (assignment.component.taxable !== false) {
             taxablePay += amount;
           }
         } else if (assignment.component.type === 'DEDUCTION') {
+          // Deductions SUBTRACT from net pay
           deductions += amount;
+        } else if (assignment.component.type === 'EMPLOYER_CONTRIBUTION') {
+          // Employer contributions don't affect employee's gross/net pay
+          employerContrib += amount;
         }
       }
 
@@ -396,6 +488,7 @@ export class PayrollService {
         taxablePay,
         deductions,
         netPay,
+        employerContrib,
         breakdown,
         hasAssignments: allAssignments.length > 0,
       };
@@ -499,30 +592,55 @@ export class PayrollService {
       staffPayrolls.get(staffId).assignments.push(assignment);
     }
 
-    // Then, add auto-assignments based on department
-    for (const component of autoAssignComponents) {
-      for (const staff of allStaff) {
-        const staffDepartment = this.getDepartmentFromUser(staff);
-        if (component.department === staffDepartment || !component.department) {
-          const staffId = staff.id;
-          if (!staffPayrolls.has(staffId)) {
-            staffPayrolls.set(staffId, {
-              userId: staffId,
-              user: staff,
-              assignments: [],
-              grossPay: 0,
-              taxablePay: 0,
-              deductions: 0,
-            });
-          }
+    // Then, add auto-assignments based on department with proper hierarchy
+    for (const staff of allStaff) {
+      const staffId = staff.id;
+      const staffDepartment = this.getDepartmentFromUser(staff);
+      
+      // Initialize staff payroll if not exists
+      if (!staffPayrolls.has(staffId)) {
+        staffPayrolls.set(staffId, {
+          userId: staffId,
+          user: staff,
+          assignments: [],
+          grossPay: 0,
+          taxablePay: 0,
+          deductions: 0,
+        });
+      }
 
+      const payroll = staffPayrolls.get(staffId);
+      
+      // Create a map to track which components this staff already has manual assignments for
+      const manualComponentIds = new Set(payroll.assignments.map(a => a.componentId));
+      const assignedComponentTypes = new Set<string>();
+
+      // First, track what component types are already manually assigned
+      payroll.assignments.forEach(assignment => {
+        assignedComponentTypes.add(`${assignment.component.type}-${assignment.component.name}`);
+      });
+
+      // Apply auto-assignments with hierarchy
+      for (const component of autoAssignComponents) {
+        // Skip if staff already has a manual assignment for this exact component
+        if (manualComponentIds.has(component.id)) {
+          continue;
+        }
+
+        // Check component applicability based on department hierarchy
+        const isApplicable = this.isAutoAssignComponentApplicable(component, staffDepartment, assignedComponentTypes);
+        
+        if (isApplicable) {
           // Create a virtual assignment for auto-assigned component
           const virtualAssignment = {
             component: component,
             amount: component.defaultAmount || 0,
             isAutoAssigned: true,
           };
-          staffPayrolls.get(staffId).assignments.push(virtualAssignment);
+          payroll.assignments.push(virtualAssignment);
+          
+          // Mark this component type as assigned to prevent duplicate auto-assignments
+          assignedComponentTypes.add(`${component.type}-${component.name}`);
         }
       }
     }
@@ -553,13 +671,17 @@ export class PayrollService {
         };
 
         if (assignment.component.type === 'BASIC' || assignment.component.type === 'ALLOWANCE') {
+          // Basic pay and allowances ADD to gross pay
           grossPay += amount;
           if (assignment.component.taxable !== false) {
             taxablePay += amount;
           }
         } else if (assignment.component.type === 'DEDUCTION') {
+          // Deductions SUBTRACT from net pay
           deductions += amount;
         } else if (assignment.component.type === 'EMPLOYER_CONTRIBUTION') {
+          // Employer contributions don't affect employee's gross/net pay
+          // but add to total employer cost
           employerContrib += amount;
         }
       }

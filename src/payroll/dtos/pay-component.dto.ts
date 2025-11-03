@@ -55,6 +55,14 @@ export class UpdatePayComponentDto {
   formula?: string;
 
   @IsOptional()
+  @IsString()
+  department?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  autoAssign?: boolean;
+
+  @IsOptional()
   @IsBoolean()
   isActive?: boolean;
 }
