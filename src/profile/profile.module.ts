@@ -10,12 +10,14 @@ import { Finance } from '../user/entities/finance.entity';
 import { School } from '../school/entities/school.entity';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
+import { LogsModule } from '../logs/logs.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Teacher, Student, Parent, Finance, School]),
     AuthModule,
     ConfigModule,
+    LogsModule,
   ],
   controllers: [ProfileController],
   providers: [ProfileService],

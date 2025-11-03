@@ -66,4 +66,48 @@ export class ProfileResponseDto {
   gender?: string;
   occupation?: string;
   teacherId?: string;
+  createdAt?: string;
+  lastLoginAt?: string;
+  status?: string;
+}
+
+export class ProfileActivityDto {
+  id: string;
+  action: string;
+  date: string;
+  description?: string;
+}
+
+export class ProfileStatsDto {
+  loginCount: number;
+  lastLogin: string | null;
+  accountAge: number;
+  isActive: boolean;
+  
+  // Teacher stats
+  classesCount?: number;
+  studentsCount?: number;
+  assignmentsCreated?: number;
+  averageRating?: number;
+  
+  // Student stats
+  currentGPA?: number;
+  attendanceRate?: number;
+  assignmentsCompleted?: number;
+  activitiesCount?: number;
+  
+  // Admin stats
+  reportsGenerated?: number;
+  systemChanges?: number;
+  usersManaged?: number;
+  
+  // Parent stats
+  childrenCount?: number;
+  meetingsAttended?: number;
+  messagesExchanged?: number;
+  paymentsCount?: number;
+  
+  // Finance stats
+  transactionsProcessed?: number;
+  expensesManaged?: number;
 }
