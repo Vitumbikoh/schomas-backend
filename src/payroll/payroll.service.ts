@@ -15,6 +15,7 @@ import { SystemLoggingService } from '../logs/system-logging.service';
 import { Log } from '../logs/logs.entity';
 import { Expense, ExpenseCategory, ExpenseStatus, ExpensePriority } from '../expenses/entities/expense.entity';
 import { Role } from '../user/enums/role.enum';
+import * as PDFDocument from 'pdfkit';
 
 @Injectable()
 export class PayrollService {
@@ -1257,8 +1258,7 @@ export class PayrollService {
       throw new NotFoundException('Salary item not found for this staff member');
     }
 
-    // For now, return a simple text-based payslip as PDF-like buffer
-    // In a real implementation, you'd use a PDF library like pdfkit or puppeteer to embed images
+    // Get school information
     let schoolName = '';
     let schoolLogo = '';
     try {
@@ -1271,30 +1271,125 @@ export class PayrollService {
       // ignore school fetch errors
     }
 
-    const payslipContent = `
-PAYSLIP - ${run.period}
-========================
+    // Generate PDF using PDFKit
+    const doc = new PDFDocument({ margin: 50 });
+    const chunks: Buffer[] = [];
 
-${schoolName ? `School: ${schoolName}` : ''}
-${schoolLogo ? `School Icon: ${schoolLogo}` : ''}
+    // Collect PDF data
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    
+    return new Promise<Buffer>((resolve, reject) => {
+      doc.on('end', () => {
+        const pdfBuffer = Buffer.concat(chunks);
+        resolve(pdfBuffer);
+      });
 
-Staff Name: ${this.getStaffName(item.user)}
-Department: ${this.getDepartmentFromUser(item.user)}
+      doc.on('error', (error: Error) => {
+        reject(error);
+      });
 
-Gross Pay: MK ${item.grossPay.toLocaleString()}
-Taxable Pay: MK ${item.taxablePay.toLocaleString()}
-PAYE: MK ${item.paye.toLocaleString()}
-NHIF: MK ${item.nhif.toLocaleString()}
-NSSF: MK ${item.nssf.toLocaleString()}
-Other Deductions: MK ${item.otherDeductions.toLocaleString()}
+      try {
+        // Header with school information
+        if (schoolName) {
+          doc.fontSize(20).font('Helvetica-Bold').text(schoolName, { align: 'center' });
+          doc.moveDown(0.5);
+        }
 
-Net Pay: MK ${item.netPay.toLocaleString()}
+        // Title
+        doc.fontSize(18).font('Helvetica-Bold').text('PAYSLIP', { align: 'center' });
+        doc.fontSize(14).font('Helvetica').text(`Pay Period: ${run.period}`, { align: 'center' });
+        doc.moveDown(1);
 
-Generated on: ${new Date().toLocaleDateString()}
-    `.trim();
+        // Horizontal line
+        doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+        doc.moveDown(1);
 
-    // Convert to Buffer (in a real implementation, this would be a PDF buffer)
-    return Buffer.from(payslipContent, 'utf-8');
+        // Staff Information Section
+        doc.fontSize(16).font('Helvetica-Bold').text('STAFF INFORMATION', { underline: true });
+        doc.moveDown(0.5);
+        
+        const leftX = 70;
+        const rightX = 320;
+        let currentY = doc.y;
+
+        doc.fontSize(12).font('Helvetica');
+        doc.text('Staff Name:', leftX, currentY);
+        doc.text(this.getStaffName(item.user), leftX + 100, currentY);
+        
+        currentY += 20;
+        doc.text('Department:', leftX, currentY);
+        doc.text(this.getDepartmentFromUser(item.user), leftX + 100, currentY);
+
+        currentY += 20;
+        doc.text('Period:', leftX, currentY);
+        doc.text(run.period, leftX + 100, currentY);
+
+        doc.y = currentY + 30;
+
+        // Earnings Section
+        doc.fontSize(16).font('Helvetica-Bold').text('EARNINGS', { underline: true });
+        doc.moveDown(0.5);
+
+        currentY = doc.y;
+        doc.fontSize(12).font('Helvetica');
+        doc.text('Gross Pay:', leftX, currentY);
+        doc.text(`MK ${item.grossPay.toLocaleString()}`, rightX, currentY);
+
+        currentY += 20;
+        doc.text('Taxable Pay:', leftX, currentY);
+        doc.text(`MK ${item.taxablePay.toLocaleString()}`, rightX, currentY);
+
+        doc.y = currentY + 30;
+
+        // Deductions Section
+        doc.fontSize(16).font('Helvetica-Bold').text('DEDUCTIONS', { underline: true });
+        doc.moveDown(0.5);
+
+        currentY = doc.y;
+        doc.fontSize(12).font('Helvetica');
+        doc.text('PAYE Tax:', leftX, currentY);
+        doc.text(`MK ${item.paye.toLocaleString()}`, rightX, currentY);
+
+        currentY += 20;
+        doc.text('NHIF:', leftX, currentY);
+        doc.text(`MK ${item.nhif.toLocaleString()}`, rightX, currentY);
+
+        currentY += 20;
+        doc.text('NSSF:', leftX, currentY);
+        doc.text(`MK ${item.nssf.toLocaleString()}`, rightX, currentY);
+
+        currentY += 20;
+        doc.text('Other Deductions:', leftX, currentY);
+        doc.text(`MK ${item.otherDeductions.toLocaleString()}`, rightX, currentY);
+
+        const totalDeductions = item.paye + item.nhif + item.nssf + item.otherDeductions;
+        currentY += 30;
+        doc.fontSize(14).font('Helvetica-Bold');
+        doc.text('Total Deductions:', leftX, currentY);
+        doc.text(`MK ${totalDeductions.toLocaleString()}`, rightX, currentY);
+
+        doc.y = currentY + 40;
+
+        // Net Pay Section (highlighted)
+        doc.rect(50, doc.y - 10, 500, 40).fillAndStroke('#f0f0f0', '#333');
+        doc.fontSize(18).font('Helvetica-Bold').fillColor('#000');
+        doc.text('NET PAY:', leftX, doc.y + 5);
+        doc.text(`MK ${item.netPay.toLocaleString()}`, rightX, doc.y);
+
+        doc.y += 60;
+
+        // Footer
+        doc.fontSize(10).font('Helvetica').fillColor('#666');
+        doc.text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+        doc.text('This is a system-generated document', { align: 'center' });
+
+        // End the document
+        doc.end();
+
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 
   // Export payroll data
@@ -1309,8 +1404,7 @@ Generated on: ${new Date().toLocaleDateString()}
     });
 
     if (format === 'excel') {
-      // For now, return CSV format as Excel
-      // In a real implementation, you'd use a library like exceljs
+      // Return proper CSV format for Excel compatibility
       const headers = ['Staff Name', 'Department', 'Gross Pay', 'Taxable Pay', 'PAYE', 'NHIF', 'NSSF', 'Other Deductions', 'Net Pay'];
       const csvData = [
         headers.join(','),
@@ -1329,8 +1423,7 @@ Generated on: ${new Date().toLocaleDateString()}
 
       return Buffer.from(csvData, 'utf-8');
     } else {
-      // PDF format - simple text-based for now
-      // Include school header when available
+      // Generate proper PDF using PDFKit
       let schoolName = '';
       let schoolLogo = '';
       try {
@@ -1343,27 +1436,121 @@ Generated on: ${new Date().toLocaleDateString()}
         // ignore
       }
 
-      const pdfContent = `
-PAYROLL REPORT - ${run.period}
-==============================
+      const doc = new PDFDocument({ margin: 40 });
+      const chunks: Buffer[] = [];
 
-${schoolName ? `School: ${schoolName}` : ''}
-${schoolLogo ? `School Icon: ${schoolLogo}` : ''}
+      // Collect PDF data
+      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+      
+      return new Promise<Buffer>((resolve, reject) => {
+        doc.on('end', () => {
+          const pdfBuffer = Buffer.concat(chunks);
+          resolve(pdfBuffer);
+        });
 
-Total Staff: ${run.staffCount}
-Total Gross: MK ${run.totalGross.toLocaleString()}
-Total Net: MK ${run.totalNet.toLocaleString()}
+        doc.on('error', (error: Error) => {
+          reject(error);
+        });
 
-STAFF DETAILS:
-${items.map(item => `
-${this.getStaffName(item.user)} (${this.getDepartmentFromUser(item.user)})
-  Gross: MK ${item.grossPay.toLocaleString()} | Net: MK ${item.netPay.toLocaleString()}
-`).join('')}
+        try {
+          // Header
+          if (schoolName) {
+            doc.fontSize(20).font('Helvetica-Bold').text(schoolName, { align: 'center' });
+            doc.moveDown(0.5);
+          }
 
-Generated on: ${new Date().toLocaleDateString()}
-      `.trim();
+          doc.fontSize(18).font('Helvetica-Bold').text('PAYROLL REPORT', { align: 'center' });
+          doc.fontSize(14).font('Helvetica').text(`Pay Period: ${run.period}`, { align: 'center' });
+          doc.moveDown(1);
 
-      return Buffer.from(pdfContent, 'utf-8');
+          // Summary section
+          doc.fontSize(16).font('Helvetica-Bold').text('PAYROLL SUMMARY', { underline: true });
+          doc.moveDown(0.5);
+
+          const leftX = 60;
+          const rightX = 300;
+          let currentY = doc.y;
+
+          doc.fontSize(12).font('Helvetica');
+          doc.text('Total Staff:', leftX, currentY);
+          doc.text(run.staffCount.toString(), rightX, currentY);
+
+          currentY += 20;
+          doc.text('Total Gross Pay:', leftX, currentY);
+          doc.text(`MK ${run.totalGross.toLocaleString()}`, rightX, currentY);
+
+          currentY += 20;
+          doc.text('Total Net Pay:', leftX, currentY);
+          doc.text(`MK ${run.totalNet.toLocaleString()}`, rightX, currentY);
+
+          const totalDeductions = run.totalGross - run.totalNet;
+          currentY += 20;
+          doc.text('Total Deductions:', leftX, currentY);
+          doc.text(`MK ${totalDeductions.toLocaleString()}`, rightX, currentY);
+
+          doc.y = currentY + 30;
+
+          // Staff details table
+          doc.fontSize(16).font('Helvetica-Bold').text('STAFF DETAILS', { underline: true });
+          doc.moveDown(1);
+
+          // Table headers
+          const tableTop = doc.y;
+          const col1X = 40;  // Name
+          const col2X = 180; // Department
+          const col3X = 280; // Gross
+          const col4X = 360; // Deductions
+          const col5X = 450; // Net
+
+          doc.fontSize(11).font('Helvetica-Bold');
+          doc.text('Name', col1X, tableTop);
+          doc.text('Department', col2X, tableTop);
+          doc.text('Gross Pay', col3X, tableTop);
+          doc.text('Deductions', col4X, tableTop);
+          doc.text('Net Pay', col5X, tableTop);
+
+          // Draw header line
+          doc.moveTo(40, tableTop + 15).lineTo(550, tableTop + 15).stroke();
+
+          let rowY = tableTop + 25;
+          doc.fontSize(10).font('Helvetica');
+
+          items.forEach((item, index) => {
+            // Check if we need a new page
+            if (rowY > 720) {
+              doc.addPage();
+              rowY = 50;
+            }
+
+            const totalItemDeductions = item.paye + item.nhif + item.nssf + item.otherDeductions;
+            
+            doc.text(this.getStaffName(item.user).substring(0, 18), col1X, rowY);
+            doc.text(this.getDepartmentFromUser(item.user).substring(0, 12), col2X, rowY);
+            doc.text(`MK ${item.grossPay.toLocaleString()}`, col3X, rowY);
+            doc.text(`MK ${totalItemDeductions.toLocaleString()}`, col4X, rowY);
+            doc.text(`MK ${item.netPay.toLocaleString()}`, col5X, rowY);
+
+            rowY += 18;
+
+            // Add a subtle line between rows
+            if (index < items.length - 1) {
+              doc.strokeColor('#e0e0e0').moveTo(40, rowY - 2).lineTo(550, rowY - 2).stroke();
+            }
+          });
+
+          // Footer
+          doc.y = Math.max(rowY + 30, 720);
+          doc.fontSize(10).font('Helvetica').fillColor('#666');
+          doc.text(`Generated on: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`, { align: 'center' });
+          doc.text('This is a system-generated document', { align: 'center' });
+
+          // End the document
+          doc.end();
+
+        } catch (error) {
+          reject(error);
+        }
+      });
     }
   }
 }
