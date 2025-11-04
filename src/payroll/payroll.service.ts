@@ -7,10 +7,12 @@ import { PayrollApprovalHistory } from './entities/payroll-approval-history.enti
 import { PayComponent } from './entities/pay-component.entity';
 import { StaffPayAssignment } from './entities/staff-pay-assignment.entity';
 import { User } from '../user/entities/user.entity';
+import { School } from '../school/entities/school.entity';
 import { CreateRunDto } from './dtos/create-run.dto';
 import { CreatePayComponentDto, UpdatePayComponentDto } from './dtos/pay-component.dto';
 import { CreateStaffAssignmentDto, UpdateStaffAssignmentDto } from './dtos/staff-assignment.dto';
 import { SystemLoggingService } from '../logs/system-logging.service';
+import { Log } from '../logs/logs.entity';
 import { Expense, ExpenseCategory, ExpenseStatus, ExpensePriority } from '../expenses/entities/expense.entity';
 import { Role } from '../user/enums/role.enum';
 
@@ -22,7 +24,9 @@ export class PayrollService {
     @InjectRepository(PayrollApprovalHistory) private readonly historyRepo: Repository<PayrollApprovalHistory>,
     @InjectRepository(PayComponent) private readonly compRepo: Repository<PayComponent>,
     @InjectRepository(StaffPayAssignment) private readonly assignRepo: Repository<StaffPayAssignment>,
-    @InjectRepository(User) private readonly userRepository: Repository<User>,
+  @InjectRepository(User) private readonly userRepository: Repository<User>,
+  @InjectRepository(School) private readonly schoolRepository: Repository<School>,
+  @InjectRepository(Log) private readonly logRepository: Repository<Log>,
     @InjectRepository(Expense) private readonly expenseRepo: Repository<Expense>,
     private readonly dataSource: DataSource,
     private readonly logger: SystemLoggingService,
@@ -541,6 +545,20 @@ export class PayrollService {
         metadata: { staffCount: updatedRun.staffCount, totalGross: updatedRun.totalGross }
       });
 
+      // Record approval history entry
+      try {
+        await this.historyRepo.save(this.historyRepo.create({
+          runId: updatedRun.id,
+          action: 'PREPARED',
+          byUserId: user.sub || user.id,
+          comments: null,
+          schoolId,
+        }));
+      } catch (e) {
+        // Do not block the flow on history save failure
+        console.error('Failed to save payroll approval history (PREPARED):', e.message);
+      }
+
       return updatedRun;
     }
 
@@ -755,6 +773,18 @@ export class PayrollService {
     run.submittedBy = user.sub || user.id;
     await this.runRepo.save(run);
     await this.logger.logAction({ action: 'PAYROLL_RUN_SUBMITTED', module: 'PAYROLL', level: 'info', schoolId: user.schoolId, entityId: run.id, entityType: 'SalaryRun' });
+    // Save approval history
+    try {
+      await this.historyRepo.save(this.historyRepo.create({
+        runId: run.id,
+        action: 'SUBMITTED',
+        byUserId: user.sub || user.id,
+        comments: null,
+        schoolId: user.schoolId,
+      }));
+    } catch (e) {
+      console.error('Failed to save payroll approval history (SUBMITTED):', e.message);
+    }
     return run;
   }
 
@@ -765,6 +795,17 @@ export class PayrollService {
     run.approvedBy = user.sub || user.id;
     await this.runRepo.save(run);
     await this.logger.logAction({ action: 'PAYROLL_RUN_APPROVED', module: 'PAYROLL', level: 'info', schoolId: user.schoolId, entityId: run.id, entityType: 'SalaryRun' });
+    try {
+      await this.historyRepo.save(this.historyRepo.create({
+        runId: run.id,
+        action: 'APPROVED',
+        byUserId: user.sub || user.id,
+        comments: null,
+        schoolId: user.schoolId,
+      }));
+    } catch (e) {
+      console.error('Failed to save payroll approval history (APPROVED):', e.message);
+    }
     return run;
   }
 
@@ -774,6 +815,17 @@ export class PayrollService {
     run.status = 'REJECTED';
     await this.runRepo.save(run);
     await this.logger.logAction({ action: 'PAYROLL_RUN_REJECTED', module: 'PAYROLL', level: 'info', schoolId: user.schoolId, entityId: run.id, entityType: 'SalaryRun', metadata: { reason } });
+    try {
+      await this.historyRepo.save(this.historyRepo.create({
+        runId: run.id,
+        action: 'REJECTED',
+        byUserId: user.sub || user.id,
+        comments: reason || null,
+        schoolId: user.schoolId,
+      }));
+    } catch (e) {
+      console.error('Failed to save payroll approval history (REJECTED):', e.message);
+    }
     return run;
   }
 
@@ -816,6 +868,17 @@ export class PayrollService {
       await runRepo.save(run);
 
       await this.logger.logAction({ action: 'PAYROLL_RUN_FINALIZED', module: 'PAYROLL', level: 'info', schoolId: user.schoolId, entityId: run.id, entityType: 'SalaryRun', metadata: { postedExpenseId: expense.id } });
+      try {
+        await this.historyRepo.save(this.historyRepo.create({
+          runId: run.id,
+          action: 'FINALIZED',
+          byUserId: user.sub || user.id,
+          comments: null,
+          schoolId: user.schoolId,
+        }));
+      } catch (e) {
+        console.error('Failed to save payroll approval history (FINALIZED):', e.message);
+      }
 
       return run;
     });
@@ -855,16 +918,65 @@ export class PayrollService {
       order: { createdAt: 'ASC' },
     });
 
-    // Transform to match frontend expectations
-    return history.map(item => ({
-      id: item.id,
-      salaryRunId: item.runId,
-      action: item.action,
-      performedBy: item.byUserId || 'System',
-      performedByName: 'Unknown User', // TODO: Join with user table to get name
-      comments: item.comments,
-      createdAt: item.createdAt.toISOString(),
-    }));
+    // Transform to match frontend expectations and resolve performer name
+  const result: any[] = [];
+    for (const item of history) {
+      let performedByName = 'System';
+      if (item.byUserId) {
+        try {
+          const u = await this.userRepository.findOne({ where: { id: item.byUserId }, relations: ['teacher', 'finance'] });
+          performedByName = this.getStaffName(u);
+        } catch (e) {
+          performedByName = 'Unknown User';
+        }
+      }
+
+      result.push({
+        id: item.id,
+        salaryRunId: item.runId,
+        action: item.action,
+        performedBy: item.byUserId || 'System',
+        performedByName,
+        comments: item.comments,
+        createdAt: item.createdAt.toISOString(),
+      });
+    }
+
+    // If no dedicated payroll approval history exists yet, try to fallback to generic logs
+    if (result.length === 0) {
+      try {
+        const logs = await this.logRepository.find({
+          where: { entityType: 'SalaryRun', entityId: runId, module: 'PAYROLL' },
+          order: { timestamp: 'ASC' },
+        });
+
+        for (const l of logs) {
+          // Map known actions to approval actions
+          let mapped: string | null = null;
+          if (l.action === 'PAYROLL_RUN_PREPARED') mapped = 'PREPARED';
+          if (l.action === 'PAYROLL_RUN_SUBMITTED') mapped = 'SUBMITTED';
+          if (l.action === 'PAYROLL_RUN_APPROVED') mapped = 'APPROVED';
+          if (l.action === 'PAYROLL_RUN_REJECTED') mapped = 'REJECTED';
+          if (l.action === 'PAYROLL_RUN_FINALIZED') mapped = 'FINALIZED';
+          if (!mapped) continue;
+
+          const performer = (l.performedBy && (l.performedBy as any).name) ? (l.performedBy as any).name : (l.performedBy && (l.performedBy as any).email) ? (l.performedBy as any).email : 'System';
+          result.push({
+            id: l.id,
+            salaryRunId: runId,
+            action: mapped,
+            performedBy: (l.performedBy && (l.performedBy as any).id) ? (l.performedBy as any).id : 'System',
+            performedByName: performer,
+            comments: (l.metadata && (l.metadata as any).reason) ? (l.metadata as any).reason : null,
+            createdAt: (l.timestamp || new Date()).toISOString(),
+          });
+        }
+      } catch (e) {
+        // ignore fallback errors
+      }
+    }
+
+    return result;
   }
 
   // Pay Components
@@ -1145,23 +1257,38 @@ export class PayrollService {
       throw new NotFoundException('Salary item not found for this staff member');
     }
 
-    // For now, return a simple text-based payslip as PDF
-    // In a real implementation, you'd use a PDF library like pdfkit or puppeteer
+    // For now, return a simple text-based payslip as PDF-like buffer
+    // In a real implementation, you'd use a PDF library like pdfkit or puppeteer to embed images
+    let schoolName = '';
+    let schoolLogo = '';
+    try {
+      const school = await this.schoolRepository.findOne({ where: { id: schoolId } });
+      if (school) {
+        schoolName = school.name || '';
+        schoolLogo = (school.metadata as any)?.logo || '';
+      }
+    } catch (e) {
+      // ignore school fetch errors
+    }
+
     const payslipContent = `
 PAYSLIP - ${run.period}
 ========================
 
+${schoolName ? `School: ${schoolName}` : ''}
+${schoolLogo ? `School Icon: ${schoolLogo}` : ''}
+
 Staff Name: ${this.getStaffName(item.user)}
 Department: ${this.getDepartmentFromUser(item.user)}
 
-Gross Pay: $${item.grossPay.toLocaleString()}
-Taxable Pay: $${item.taxablePay.toLocaleString()}
-PAYE: $${item.paye.toLocaleString()}
-NHIF: $${item.nhif.toLocaleString()}
-NSSF: $${item.nssf.toLocaleString()}
-Other Deductions: $${item.otherDeductions.toLocaleString()}
+Gross Pay: MK ${item.grossPay.toLocaleString()}
+Taxable Pay: MK ${item.taxablePay.toLocaleString()}
+PAYE: MK ${item.paye.toLocaleString()}
+NHIF: MK ${item.nhif.toLocaleString()}
+NSSF: MK ${item.nssf.toLocaleString()}
+Other Deductions: MK ${item.otherDeductions.toLocaleString()}
 
-Net Pay: $${item.netPay.toLocaleString()}
+Net Pay: MK ${item.netPay.toLocaleString()}
 
 Generated on: ${new Date().toLocaleDateString()}
     `.trim();
@@ -1203,18 +1330,34 @@ Generated on: ${new Date().toLocaleDateString()}
       return Buffer.from(csvData, 'utf-8');
     } else {
       // PDF format - simple text-based for now
+      // Include school header when available
+      let schoolName = '';
+      let schoolLogo = '';
+      try {
+        const school = await this.schoolRepository.findOne({ where: { id: schoolId } });
+        if (school) {
+          schoolName = school.name || '';
+          schoolLogo = (school.metadata as any)?.logo || '';
+        }
+      } catch (e) {
+        // ignore
+      }
+
       const pdfContent = `
 PAYROLL REPORT - ${run.period}
 ==============================
 
+${schoolName ? `School: ${schoolName}` : ''}
+${schoolLogo ? `School Icon: ${schoolLogo}` : ''}
+
 Total Staff: ${run.staffCount}
-Total Gross: $${run.totalGross.toLocaleString()}
-Total Net: $${run.totalNet.toLocaleString()}
+Total Gross: MK ${run.totalGross.toLocaleString()}
+Total Net: MK ${run.totalNet.toLocaleString()}
 
 STAFF DETAILS:
 ${items.map(item => `
 ${this.getStaffName(item.user)} (${this.getDepartmentFromUser(item.user)})
-  Gross: $${item.grossPay.toLocaleString()} | Net: $${item.netPay.toLocaleString()}
+  Gross: MK ${item.grossPay.toLocaleString()} | Net: MK ${item.netPay.toLocaleString()}
 `).join('')}
 
 Generated on: ${new Date().toLocaleDateString()}

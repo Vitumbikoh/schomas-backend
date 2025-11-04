@@ -5,6 +5,8 @@ export enum PayComponentType {
   ALLOWANCE = 'ALLOWANCE',
   DEDUCTION = 'DEDUCTION',
   EMPLOYER_CONTRIBUTION = 'EMPLOYER_CONTRIBUTION',
+  BONUS = 'BONUS',
+  OVERTIME = 'OVERTIME',
 }
 
 export class CreatePayComponentDto {

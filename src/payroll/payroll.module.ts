@@ -9,11 +9,13 @@ import { PayComponent } from './entities/pay-component.entity';
 import { StaffPayAssignment } from './entities/staff-pay-assignment.entity';
 import { Expense } from '../expenses/entities/expense.entity';
 import { User } from '../user/entities/user.entity';
+import { School } from '../school/entities/school.entity';
+import { Log } from '../logs/logs.entity';
 import { LogsModule } from '../logs/logs.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([SalaryRun, SalaryItem, PayrollApprovalHistory, PayComponent, StaffPayAssignment, Expense, User]),
+    TypeOrmModule.forFeature([SalaryRun, SalaryItem, PayrollApprovalHistory, PayComponent, StaffPayAssignment, Expense, User, School, Log]),
     LogsModule,
   ],
   controllers: [PayrollController],
