@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { School } from '../../school/entities/school.entity';
+import { Class } from '../../classes/entity/class.entity';
 
 @Entity()
 export class Book {
@@ -20,6 +21,13 @@ export class Book {
 
   @Column({ type: 'int', default: 0 })
   availableCopies: number;
+
+  @Column({ type: 'uuid', nullable: true })
+  classId?: string;
+
+  @ManyToOne(() => Class, { onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'classId' })
+  class?: Class;
 
   @Column({ type: 'uuid' })
   schoolId: string;

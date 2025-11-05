@@ -6,6 +6,7 @@ import { Borrowing } from './entities/borrowing.entity';
 import { CreateBookDto, UpdateBookDto } from './dtos/book.dto';
 import { BorrowBookDto, ReturnBookDto } from './dtos/borrowing.dto';
 import { Student } from '../user/entities/student.entity';
+import { Class } from '../classes/entity/class.entity';
 
 @Injectable()
 export class LibraryService {
@@ -13,23 +14,34 @@ export class LibraryService {
     @InjectRepository(Book) private bookRepo: Repository<Book>,
   @InjectRepository(Borrowing) private borrowRepo: Repository<Borrowing>,
   @InjectRepository(Student) private studentRepo: Repository<Student>,
+  @InjectRepository(Class) private classRepo: Repository<Class>,
   ) {}
 
   // Books
   async listBooks(schoolId: string, q?: string) {
-    const qb = this.bookRepo.createQueryBuilder('b').where('b.schoolId = :schoolId', { schoolId });
+    const qb = this.bookRepo.createQueryBuilder('b')
+      .leftJoinAndSelect('b.class', 'class')
+      .where('b.schoolId = :schoolId', { schoolId });
     if (q) qb.andWhere('(LOWER(b.title) LIKE :q OR LOWER(b.author) LIKE :q OR b.isbn LIKE :q)', { q: `%${q.toLowerCase()}%` });
     return qb.orderBy('b.title', 'ASC').getMany();
   }
 
   async createBook(dto: CreateBookDto, actor: { role: string; schoolId?: string }) {
     if (!actor.schoolId) throw new ForbiddenException('Missing school scope');
+    
+    // Validate class exists if provided
+    if (dto.classId) {
+      const classExists = await this.classRepo.findOne({ where: { id: dto.classId, schoolId: actor.schoolId } });
+      if (!classExists) throw new NotFoundException('Class not found');
+    }
+
     const book = this.bookRepo.create({
       title: dto.title,
       author: dto.author,
       isbn: dto.isbn,
       totalCopies: dto.totalCopies,
       availableCopies: dto.totalCopies,
+      classId: dto.classId,
       schoolId: actor.schoolId,
     });
     return this.bookRepo.save(book);
@@ -39,6 +51,13 @@ export class LibraryService {
     const book = await this.bookRepo.findOne({ where: { id } });
     if (!book) throw new NotFoundException('Book not found');
     if (actor.role !== 'SUPER_ADMIN' && actor.schoolId !== book.schoolId) throw new ForbiddenException('Scope mismatch');
+    
+    // Validate class exists if provided
+    if (dto.classId) {
+      const classExists = await this.classRepo.findOne({ where: { id: dto.classId, schoolId: actor.schoolId } });
+      if (!classExists) throw new NotFoundException('Class not found');
+    }
+
     if (dto.totalCopies !== undefined) {
       const activeBorrowed = book.totalCopies - book.availableCopies;
       if (dto.totalCopies < activeBorrowed) {
@@ -50,6 +69,7 @@ export class LibraryService {
     if (dto.title !== undefined) book.title = dto.title;
     if (dto.author !== undefined) book.author = dto.author;
     if (dto.isbn !== undefined) book.isbn = dto.isbn;
+    if (dto.classId !== undefined) book.classId = dto.classId;
     return this.bookRepo.save(book);
   }
 
@@ -68,11 +88,33 @@ export class LibraryService {
     if (!actor.schoolId) throw new ForbiddenException('Missing school scope');
     if (!dto.bookId && !dto.bookName) throw new BadRequestException('Provide bookId or bookName');
 
+    // Get student with class information
+    const student = await this.studentRepo.findOne({ 
+      where: { id: dto.studentId, schoolId: actor.schoolId },
+      relations: ['class']
+    });
+    if (!student) throw new NotFoundException('Student not found');
+
     let book: Book | null = null;
     if (dto.bookId) {
-      book = await this.bookRepo.findOne({ where: { id: dto.bookId, schoolId: actor.schoolId } });
+      book = await this.bookRepo.findOne({ 
+        where: { id: dto.bookId, schoolId: actor.schoolId },
+        relations: ['class']
+      });
       if (!book) throw new NotFoundException('Book not found');
       if (book.availableCopies <= 0) throw new BadRequestException('No copies available');
+
+      // Check class restrictions - students can borrow books for their class level and below, plus N/A books
+      if (book.classId && book.class && student.class) {
+        const bookClass = book.class;
+        const studentClass = student.class;
+        
+        // Student can borrow if book class numerical level <= student class numerical level
+        if (bookClass.numericalName > studentClass.numericalName) {
+          throw new BadRequestException(`This book is for ${bookClass.name} students. You can only borrow books for your class level (${studentClass.name}) and below.`);
+        }
+      }
+      
       book.availableCopies -= 1;
       await this.bookRepo.save(book);
     }
@@ -155,7 +197,8 @@ export class LibraryService {
     const { schoolId, q } = params;
     const limit = Math.min(Math.max(params.limit ?? 10, 1), 50);
     const qb = this.studentRepo
-      .createQueryBuilder('student');
+      .createQueryBuilder('student')
+      .leftJoinAndSelect('student.class', 'class');
 
     if (schoolId) {
       qb.where('student.schoolId = :schoolId', { schoolId });
@@ -174,7 +217,13 @@ export class LibraryService {
       .limit(limit)
       .getMany();
 
-    // Return minimal fields for UI
-    return rows.map(s => ({ id: s.id, studentId: s.studentId, firstName: s.firstName, lastName: s.lastName }));
+    // Return minimal fields for UI including class information
+    return rows.map(s => ({ 
+      id: s.id, 
+      studentId: s.studentId, 
+      firstName: s.firstName, 
+      lastName: s.lastName,
+      class: s.class ? { id: s.class.id, name: s.class.name, numericalName: s.class.numericalName } : undefined
+    }));
   }
 }

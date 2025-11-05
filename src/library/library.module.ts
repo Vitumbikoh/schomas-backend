@@ -8,10 +8,11 @@ import { AuthModule } from '../auth/auth.module';
 import { UsersModule } from '../user/users.module';
 import { ConfigModule } from '../config/config.module';
 import { Student } from '../user/entities/student.entity';
+import { Class } from '../classes/entity/class.entity';
 
 @Module({
   imports: [
-  TypeOrmModule.forFeature([Book, Borrowing, Student]),
+  TypeOrmModule.forFeature([Book, Borrowing, Student, Class]),
   forwardRef(() => AuthModule),
   forwardRef(() => UsersModule),
   ConfigModule,
