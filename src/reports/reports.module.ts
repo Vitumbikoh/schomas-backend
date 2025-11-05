@@ -26,6 +26,7 @@ import { FinanceModule } from 'src/finance/finance.module';
 import { LogsModule } from 'src/logs/logs.module';
 import { AggregationModule } from 'src/aggregation/aggregation.module';
 import { ReportsMapperService } from './reports-mapper.service';
+import { LibraryModule } from '../library/library.module';
 
 @Module({
   imports: [
@@ -47,7 +48,8 @@ import { ReportsMapperService } from './reports-mapper.service';
     TeachersModule,
     FinanceModule,
   LogsModule,
-  AggregationModule
+  AggregationModule,
+  LibraryModule
   ],
   controllers: [ReportsController],
   providers: [

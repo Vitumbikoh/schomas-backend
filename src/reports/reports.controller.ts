@@ -21,6 +21,7 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 import { FeePayment } from '../finance/entities/fee-payment.entity';
 import { ReportsMapperService } from './reports-mapper.service';
 import { ComprehensiveReportDTO } from './dto/report-dtos';
+import { LibraryService } from '../library/library.service';
 
 @ApiTags('Reports')
 @ApiBearerAuth()
@@ -36,6 +37,7 @@ export class ReportsController {
     private readonly financeService: FinanceService,
     private readonly settingsService: SettingsService,
     private readonly reportsMapper: ReportsMapperService,
+    private readonly libraryService: LibraryService,
   ) {}
 
   private readonly logger = new Logger(ReportsController.name);
@@ -323,6 +325,184 @@ export class ReportsController {
       return acad && stu && term && cls;
     });
     return filtered.map(p => this.reportsMapper.mapPayment(p));
+  }
+
+  @Get('library/most-borrowed')
+  @ApiOperation({ summary: 'Get most borrowed books report with filters' })
+  async getLibraryMostBorrowedReport(
+    @Request() req,
+    @Query('classId') classId?: string,
+    @Query('bookId') bookId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === Role.SUPER_ADMIN;
+    const targetSchoolId = superAdmin ? (req.query.schoolId as string) : user.schoolId;
+    this.logger.debug(`GET /admin/reports/library/most-borrowed schoolId=${targetSchoolId} classId=${classId} bookId=${bookId} limit=${limit}`);
+    
+    const mostBorrowed = await this.libraryService.reportMostBorrowed(targetSchoolId);
+    
+    // Apply filters if provided
+    let filtered = mostBorrowed;
+    if (bookId) {
+      filtered = filtered.filter(mb => mb.bookId === bookId);
+    }
+    
+    if (limit) {
+      const limitNum = parseInt(limit, 10);
+      if (!isNaN(limitNum)) {
+        filtered = filtered.slice(0, limitNum);
+      }
+    }
+    
+    return filtered;
+  }
+
+  @Get('library/overdue')
+  @ApiOperation({ summary: 'Get overdue books report with filters' })
+  async getLibraryOverdueReport(
+    @Request() req,
+    @Query('classId') classId?: string,
+    @Query('studentId') studentId?: string,
+    @Query('bookId') bookId?: string,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === Role.SUPER_ADMIN;
+    const targetSchoolId = superAdmin ? (req.query.schoolId as string) : user.schoolId;
+    this.logger.debug(`GET /admin/reports/library/overdue schoolId=${targetSchoolId} classId=${classId} studentId=${studentId} bookId=${bookId}`);
+    
+    const overdue = await this.libraryService.reportOverdue(targetSchoolId);
+    
+    // Apply filters if provided
+    let filtered = overdue;
+    if (studentId) {
+      filtered = filtered.filter(od => od.studentId === studentId);
+    }
+    if (bookId) {
+      filtered = filtered.filter(od => od.bookId === bookId);
+    }
+    
+    return filtered;
+  }
+
+  @Get('library/borrowings')
+  @ApiOperation({ summary: 'Get library borrowings report with filters' })
+  async getLibraryBorrowingsReport(
+    @Request() req,
+    @Query('classId') classId?: string,
+    @Query('studentId') studentId?: string,
+    @Query('bookId') bookId?: string,
+    @Query('activeOnly') activeOnly?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === Role.SUPER_ADMIN;
+    const targetSchoolId = superAdmin ? (req.query.schoolId as string) : user.schoolId;
+    this.logger.debug(`GET /admin/reports/library/borrowings schoolId=${targetSchoolId} classId=${classId} studentId=${studentId} bookId=${bookId} activeOnly=${activeOnly}`);
+    
+    const borrowings = await this.libraryService.listBorrowings(targetSchoolId, { 
+      studentId, 
+      activeOnly: activeOnly === 'true' 
+    });
+    
+    // Apply additional filters
+    let filtered = borrowings;
+    if (bookId) {
+      filtered = filtered.filter(b => b.bookId === bookId);
+    }
+    if (dateFrom) {
+      const fromDate = new Date(dateFrom);
+      filtered = filtered.filter(b => new Date(b.borrowedAt) >= fromDate);
+    }
+    if (dateTo) {
+      const toDate = new Date(dateTo);
+      filtered = filtered.filter(b => new Date(b.borrowedAt) <= toDate);
+    }
+    
+    return filtered;
+  }
+
+  @Get('library/most-borrowed/export/excel')
+  @ApiOperation({ summary: 'Export most borrowed books report as Excel' })
+  async exportLibraryMostBorrowedExcel(
+    @Request() req,
+    @Query('classId') classId?: string,
+    @Query('bookId') bookId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const data = await this.getLibraryMostBorrowedReport(req, classId, bookId, limit);
+    // In a real implementation, you would generate Excel file here
+    // For now, return the data (you can implement Excel generation later)
+    return { message: 'Excel export not yet implemented', data };
+  }
+
+  @Get('library/most-borrowed/export/pdf')
+  @ApiOperation({ summary: 'Export most borrowed books report as PDF' })
+  async exportLibraryMostBorrowedPDF(
+    @Request() req,
+    @Query('classId') classId?: string,
+    @Query('bookId') bookId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const data = await this.getLibraryMostBorrowedReport(req, classId, bookId, limit);
+    // In a real implementation, you would generate PDF file here
+    // For now, return the data (you can implement PDF generation later)
+    return { message: 'PDF export not yet implemented', data };
+  }
+
+  @Get('library/overdue/export/excel')
+  @ApiOperation({ summary: 'Export overdue books report as Excel' })
+  async exportLibraryOverdueExcel(
+    @Request() req,
+    @Query('classId') classId?: string,
+    @Query('studentId') studentId?: string,
+    @Query('bookId') bookId?: string,
+  ) {
+    const data = await this.getLibraryOverdueReport(req, classId, studentId, bookId);
+    return { message: 'Excel export not yet implemented', data };
+  }
+
+  @Get('library/overdue/export/pdf')
+  @ApiOperation({ summary: 'Export overdue books report as PDF' })
+  async exportLibraryOverduePDF(
+    @Request() req,
+    @Query('classId') classId?: string,
+    @Query('studentId') studentId?: string,
+    @Query('bookId') bookId?: string,
+  ) {
+    const data = await this.getLibraryOverdueReport(req, classId, studentId, bookId);
+    return { message: 'PDF export not yet implemented', data };
+  }
+
+  @Get('library/borrowings/export/excel')
+  @ApiOperation({ summary: 'Export library borrowings report as Excel' })
+  async exportLibraryBorrowingsExcel(
+    @Request() req,
+    @Query('classId') classId?: string,
+    @Query('studentId') studentId?: string,
+    @Query('bookId') bookId?: string,
+    @Query('activeOnly') activeOnly?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ) {
+    const data = await this.getLibraryBorrowingsReport(req, classId, studentId, bookId, activeOnly, dateFrom, dateTo);
+    return { message: 'Excel export not yet implemented', data };
+  }
+
+  @Get('library/borrowings/export/pdf')
+  @ApiOperation({ summary: 'Export library borrowings report as PDF' })
+  async exportLibraryBorrowingsPDF(
+    @Request() req,
+    @Query('classId') classId?: string,
+    @Query('studentId') studentId?: string,
+    @Query('bookId') bookId?: string,
+    @Query('activeOnly') activeOnly?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ) {
+    const data = await this.getLibraryBorrowingsReport(req, classId, studentId, bookId, activeOnly, dateFrom, dateTo);
+    return { message: 'PDF export not yet implemented', data };
   }
 
   private async getStudentsByGrade(students: any[]): Promise<Array<{ grade: string; count: number }>> {
