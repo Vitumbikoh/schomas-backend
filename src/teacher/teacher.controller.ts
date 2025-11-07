@@ -13,7 +13,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { Like } from 'typeorm';
+import { Like, Between } from 'typeorm';
 import { Teacher } from 'src/user/entities/teacher.entity';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { TeachersService } from './teacher.service';

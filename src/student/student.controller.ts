@@ -22,7 +22,7 @@ import { UpdateStudentDto } from 'src/student/dto/update-student.dto';
 import { StudentsService } from 'src/student/student.service';
 import { CreateStudentDto } from 'src/user/dtos/create-student.dto';
 import { Role } from 'src/user/enums/role.enum';
-import { Like } from 'typeorm';
+import { Like, Between } from 'typeorm';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Logger } from '@nestjs/common';
 import { LearningMaterialsService } from 'src/learning-materials/learning-materials.service';

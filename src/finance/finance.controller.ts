@@ -728,7 +728,7 @@ export class FinanceController {
   @Get('total-finances')
   @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({
-    summary: 'Get total financial metrics with optional date filtering',
+    summary: 'Get total financial metrics with trend data',
   })
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
@@ -737,34 +737,74 @@ export class FinanceController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('schoolId') schoolIdOverride?: string,
-  ) {
+  ): Promise<{
+    success: boolean;
+    totalProcessedPayments: number;
+    totalApprovedBudgets: number;
+    totalRevenue: string;
+    pendingStudents: number;
+    trend: { value: number; isPositive: boolean; hasComparativeData: boolean };
+    monthlyRevenue: number;
+    monthlyRevenueLastMonth: number;
+    outstandingFees: number;
+    paymentsToday: number;
+    collectionRate: number;
+    dateRange?: { start?: string; end?: string };
+    filters: { schoolId?: string };
+    fallbackUsed?: boolean;
+  }> {
     try {
-      const dateRange = {
-        startDate: startDate ? new Date(startDate) : undefined,
-        endDate: endDate ? new Date(endDate) : undefined,
-      };
       const isSuper = req.user?.role === 'SUPER_ADMIN';
       const schoolScope = isSuper
         ? schoolIdOverride || req.user?.schoolId
         : req.user?.schoolId;
-      const stats = await this.financeService.getFinancialStats(
-        dateRange,
-        schoolScope,
-        isSuper,
-      );
+      
+      // Get total financial stats and dashboard metrics
+      const [totalStats, metrics] = await Promise.all([
+        this.financeService.getFinancialStats(
+          startDate || endDate ? {
+            startDate: startDate ? new Date(startDate) : undefined,
+            endDate: endDate ? new Date(endDate) : undefined,
+          } : undefined,
+          schoolScope,
+          isSuper,
+        ),
+        this.financeService.calculateDashboardMetrics(
+          schoolScope,
+          isSuper,
+        ),
+      ]);
 
       // If term filtered stats are zero, attempt simple fallback without term filter
-      if (schoolScope && !isSuper && stats.totalProcessedPayments === 0 && Number(stats.totalRevenue) === 0) {
+      if (schoolScope && !isSuper && totalStats.totalProcessedPayments === 0 && Number(totalStats.totalRevenue) === 0) {
         const simple = await this.financeService.getSimpleTotalsForSchool(schoolScope);
         if (simple.rawTotal > 0) {
-          stats.totalProcessedPayments = simple.count;
-          stats.totalRevenue = simple.rawTotal;
-          (stats as any).fallbackUsed = true;
+          totalStats.totalProcessedPayments = simple.count;
+          totalStats.totalRevenue = simple.rawTotal;
+          (totalStats as any).fallbackUsed = true;
         }
       }
 
-      // Defensive: ensure numeric
-      const revenueNumber = Number(stats.totalRevenue) || 0;
+      // Calculate trend percentage based on monthly comparison
+      let trendValue = 0;
+      let isPositive = true;
+
+      if (metrics.monthlyRevenueLastMonth > 0) {
+        // Normal case: compare this month vs last month
+        trendValue = Math.round(
+          ((metrics.monthlyRevenue - metrics.monthlyRevenueLastMonth) / metrics.monthlyRevenueLastMonth) * 100,
+        );
+        isPositive = trendValue >= 0;
+      } else if (metrics.monthlyRevenue > 0 && metrics.monthlyRevenueLastMonth === 0) {
+        // Special case: revenue this month but none last month
+        // Instead of 100%, show "New" or a more meaningful indicator
+        trendValue = 0; // We'll handle this in the frontend
+        isPositive = true;
+      }
+      // If both months are 0, trendValue stays 0
+
+      // Use total accumulated revenue for display, not just monthly
+      const revenueNumber = Number(totalStats.totalRevenue) || 0;
 
       await this.systemLoggingService.logAction({
         action: 'FINANCE_TOTALS_QUERIED',
@@ -772,26 +812,40 @@ export class FinanceController {
         level: 'debug',
         schoolId: schoolScope,
         metadata: {
-          startDate: dateRange.startDate?.toISOString(),
-          endDate: dateRange.endDate?.toISOString(),
-          totalProcessedPayments: stats.totalProcessedPayments,
-          totalApprovedBudgets: stats.totalApprovedBudgets,
-          pendingStudents: stats.pendingStudents,
-          rawRevenue: stats.totalRevenue,
-          revenueFormatted: `$${revenueNumber.toFixed(2)}`,
+          startDate: startDate,
+          endDate: endDate,
+          totalRevenue: totalStats.totalRevenue,
+          monthlyRevenue: metrics.monthlyRevenue,
+          monthlyRevenueLastMonth: metrics.monthlyRevenueLastMonth,
+          outstandingFees: metrics.outstandingFees,
+          paymentsToday: metrics.paymentsToday,
+          collectionRate: metrics.collectionRate,
+          trendValue,
+          isPositive,
+          fallbackUsed: totalStats.fallbackUsed || false,
         },
       });
 
       return {
         success: true,
-        ...stats,
+        ...totalStats, // Include all the original stats (totalProcessedPayments, totalApprovedBudgets, pendingStudents)
         totalRevenue: `$${revenueNumber.toFixed(2)}`,
-        dateRange: {
-          start: dateRange.startDate?.toISOString(),
-          end: dateRange.endDate?.toISOString(),
+        trend: {
+          value: Math.abs(trendValue),
+          isPositive,
+          hasComparativeData: metrics.monthlyRevenueLastMonth > 0, // Flag to indicate if trend is meaningful
         },
+        monthlyRevenue: metrics.monthlyRevenue,
+        monthlyRevenueLastMonth: metrics.monthlyRevenueLastMonth,
+        outstandingFees: metrics.outstandingFees,
+        paymentsToday: metrics.paymentsToday,
+        collectionRate: metrics.collectionRate,
+        dateRange: startDate || endDate ? {
+          start: startDate,
+          end: endDate,
+        } : undefined,
         filters: { schoolId: schoolScope },
-        fallbackUsed: stats.fallbackUsed || false,
+        fallbackUsed: totalStats.fallbackUsed || false,
       };
     } catch (error) {
       await this.systemLoggingService.logSystemError(
