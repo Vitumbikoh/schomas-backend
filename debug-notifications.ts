@@ -42,8 +42,8 @@ async function testNotifications() {
     
     console.log('✅ Notification created:', notification);
     
-    // Check all notifications
-    const { notifications, total } = await notificationService.findAll(1, 10);
+    // Check all notifications (as SUPER_ADMIN)
+    const { notifications, total } = await notificationService.findAll(1, 10, undefined, 'SUPER_ADMIN');
     console.log(`📊 Total notifications in database: ${total}`);
     console.log('📝 Recent notifications:', notifications.map(n => ({
       id: n.id,
@@ -54,12 +54,12 @@ async function testNotifications() {
       createdAt: n.createdAt
     })));
     
-    // Check unread count
-    const unreadCount = await notificationService.getUnreadCount();
+    // Check unread count (as SUPER_ADMIN)
+    const unreadCount = await notificationService.getUnreadCount(undefined, 'SUPER_ADMIN');
     console.log(`🔔 Unread notifications: ${unreadCount}`);
     
-    // Check school-specific notifications
-    const schoolNotifications = await notificationService.findAll(1, 10, testSchool.id);
+    // Check school-specific notifications (as ADMIN for that school)
+    const schoolNotifications = await notificationService.findAll(1, 10, testSchool.id, 'ADMIN');
     console.log(`🏫 School-specific notifications: ${schoolNotifications.total}`);
     
   } catch (error) {
