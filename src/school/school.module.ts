@@ -8,9 +8,10 @@ import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
 import { UsersModule } from '../user/users.module';
 import { DatabaseModule } from '../database/database.module';
+import { NotificationModule } from '../notifications/notification.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([School, SchoolAdminCredentials]), AuthModule, ConfigModule, UsersModule, DatabaseModule],
+  imports: [TypeOrmModule.forFeature([School, SchoolAdminCredentials]), AuthModule, ConfigModule, UsersModule, DatabaseModule, NotificationModule],
   controllers: [SchoolsController],
   providers: [SchoolsService],
   exports: [SchoolsService],

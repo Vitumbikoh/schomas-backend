@@ -10,6 +10,8 @@ import { Term } from '../settings/entities/term.entity';
 import { AcademicCalendar } from '../settings/entities/academic-calendar.entity';
 import { Enrollment } from '../enrollment/entities/enrollment.entity';
 import { School } from '../school/entities/school.entity';
+import { NotificationService } from '../notifications/notification.service';
+import { NotificationType, NotificationPriority } from '../notifications/entities/notification.entity';
 import PDFDocument = require('pdfkit');
 import { PassThrough } from 'stream';
 
@@ -23,6 +25,7 @@ export class BillingService {
     @InjectRepository(AcademicCalendar) private calendarRepo: Repository<AcademicCalendar>,
   @InjectRepository(Enrollment) private enrollmentRepo: Repository<Enrollment>,
   @InjectRepository(School) private schoolRepo: Repository<School>,
+    private notificationService: NotificationService,
   ) {}
 
   async setSchoolPlan(dto: SetSchoolBillingPlanDto, actor: { role: string; schoolId?: string }) {
@@ -170,7 +173,28 @@ export class BillingService {
       notes: dto.notes,
       currency: plan.currency,
     });
-    return this.invoiceRepo.save(invoice);
+    const savedInvoice = await this.invoiceRepo.save(invoice);
+
+    // Create notification for invoice generation
+    try {
+      await this.notificationService.create({
+        title: 'New Invoice Generated',
+        message: `Invoice ${savedInvoice.invoiceNumber} has been generated for ${savedInvoice.currency} ${savedInvoice.totalAmount}`,
+        type: NotificationType.SYSTEM,
+        priority: NotificationPriority.MEDIUM,
+        schoolId,
+        metadata: {
+          invoiceId: savedInvoice.id,
+          invoiceNumber: savedInvoice.invoiceNumber,
+          amount: savedInvoice.totalAmount,
+          currency: savedInvoice.currency
+        }
+      });
+    } catch (error) {
+      console.error('Failed to create invoice notification:', error);
+    }
+
+    return savedInvoice;
   }
 
   async listInvoices(schoolId: string) {
@@ -201,8 +225,33 @@ export class BillingService {
     await this.paymentRepo.save(payment);
     const newPaid = Number(invoice.amountPaid) + amount;
     let status: BillingInvoice['status'] = 'partial';
-    if (newPaid >= Number(invoice.totalAmount)) status = 'paid';
+    const isPaidInFull = newPaid >= Number(invoice.totalAmount);
+    if (isPaidInFull) status = 'paid';
     await this.invoiceRepo.update(invoice.id, { amountPaid: newPaid, status });
+
+    // Create notification for payment
+    try {
+      const notificationTitle = isPaidInFull ? 'Invoice Paid in Full' : 'Partial Payment Received';
+      await this.notificationService.create({
+        title: notificationTitle,
+        message: `Payment of ${invoice.currency} ${amount} received for invoice ${invoice.invoiceNumber}${isPaidInFull ? ' - Invoice now fully paid' : ''}`,
+        type: NotificationType.SYSTEM,
+        priority: isPaidInFull ? NotificationPriority.MEDIUM : NotificationPriority.LOW,
+        schoolId,
+        metadata: {
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          paymentAmount: amount,
+          totalPaid: newPaid,
+          totalAmount: invoice.totalAmount,
+          currency: invoice.currency,
+          isPaidInFull
+        }
+      });
+    } catch (error) {
+      console.error('Failed to create payment notification:', error);
+    }
+
     return this.getInvoice(invoice.id, schoolId);
   }
 

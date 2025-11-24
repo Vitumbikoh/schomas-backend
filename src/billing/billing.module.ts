@@ -11,12 +11,14 @@ import { Enrollment } from '../enrollment/entities/enrollment.entity';
 import { School } from '../school/entities/school.entity';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
+import { NotificationModule } from '../notifications/notification.module';
 
 @Module({
   imports: [
   TypeOrmModule.forFeature([SchoolBillingPlan, BillingInvoice, BillingPayment, Term, AcademicCalendar, Enrollment, School]),
   AuthModule,
   ConfigModule,
+  NotificationModule,
   ],
   controllers: [BillingController],
   providers: [BillingService],

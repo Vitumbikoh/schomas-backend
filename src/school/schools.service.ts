@@ -8,6 +8,8 @@ import * as bcrypt from 'bcrypt';
 import { UsersService } from '../user/user.service';
 import { Role } from '../user/enums/role.enum';
 import { SchoolAdminCredentialsDto, SchoolAdminCredentialsListDto } from './dto/school-admin-credentials.dto';
+import { NotificationService } from '../notifications/notification.service';
+import { NotificationType, NotificationPriority } from '../notifications/entities/notification.entity';
 
 interface CreateSchoolDto {
   name: string;
@@ -31,6 +33,7 @@ export class SchoolsService {
     @InjectRepository(SchoolAdminCredentials) private credentialsRepo: Repository<SchoolAdminCredentials>,
     private readonly usersService: UsersService,
     private readonly dataSource: DataSource,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async create(dto: CreateSchoolDto) {
@@ -40,7 +43,7 @@ export class SchoolsService {
       throw new BadRequestException('School name or code already exists');
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const schoolEntity = manager.create(School, {
         name: dto.name,
         code: dto.code,
@@ -99,8 +102,45 @@ export class SchoolsService {
           forcePasswordReset: true,
         },
         seeded: !!dto.seedDefaults,
+        finalUsername,
+        email
       };
     });
+
+    // Create notification AFTER the transaction is committed
+    try {
+      console.log(`🔔 Creating notification for school: ${result.school.name} (${result.school.id})`);
+      const notification = await this.notificationService.create({
+        title: 'New School Created',
+        message: `School "${result.school.name}" (${result.school.code}) has been successfully created with admin account`,
+        type: NotificationType.SYSTEM,
+        priority: NotificationPriority.HIGH,
+        schoolId: result.school.id,
+        metadata: {
+          schoolId: result.school.id,
+          schoolName: result.school.name,
+          schoolCode: result.school.code,
+          adminUsername: result.finalUsername,
+          adminEmail: result.email
+        }
+      });
+      console.log(`✅ School creation notification created:`, notification.id);
+    } catch (error) {
+      console.error('❌ Failed to create school creation notification:', error);
+      console.error('Error details:', error.stack);
+    }
+
+    return {
+      school: result.school,
+      admin: {
+        id: result.admin.id,
+        username: result.finalUsername,
+        email: result.admin.email,
+        tempPassword: result.admin.tempPassword,
+        forcePasswordReset: true,
+      },
+      seeded: result.seeded,
+    };
   }
 
   // Placeholder for seeding default tenant data (periods, fee categories, etc.)
@@ -146,16 +186,89 @@ export class SchoolsService {
 
   async update(id: string, dto: UpdateSchoolDto) {
     const school = await this.findOne(id);
+    const originalData = { ...school };
     Object.assign(school, dto);
-    return this.repo.save(school);
+    const updatedSchool = await this.repo.save(school);
+
+    // Create notification for school update
+    try {
+      const changes = [];
+      if (dto.name && dto.name !== originalData.name) changes.push(`name changed to "${dto.name}"`);
+      if (dto.code && dto.code !== originalData.code) changes.push(`code changed to "${dto.code}"`);
+      if (dto.status && dto.status !== originalData.status) changes.push(`status changed to ${dto.status}`);
+      
+      if (changes.length > 0) {
+        await this.notificationService.create({
+          title: 'School Information Updated',
+          message: `School "${updatedSchool.name}" has been updated: ${changes.join(', ')}`,
+          type: NotificationType.SYSTEM,
+          priority: NotificationPriority.MEDIUM,
+          schoolId: updatedSchool.id,
+          metadata: {
+            schoolId: updatedSchool.id,
+            schoolName: updatedSchool.name,
+            changes: dto,
+            originalData: { name: originalData.name, code: originalData.code, status: originalData.status }
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Failed to create school update notification:', error);
+    }
+
+    return updatedSchool;
   }
 
   async suspend(id: string) {
-    return this.update(id, { status: 'SUSPENDED' });
+    const school = await this.findOne(id);
+    const updatedSchool = await this.update(id, { status: 'SUSPENDED' });
+
+    // Create specific notification for suspension
+    try {
+      await this.notificationService.create({
+        title: 'School Suspended',
+        message: `School "${school.name}" (${school.code}) has been suspended. Access has been restricted.`,
+        type: NotificationType.ALERT,
+        priority: NotificationPriority.HIGH,
+        schoolId: school.id,
+        metadata: {
+          schoolId: school.id,
+          schoolName: school.name,
+          previousStatus: school.status,
+          action: 'suspended'
+        }
+      });
+    } catch (error) {
+      console.error('Failed to create school suspension notification:', error);
+    }
+
+    return updatedSchool;
   }
 
   async activate(id: string) {
-    return this.update(id, { status: 'ACTIVE' });
+    const school = await this.findOne(id);
+    const updatedSchool = await this.update(id, { status: 'ACTIVE' });
+
+    // Create specific notification for activation
+    try {
+      await this.notificationService.create({
+        title: 'School Activated',
+        message: `School "${school.name}" (${school.code}) has been activated. Access has been restored.`,
+        type: NotificationType.SYSTEM,
+        priority: NotificationPriority.MEDIUM,
+        schoolId: school.id,
+        metadata: {
+          schoolId: school.id,
+          schoolName: school.name,
+          previousStatus: school.status,
+          action: 'activated'
+        }
+      });
+    } catch (error) {
+      console.error('Failed to create school activation notification:', error);
+    }
+
+    return updatedSchool;
   }
 
   private generateAdminCredentials(name: string, code: string) {

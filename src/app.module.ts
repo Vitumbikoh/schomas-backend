@@ -36,6 +36,7 @@ import { StaffModule } from './staff/staff.module';
 import { RequestContextMiddleware } from './common/request-context/request-context.middleware';
 import { PayrollModule } from './payroll/payroll.module';
 import { ExamResultModule } from './exam-results/exam-result.module';
+import { NotificationModule } from './notifications/notification.module';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { ExamResultModule } from './exam-results/exam-result.module';
   StaffModule,
   PayrollModule,
   ExamResultModule,
+  NotificationModule,
   ],
 })
 export class AppModule implements NestModule {
