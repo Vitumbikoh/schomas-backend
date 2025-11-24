@@ -4,6 +4,7 @@ import {
   Post,
   Put,
   Delete,
+  Patch,
   Request,
   UseGuards,
   Body,
@@ -995,6 +996,70 @@ export class TeacherController {
         throw error;
       }
       throw new Error('Failed to delete teacher: ' + error.message);
+    }
+  }
+
+  @Patch('teachers/:id/status')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  async updateTeacherStatus(
+    @Param('id') id: string,
+    @Body() statusData: { status: string },
+    @Request() req,
+  ) {
+    try {
+      // Get original teacher data for logging
+      const originalTeacher = await this.teacherService.findOne(id);
+      
+      const updatedTeacher = await this.teacherService.update(id, {
+        status: statusData.status,
+      });
+
+      // Log teacher status update
+      await this.systemLoggingService.logAction({
+        action: 'TEACHER_STATUS_UPDATED',
+        module: 'TEACHERS',
+        level: 'info',
+        performedBy: {
+          id: req.user?.sub,
+          email: req.user?.email,
+          role: req.user?.role,
+          name: req.user?.username || req.user?.email
+        },
+        entityId: id,
+        entityType: 'Teacher',
+        oldValues: {
+          status: originalTeacher.status
+        },
+        newValues: {
+          status: statusData.status
+        },
+        metadata: {
+          description: `Teacher status updated: ${updatedTeacher.firstName} ${updatedTeacher.lastName}`,
+          previousStatus: originalTeacher.status,
+          newStatus: statusData.status
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+
+      return {
+        success: true,
+        teacher: updatedTeacher,
+        message: 'Teacher status updated successfully',
+      };
+    } catch (error) {
+      // Log the error
+      await this.systemLoggingService.logSystemError(
+        error,
+        'TEACHERS',
+        'TEACHER_STATUS_UPDATE_FAILED',
+        { teacherId: id, statusData }
+      );
+
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new Error('Failed to update teacher status: ' + error.message);
     }
   }
 

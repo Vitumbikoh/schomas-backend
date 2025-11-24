@@ -558,6 +558,32 @@ export class BillingService {
     return { stream, filename };
   }
 
+  async updateInvoice(id: string, updateData: any, actor: { role: string; schoolId?: string }) {
+    const inv = await this.invoiceRepo.findOne({ where: { id } });
+    if (!inv) throw new NotFoundException('Invoice not found');
+    
+    // Check permissions
+    if (actor.role !== 'SUPER_ADMIN') {
+      if (!actor.schoolId || actor.schoolId !== inv.schoolId) {
+        throw new ForbiddenException('Scope mismatch');
+      }
+    }
+
+    // Update allowed fields
+    if (updateData.status !== undefined) {
+      inv.status = updateData.status;
+    }
+    if (updateData.amountPaid !== undefined) {
+      inv.amountPaid = updateData.amountPaid.toString();
+    }
+    if (updateData.notes !== undefined) {
+      inv.notes = updateData.notes;
+    }
+
+    await this.invoiceRepo.save(inv);
+    return inv;
+  }
+
   async deleteInvoice(id: string, actor: { role: string; schoolId?: string }) {
     const inv = await this.invoiceRepo.findOne({ where: { id } });
     if (!inv) throw new NotFoundException('Invoice not found');

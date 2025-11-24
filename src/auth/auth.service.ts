@@ -3,12 +3,17 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { User } from '../user/entities/user.entity';
 import { UsersService } from 'src/user/user.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { School } from '../school/entities/school.entity';
 
 @Injectable()
 export class AuthService {
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
+    @InjectRepository(School)
+    private schoolRepository: Repository<School>,
   ) {}
 
   // NOTE: For production, store refresh tokens in DB with rotation and revocation support.
@@ -64,6 +69,42 @@ export class AuthService {
     if (user.isActive === false) {
       console.log('[AUTH] User inactive');
       return null;
+    }
+
+    // Check if user's school is active (only for non-super-admin users)
+    if (user.schoolId && user.role !== 'SUPER_ADMIN') {
+      try {
+        const school = await this.schoolRepository.findOne({ 
+          where: { id: user.schoolId } 
+        });
+        
+        if (!school) {
+          console.log('[AUTH] User school not found:', { userId: user.id, schoolId: user.schoolId });
+          return null;
+        }
+        
+        if (school.status !== 'ACTIVE') {
+          console.log('[AUTH] School is suspended:', { 
+            userId: user.id, 
+            schoolId: user.schoolId, 
+            schoolName: school.name,
+            schoolStatus: school.status 
+          });
+          throw new UnauthorizedException('Your school account has been suspended. Please contact support for assistance.');
+        }
+        
+        console.log('[AUTH] School status verified:', { 
+          schoolId: user.schoolId, 
+          schoolName: school.name, 
+          status: school.status 
+        });
+      } catch (error) {
+        if (error instanceof UnauthorizedException) {
+          throw error; // Re-throw custom messages
+        }
+        console.log('[AUTH] Error checking school status:', error);
+        return null;
+      }
     }
 
     const { password: _pw, ...result } = user;

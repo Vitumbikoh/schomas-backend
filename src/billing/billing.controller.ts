@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, Request, Get, Param, Query, Res, Delete } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Request, Get, Param, Query, Res, Delete, Patch } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -56,6 +56,14 @@ export class BillingController {
   async getInvoice(@Request() req, @Param('id') id: string) {
     const schoolId = req.user?.schoolId;
     return this.billingService.getInvoice(id, schoolId);
+  }
+
+  @Patch('invoices/:id')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Update invoice status and payment details' })
+  async updateInvoice(@Request() req, @Param('id') id: string, @Body() updateData: any) {
+    const actor = { role: req.user?.role, schoolId: req.user?.schoolId };
+    return this.billingService.updateInvoice(id, updateData, actor);
   }
 
   @Get('invoices/:id/pdf')
