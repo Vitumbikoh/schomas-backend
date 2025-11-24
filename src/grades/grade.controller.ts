@@ -28,8 +28,10 @@ export class GradeController {
 
   @UseGuards(JwtAuthGuard)
   @Get('classes')
-  async getAllClasses() {
-    return this.gradeService.getAllClasses();
+  async getAllClasses(@Request() req) {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolId = isSuper ? (req.query?.schoolId as string) : req.user?.schoolId;
+    return this.gradeService.getAllClasses(schoolId);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -66,8 +66,8 @@ export class FeeAnalyticsService {
     private settingsService: SettingsService,
   ) {}
 
-  async getFeeAnalytics(TermId?: string): Promise<FeeAnalytics> {
-    this.logger.log('Generating fee analytics report...');
+  async getFeeAnalytics(TermId?: string, schoolId?: string, superAdmin = false): Promise<FeeAnalytics> {
+    this.logger.log(`Generating fee analytics report for term: ${TermId}, school: ${schoolId}, superAdmin: ${superAdmin}`);
 
     try {
       // Get current term if not provided
@@ -75,7 +75,7 @@ export class FeeAnalyticsService {
       if (TermId) {
         currentTerm = { id: TermId };
       } else {
-        currentTerm = await this.settingsService.getCurrentTerm();
+        currentTerm = await this.settingsService.getCurrentTerm(schoolId);
       }
 
       if (!currentTerm) {
@@ -98,11 +98,39 @@ export class FeeAnalyticsService {
       // Get term details
       const termDetails = await this.settingsService.getCurrentTerm();
 
-      // Get all students enrolled in current term
-      const enrollments = await this.enrollmentRepository.find({
-        where: { termId: currentTerm.id },
-        relations: ['student', 'student.class', 'term'],
-      });
+      // Get all students enrolled in current term with school filtering
+      const enrollmentQuery: any = { termId: currentTerm.id };
+      const studentQuery: any = {};
+      
+      // Apply school filtering
+      if (!superAdmin) {
+        if (!schoolId) {
+          this.logger.warn('No schoolId provided for non-super-admin user, returning empty analytics');
+          return {
+            Term: { id: currentTerm.id, name: 'Access Restricted', period: '' },
+            totalStudents: 0,
+            totalEnrolledStudents: 0,
+            feeStructure: { totalExpectedAmount: 0, mandatoryFees: 0, optionalFees: 0, feeTypes: [] },
+            paymentSummary: { totalPaid: 0, totalOutstanding: 0, totalExpected: 0, paymentPercentage: 0 },
+            studentPaymentStatus: [],
+            paymentTrends: { byMonth: [], byFeeType: [] },
+            noData: true,
+            message: 'Access restricted. You can only view data for your school.'
+          };
+        }
+        studentQuery.schoolId = schoolId;
+      } else if (schoolId) {
+        studentQuery.schoolId = schoolId;
+      }
+
+      const enrollments = await this.enrollmentRepository
+        .createQueryBuilder('enrollment')
+        .leftJoinAndSelect('enrollment.student', 'student')
+        .leftJoinAndSelect('student.class', 'class')
+        .leftJoinAndSelect('enrollment.term', 'term')
+        .where('enrollment.termId = :termId', { termId: currentTerm.id })
+        .andWhere(Object.keys(studentQuery).length > 0 ? 'student.schoolId = :schoolId' : '1=1', studentQuery.schoolId ? { schoolId: studentQuery.schoolId } : {})
+        .getMany();
 
       const enrolledStudents = enrollments.reduce((acc, enrollment) => {
         if (!acc.find(s => s.id === enrollment.student.id)) {
@@ -111,29 +139,39 @@ export class FeeAnalyticsService {
         return acc;
       }, [] as Student[]);
 
-      // Get total students (not necessarily enrolled)
-      const totalStudents = await this.studentRepository.count();
+      // Get total students (not necessarily enrolled) with school filtering
+      const totalStudents = await this.studentRepository.count({ where: studentQuery });
 
-      // Get fee structure for current term
+      // Get fee structure for current term with school filtering
+      const feeStructureQuery: any = { 
+        termId: currentTerm.id,
+        isActive: true 
+      };
+      
+      // Apply school filtering to fee structures
+      if (!superAdmin && schoolId) {
+        feeStructureQuery.schoolId = schoolId;
+      } else if (schoolId) {
+        feeStructureQuery.schoolId = schoolId;
+      }
+
       const feeStructures = await this.feeStructureRepository.find({
-        where: { 
-          termId: currentTerm.id,
-          isActive: true 
-        },
+        where: feeStructureQuery,
         relations: ['class']
       });
 
       // Calculate expected fees per student
       const feeStructureAnalysis = this.calculateFeeStructure(feeStructures);
 
-      // Get all payments for current term
-      const payments = await this.feePaymentRepository.find({
-        where: { 
-          termId: currentTerm.id,
-          status: 'completed'
-        },
-        relations: ['student', 'term']
-      });
+      // Get all payments for current term with school filtering
+      const payments = await this.feePaymentRepository
+        .createQueryBuilder('payment')
+        .leftJoinAndSelect('payment.student', 'student')
+        .leftJoinAndSelect('payment.term', 'term')
+        .where('payment.termId = :termId', { termId: currentTerm.id })
+        .andWhere('payment.status = :status', { status: 'completed' })
+        .andWhere(Object.keys(studentQuery).length > 0 ? 'payment.schoolId = :schoolId' : '1=1', studentQuery.schoolId ? { schoolId: studentQuery.schoolId } : {})
+        .getMany();
 
       // Calculate payment summary
       const paymentSummary = this.calculatePaymentSummary(
@@ -306,42 +344,57 @@ export class FeeAnalyticsService {
     return { byMonth, byFeeType };
   }
 
-  async getStudentFeeDetails(studentId: string, termId?: string) {
-    this.logger.log(`Getting fee details for student: ${studentId}`);
+  async getStudentFeeDetails(studentId: string, termId?: string, schoolId?: string, superAdmin = false) {
+    this.logger.log(`Getting fee details for student: ${studentId}, school: ${schoolId}, superAdmin: ${superAdmin}`);
 
     const currentTerm = termId 
       ? { id: termId }
-      : await this.settingsService.getCurrentTerm();
+      : await this.settingsService.getCurrentTerm(schoolId);
 
     if (!currentTerm) {
       throw new Error('No term found');
     }
 
+    // Build student query with school filtering
+    const studentQuery: any = { id: studentId };
+    if (!superAdmin && schoolId) {
+      studentQuery.schoolId = schoolId;
+    } else if (schoolId) {
+      studentQuery.schoolId = schoolId;
+    }
+
     const student = await this.studentRepository.findOne({
-      where: { id: studentId },
+      where: studentQuery,
       relations: ['class']
     });
 
     if (!student) {
-      throw new Error('Student not found');
+      throw new Error('Student not found or access denied');
     }
 
-    // Get fee structure
+    // Get fee structure with school filtering
+    const feeStructureQuery: any = { 
+      termId: currentTerm.id,
+      isActive: true 
+    };
+    if (!superAdmin && schoolId) {
+      feeStructureQuery.schoolId = schoolId;
+    } else if (schoolId) {
+      feeStructureQuery.schoolId = schoolId;
+    }
+
     const feeStructures = await this.feeStructureRepository.find({
-      where: { 
-        termId: currentTerm.id,
-        isActive: true 
-      }
+      where: feeStructureQuery
     });
 
-    // Get student payments
-    const payments = await this.feePaymentRepository.find({
-      where: { 
-        student: { id: studentId },
-        termId: currentTerm.id 
-      },
-      order: { paymentDate: 'DESC' }
-    });
+    // Get student payments with school filtering
+    const payments = await this.feePaymentRepository
+      .createQueryBuilder('payment')
+      .where('payment.studentId = :studentId', { studentId })
+      .andWhere('payment.termId = :termId', { termId: currentTerm.id })
+      .andWhere(!superAdmin && schoolId ? 'payment.schoolId = :schoolId' : '1=1', { schoolId })
+      .orderBy('payment.paymentDate', 'DESC')
+      .getMany();
 
     const totalExpected = feeStructures.reduce((sum, fs) => sum + Number(fs.amount), 0);
     const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount), 0);

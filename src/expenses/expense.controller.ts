@@ -23,7 +23,18 @@ export class ExpenseController {
     if (!userId) {
       throw new Error('User ID not found in request');
     }
-    return this.expenseService.findAll(filters, userId);
+    
+    // Apply school filtering based on user's role
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const effectiveSchoolId = isSuper ? (filters.schoolId || req.user?.schoolId) : req.user?.schoolId;
+    
+    // Override or set schoolId in filters for non-super admin users
+    const schoolFilteredFilters = {
+      ...filters,
+      ...(effectiveSchoolId ? { schoolId: effectiveSchoolId } : {}),
+    };
+    
+    return this.expenseService.findAll(schoolFilteredFilters, userId, isSuper);
   }
 
   @Get('analytics')
@@ -32,8 +43,10 @@ export class ExpenseController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.expenseService.findOne(id);
+  findOne(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    const userId = req.user?.id || req.user?.sub;
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    return this.expenseService.findOne(id, userId, isSuper);
   }
 
   @Patch(':id')

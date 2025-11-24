@@ -83,13 +83,28 @@ export class ExpenseService {
     return savedExpense;
   }
 
-  async findAll(filters: ExpenseFiltersDto, userId: string): Promise<{ expenses: Expense[]; total: number }> {
+  async findAll(filters: ExpenseFiltersDto, userId: string, superAdmin = false): Promise<{ expenses: Expense[]; total: number }> {
+    // Get user information for school filtering
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
     const queryBuilder = this.expenseRepository.createQueryBuilder('expense')
       .leftJoinAndSelect('expense.requestedByUser', 'requestedByUser')
       .leftJoinAndSelect('expense.approvedByUser', 'approvedByUser')
       .leftJoinAndSelect('expense.school', 'school')
       .leftJoinAndSelect('expense.approvalHistory', 'approvalHistory')
       .leftJoinAndSelect('approvalHistory.performedByUser', 'performedByUser');
+
+    // Apply automatic school filtering for non-super admin users
+    if (!superAdmin) {
+      if (!user.schoolId) {
+        // If user has no school, return empty results
+        return { expenses: [], total: 0 };
+      }
+      queryBuilder.andWhere('expense.schoolId = :userSchoolId', { userSchoolId: user.schoolId });
+    }
 
     // Apply filters
     if (filters.status) {
@@ -143,9 +158,19 @@ export class ExpenseService {
     return { expenses, total };
   }
 
-  async findOne(id: string): Promise<Expense> {
+  async findOne(id: string, userId?: string, superAdmin = false): Promise<Expense> {
+    let whereCondition: any = { id };
+
+    // Apply school filtering for non-super admin users
+    if (!superAdmin && userId) {
+      const user = await this.userRepository.findOne({ where: { id: userId } });
+      if (user?.schoolId) {
+        whereCondition.schoolId = user.schoolId;
+      }
+    }
+
     const expense = await this.expenseRepository.findOne({
-      where: { id },
+      where: whereCondition,
       relations: ['requestedByUser', 'approvedByUser', 'approvalHistory', 'approvalHistory.performedByUser'],
     });
 
@@ -157,7 +182,7 @@ export class ExpenseService {
   }
 
   async update(id: string, updateExpenseDto: UpdateExpenseDto, userId: string): Promise<Expense> {
-    const expense = await this.findOne(id);
+    const expense = await this.findOne(id, userId, false);
 
     // Only allow updates if expense is still pending
     if (expense.status !== ExpenseStatus.PENDING) {
@@ -188,16 +213,18 @@ export class ExpenseService {
       throw new BadRequestException('User ID is required for expense approval');
     }
 
-    const expense = await this.findOne(id);
-
-    if (expense.status !== ExpenseStatus.PENDING) {
-      throw new BadRequestException('Expense is not pending approval');
-    }
-
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       console.error('Expense approval - User not found for ID:', userId);
       throw new NotFoundException('User not found');
+    }
+
+    // Get expense with school filtering applied for non-super admin
+    const isSuper = user.role === 'SUPER_ADMIN';
+    const expense = await this.findOne(id, userId, isSuper);
+
+    if (expense.status !== ExpenseStatus.PENDING) {
+      throw new BadRequestException('Expense is not pending approval');
     }
 
     // Debug logging
@@ -234,15 +261,17 @@ export class ExpenseService {
   }
 
   async reject(id: string, rejectExpenseDto: RejectExpenseDto, userId: string): Promise<Expense> {
-    const expense = await this.findOne(id);
-
-    if (expense.status !== ExpenseStatus.PENDING) {
-      throw new BadRequestException('Expense is not pending approval');
-    }
-
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    // Get expense with school filtering applied for non-super admin
+    const isSuper = user.role === 'SUPER_ADMIN';
+    const expense = await this.findOne(id, userId, isSuper);
+
+    if (expense.status !== ExpenseStatus.PENDING) {
+      throw new BadRequestException('Expense is not pending approval');
     }
 
     // Check if user has approval permissions
@@ -271,7 +300,7 @@ export class ExpenseService {
   }
 
   async delete(id: string, userId: string): Promise<void> {
-    const expense = await this.findOne(id);
+    const expense = await this.findOne(id, userId, false);
 
     // Only allow deletion if expense is pending
     if (expense.status !== ExpenseStatus.PENDING) {

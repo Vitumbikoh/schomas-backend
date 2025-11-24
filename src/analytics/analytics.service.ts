@@ -119,9 +119,19 @@ export class AnalyticsService {
 
     // If no grades found under current-year scope, fallback to all time automatically
     if (grades.length === 0 && scope === 'current-year') {
-      const allGrades = await this.gradeRepo.createQueryBuilder('g')
+      const allGradesQb = this.gradeRepo.createQueryBuilder('g')
         .leftJoinAndSelect('g.course', 'course')
-        .getMany();
+        .leftJoin('g.student', 's');
+        
+      // Apply school filtering to fallback query as well
+      if (!superAdmin) {
+        if (!schoolId) return [];
+        allGradesQb.where('s.schoolId = :schoolId', { schoolId });
+      } else if (schoolId) {
+        allGradesQb.where('s.schoolId = :schoolId', { schoolId });
+      }
+      
+      const allGrades = await allGradesQb.getMany();
       return this.aggregateCourseAverages(allGrades, true);
     }
     return this.aggregateCourseAverages(grades, false);
@@ -245,9 +255,8 @@ export class AnalyticsService {
   }
 
   async getFeeCollectionStatus(TermId?: string, schoolId?: string, superAdmin = false) {
-    // For now, we'll use the existing fee analytics service without school filtering
-    // TODO: Update FeeAnalyticsService to support school filtering
-    return this.feeAnalyticsService.getFeeAnalytics(TermId || undefined as any);
+    // Use the fee analytics service with proper school filtering
+    return this.feeAnalyticsService.getFeeAnalytics(TermId || undefined, schoolId, superAdmin);
   }
 
   async getCurrentTermDetails() {
@@ -339,7 +348,9 @@ export class AnalyticsService {
       } else if (feeStatus?.summary?.paymentPercentage !== undefined) {
         feePaymentPercentage = feeStatus.summary.paymentPercentage;
       }
-    } catch { /* ignore */ }
+    } catch (error) { 
+      console.log('Error fetching fee collection status:', error);
+    }
     
     return {
       totalStudents: students,
