@@ -398,8 +398,17 @@ export class AnalyticsService {
     // School scoping via examGradeRecord.schoolId
     if (!superAdmin) {
       if (!schoolId) {
-        // For debugging: temporarily allow query without schoolId filtering
-        console.log('No schoolId provided for non-super-admin user, allowing query without school filter');
+        console.log('No schoolId provided for non-super-admin user, returning empty results');
+        return {
+          metadata: {
+            termId: effectiveTermId || null,
+            total: 0,
+            generatedAt: new Date().toISOString(),
+            passThreshold,
+          },
+          topPerformer: null,
+          teachers: [],
+        };
       } else {
         qb.where('egr.schoolId = :schoolId', { schoolId });
       }

@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, UseGuards, Request } from '@nestjs/common';
 import { SystemService } from './system.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -12,8 +12,10 @@ export class SystemController {
   constructor(private readonly systemService: SystemService) {}
 
   @Get('overview')
-  getOverview() {
-    return this.systemService.getSystemOverview();
+  getOverview(@Request() req) {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolId = isSuper ? req.query?.schoolId || req.user?.schoolId : req.user?.schoolId;
+    return this.systemService.getSystemOverview(schoolId, isSuper);
   }
 
   @Get('resources')

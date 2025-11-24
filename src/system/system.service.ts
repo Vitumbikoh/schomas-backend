@@ -14,32 +14,72 @@ export class SystemService {
   private startTime = Date.now();
   constructor(@InjectDataSource() private dataSource: DataSource) {}
 
-  async getSystemOverview() {
+  async getSystemOverview(schoolId?: string, superAdmin = false) {
     const uptimeSeconds = Math.floor((Date.now() - this.startTime) / 1000);
     const uptime30DayPercent = 99.9; // Placeholder, real impl would pull from uptime tracking table / monitoring
 
     // Active sessions: count users who have been active in the last 30 minutes
+    // Apply school filtering for multi-tenant isolation
     let activeSessions = 0;
     try {
       // Count users who have logged in or been active in the last 30 minutes
       const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-      const result = await this.dataSource.query(
-        `SELECT COUNT(*) FROM "user" 
-         WHERE "isActive" = true 
-         AND ("lastActivityAt" > $1 OR "lastLoginAt" > $1)`, 
-        [thirtyMinutesAgo]
-      );
-      activeSessions = parseInt(result[0]?.count || '0', 10);
+      
+      let query = `SELECT COUNT(*) FROM "user" 
+                   WHERE "isActive" = true 
+                   AND ("lastActivityAt" > $1 OR "lastLoginAt" > $1)`;
+      let params: any[] = [thirtyMinutesAgo];
+      
+      // Apply school filtering for non-super admin users
+      if (!superAdmin) {
+        if (!schoolId) {
+          activeSessions = 0; // No school, no active sessions
+        } else {
+          query += ' AND "schoolId" = $2';
+          params.push(schoolId);
+          const result = await this.dataSource.query(query, params);
+          activeSessions = parseInt(result[0]?.count || '0', 10);
+        }
+      } else if (schoolId) {
+        // Super admin can optionally filter by school
+        query += ' AND "schoolId" = $2';
+        params.push(schoolId);
+        const result = await this.dataSource.query(query, params);
+        activeSessions = parseInt(result[0]?.count || '0', 10);
+      } else {
+        // Super admin without school filter sees all active sessions
+        const result = await this.dataSource.query(query, params);
+        activeSessions = parseInt(result[0]?.count || '0', 10);
+      }
     } catch (error) {
       // Fallback: if the new columns don't exist yet, use a more conservative count
       try {
-        // Just count a small subset of active users as a fallback
-        const result = await this.dataSource.query(
-          'SELECT COUNT(*) FROM "user" WHERE "isActive"=true'
-        );
-        const totalActive = parseInt(result[0]?.count || '0', 10);
-        // Estimate that only 10-30% of active users are actually online
-        activeSessions = Math.ceil(totalActive * 0.15);
+        let fallbackQuery = 'SELECT COUNT(*) FROM "user" WHERE "isActive"=true';
+        let fallbackParams: any[] = [];
+        
+        // Apply school filtering in fallback too
+        if (!superAdmin) {
+          if (!schoolId) {
+            activeSessions = 0;
+          } else {
+            fallbackQuery += ' AND "schoolId" = $1';
+            fallbackParams.push(schoolId);
+            const result = await this.dataSource.query(fallbackQuery, fallbackParams);
+            const totalActive = parseInt(result[0]?.count || '0', 10);
+            // Estimate that only 10-30% of active users are actually online
+            activeSessions = Math.ceil(totalActive * 0.15);
+          }
+        } else if (schoolId) {
+          fallbackQuery += ' AND "schoolId" = $1';
+          fallbackParams.push(schoolId);
+          const result = await this.dataSource.query(fallbackQuery, fallbackParams);
+          const totalActive = parseInt(result[0]?.count || '0', 10);
+          activeSessions = Math.ceil(totalActive * 0.15);
+        } else {
+          const result = await this.dataSource.query(fallbackQuery, fallbackParams);
+          const totalActive = parseInt(result[0]?.count || '0', 10);
+          activeSessions = Math.ceil(totalActive * 0.15);
+        }
       } catch {
         activeSessions = 0;
       }
