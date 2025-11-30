@@ -18,12 +18,26 @@ export class LibraryService {
   ) {}
 
   // Books
-  async listBooks(schoolId: string, q?: string) {
+  async listBooks(schoolId: string, q?: string, page: number = 1, limit: number = 10) {
     const qb = this.bookRepo.createQueryBuilder('b')
       .leftJoinAndSelect('b.class', 'class')
       .where('b.schoolId = :schoolId', { schoolId });
     if (q) qb.andWhere('(LOWER(b.title) LIKE :q OR LOWER(b.author) LIKE :q OR b.isbn LIKE :q)', { q: `%${q.toLowerCase()}%` });
-    return qb.orderBy('b.title', 'ASC').getMany();
+    
+    const totalCount = await qb.getCount();
+    const books = await qb
+      .orderBy('b.title', 'ASC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
+    
+    return {
+      books,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limit),
+      currentPage: page,
+      itemsPerPage: limit
+    };
   }
 
   async createBook(dto: CreateBookDto, actor: { role: string; schoolId?: string }) {

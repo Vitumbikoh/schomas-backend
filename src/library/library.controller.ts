@@ -15,9 +15,16 @@ export class LibraryController {
   // Books
   @Get('books')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.TEACHER, Role.FINANCE)
-  listBooks(@Request() req, @Query('q') q?: string) {
+  listBooks(
+    @Request() req, 
+    @Query('q') q?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string
+  ) {
     const schoolId = req.user?.role === 'SUPER_ADMIN' ? (req.query.schoolId as string) : req.user?.schoolId;
-    return this.library.listBooks(schoolId, q);
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+    return this.library.listBooks(schoolId, q, pageNum, limitNum);
   }
 
   @Post('books')
