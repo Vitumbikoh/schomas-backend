@@ -49,6 +49,24 @@ import { NotificationModule } from './notifications/notification.module';
       rootPath: join(__dirname, '..', 'Uploads'),
       serveRoot: '/Uploads',
     }),
+    // Also serve from project root Uploads/uploads in case files are stored outside dist
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, '..', '..', 'Uploads'),
+      serveRoot: '/Uploads',
+    }),
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, '..', '..', 'uploads'),
+      serveRoot: '/uploads',
+    }),
+    // Cover dist/src emission structure if present
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, 'Uploads'),
+      serveRoot: '/Uploads',
+    }),
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, 'uploads'),
+      serveRoot: '/uploads',
+    }),
     ConfigModule,
     DatabaseModule,
     AuthModule,

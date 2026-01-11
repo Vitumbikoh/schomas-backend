@@ -6,7 +6,7 @@ import { Role } from 'src/user/enums/role.enum';
 import { diskStorage } from 'multer';
 import type * as multer from 'multer';
 import type { File as MulterFile } from 'multer';
-import { extname } from 'path';
+import { extname, join } from 'path';
 import { Class } from 'src/classes/entity/class.entity';
 import { Course } from 'src/course/entities/course.entity';
 import { Teacher } from 'src/user/entities/teacher.entity';
@@ -38,7 +38,8 @@ export class LearningMaterialsService {
   ) {}
 
   static storageOptions = diskStorage({
-    destination: './Uploads',
+    // Store under dist/Uploads to align with static serving; fallback ServeStatic also covers project root
+    destination: join(__dirname, '..', 'Uploads'),
     filename: (req, file, callback) => {
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
       const ext = extname(file.originalname);
