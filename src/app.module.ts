@@ -44,6 +44,11 @@ import { NotificationModule } from './notifications/notification.module';
       rootPath: join(__dirname, '..', 'uploads'),
       serveRoot: '/uploads',
     }),
+    // Serve capitalized Uploads folder for compatibility with existing storage paths
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, '..', 'Uploads'),
+      serveRoot: '/Uploads',
+    }),
     ConfigModule,
     DatabaseModule,
     AuthModule,
