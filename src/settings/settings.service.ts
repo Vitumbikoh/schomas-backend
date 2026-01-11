@@ -27,6 +27,7 @@ import {
 } from './dtos/settings.dto';
 import { AcademicCalendarClosureDto } from './dtos/academic-calendar.dto';
 import { AcademicCalendar } from './entities/academic-calendar.entity';
+import { School } from '../school/entities/school.entity';
 import { Period } from './entities/period.entity';
 import { Term } from './entities/term.entity';
 import { AcademicCalendarUtils } from './utils/academic-calendar.utils';
@@ -200,6 +201,7 @@ export class SettingsService {
           } as Partial<SchoolSettings>);
         }
 
+        // Build school settings with fallbacks
         response.schoolSettings = {
           schoolName: schoolSettings.schoolName || '',
           schoolEmail: schoolSettings.schoolEmail || '',
@@ -208,6 +210,20 @@ export class SettingsService {
           schoolAbout: schoolSettings.schoolAbout || '',
           schoolLogo: schoolSettings.schoolLogo || '',
         };
+
+        // If school name is not set in settings, fall back to the School entity name
+        if (!response.schoolSettings.schoolName) {
+          try {
+            const schoolEntity = await this.userRepository.manager.getRepository(School)
+              .findOne({ where: { id: user.schoolId } });
+            const fallbackName = schoolEntity?.name;
+            if (fallbackName && typeof fallbackName === 'string') {
+              response.schoolSettings.schoolName = fallbackName;
+            }
+          } catch (err) {
+            this.logger.warn(`Failed to fallback to School entity name for schoolId ${user.schoolId}: ${err?.message}`);
+          }
+        }
       }
 
       // Academic calendar - available to all users with schoolId
