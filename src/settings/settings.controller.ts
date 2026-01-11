@@ -784,6 +784,7 @@ async createTermPeriod(
   async completeTerm(
     @Request() req,
     @Param('id', ParseUUIDPipe) termId: string,
+    @Query('force') force?: string,
   ) {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only school administrators can complete terms');
@@ -794,7 +795,7 @@ async createTermPeriod(
     }
 
     try {
-      const result = await this.settingsService.completeTerm(termId, req.user.schoolId);
+      const result = await this.settingsService.completeTerm(termId, req.user.schoolId, force === 'true');
       
       await this.systemLoggingService.logAction({
         action: 'TERM_COMPLETED',

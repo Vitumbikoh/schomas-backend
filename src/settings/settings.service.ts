@@ -754,22 +754,24 @@ export class SettingsService {
         throw new NotFoundException('Term period not found for your school');
       }
 
-      // Check if previous terms in this academic calendar are completed
+      // Auto-complete all previous terms in this academic calendar when activating a later term
       if (termToActivate.termNumber > 1) {
         const previousTerms = await queryRunner.manager.find(Term, {
           where: {
             academicCalendar: { id: termToActivate.academicCalendar.id },
+            schoolId: adminUser.schoolId,
             termNumber: LessThan(termToActivate.termNumber),
           },
         });
 
         const incompletePreviousTerms = previousTerms.filter(term => !term.isCompleted);
-        
-        if (incompletePreviousTerms.length > 0) {
-          const incompleteTermNumbers = incompletePreviousTerms.map(t => t.termNumber).join(', ');
-          throw new BadRequestException(
-            `Cannot activate term ${termToActivate.termNumber}. Previous term(s) ${incompleteTermNumbers} must be completed first.`
-          );
+        for (const prev of incompletePreviousTerms) {
+          try {
+            await this.academicCalendarConstraintService.completeTerm(prev.id, queryRunner, { force: true });
+          } catch (err) {
+            // If completion fails (e.g., endDate not reached), do not block activation
+            this.logger.warn(`Auto-complete failed for term ${prev.termNumber} in calendar ${prev.academicCalendar?.id}: ${err?.message}`);
+          }
         }
       }
 
@@ -958,7 +960,7 @@ export class SettingsService {
         termNumber: dto.termNumber ?? period.order, // Use provided termNumber or default to period order
       });
 
-      // If this period is being set as current, deactivate others
+      // If this period is being set as current, deactivate others and auto-complete prior terms
       if (dto.isCurrent) {
         await queryRunner.manager.update(
           Term,
@@ -968,6 +970,25 @@ export class SettingsService {
           },
           { isCurrent: false },
         );
+
+        if (TermPeriod.termNumber > 1) {
+          const previousTerms = await queryRunner.manager.find(Term, {
+            where: {
+              academicCalendar: { id: activeCalendar.id },
+              schoolId: adminUser.schoolId,
+              termNumber: LessThan(TermPeriod.termNumber),
+            },
+          });
+
+          const incompletePreviousTerms = previousTerms.filter(term => !term.isCompleted);
+          for (const prev of incompletePreviousTerms) {
+            try {
+              await this.academicCalendarConstraintService.completeTerm(prev.id, queryRunner, { force: true });
+            } catch (err) {
+              this.logger.warn(`Auto-complete failed for term ${prev.termNumber} in calendar ${prev.academicCalendar?.id}: ${err?.message}`);
+            }
+          }
+        }
       }
 
       const savedPeriod = await queryRunner.manager.save(TermPeriod);
@@ -1033,7 +1054,7 @@ export class SettingsService {
         termToUpdate.termNumber = dto.termNumber;
       }
 
-      // If this period is being set as current, deactivate others
+      // If this period is being set as current, deactivate others and auto-complete prior terms
       if (dto.isCurrent) {
         await queryRunner.manager.update(
           Term,
@@ -1043,6 +1064,25 @@ export class SettingsService {
           },
           { isCurrent: false },
         );
+
+        if (termToUpdate.termNumber > 1) {
+          const previousTerms = await queryRunner.manager.find(Term, {
+            where: {
+              academicCalendar: { id: termToUpdate.academicCalendar.id },
+              schoolId: adminUser.schoolId,
+              termNumber: LessThan(termToUpdate.termNumber),
+            },
+          });
+
+          const incompletePreviousTerms = previousTerms.filter(term => !term.isCompleted);
+          for (const prev of incompletePreviousTerms) {
+            try {
+              await this.academicCalendarConstraintService.completeTerm(prev.id, queryRunner, { force: true });
+            } catch (err) {
+              this.logger.warn(`Auto-complete failed for term ${prev.termNumber} in calendar ${prev.academicCalendar?.id}: ${err?.message}`);
+            }
+          }
+        }
       }
 
       const updatedPeriod = await queryRunner.manager.save(termToUpdate);
@@ -1276,6 +1316,24 @@ export class SettingsService {
         },
         { isCurrent: false },
       );
+
+      // Auto-complete all previous terms within the same calendar
+      if (termToUpdate.termNumber > 1) {
+        const previousTerms = await queryRunner.manager.find(Term, {
+          where: {
+            academicCalendar: { id: termToUpdate.academicCalendar.id },
+            termNumber: LessThan(termToUpdate.termNumber),
+          },
+        });
+        const incompletePreviousTerms = previousTerms.filter(t => !t.isCompleted);
+        for (const prev of incompletePreviousTerms) {
+          try {
+            await this.academicCalendarConstraintService.completeTerm(prev.id, queryRunner, { force: true });
+          } catch (err) {
+            this.logger.warn(`Auto-complete failed for term ${prev.termNumber} in calendar ${prev.academicCalendar?.id}: ${err?.message}`);
+          }
+        }
+      }
     }
 
     termToUpdate.startDate = new Date(currentPeriod.startDate);
@@ -1360,7 +1418,7 @@ export class SettingsService {
   /**
    * Complete an term and advance to next year or complete calendar
    */
-  async completeTerm(TermId: string, schoolId: string): Promise<{
+  async completeTerm(TermId: string, schoolId: string, force?: boolean): Promise<{
     success: boolean;
     message: string;
     calendarCompleted?: boolean;
@@ -1384,7 +1442,8 @@ export class SettingsService {
       // Complete the term using constraint service
       const completionResult = await this.academicCalendarConstraintService.completeTerm(
         TermId,
-        queryRunner
+        queryRunner,
+        { force: !!force }
       );
 
       // If calendar is not fully completed, try to advance to next year

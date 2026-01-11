@@ -129,6 +129,7 @@ export class AcademicCalendarConstraintService {
   async completeTerm(
     TermId: string,
     queryRunner?: QueryRunner,
+    options?: { force?: boolean },
   ): Promise<{
     yearCompleted: boolean;
     calendarCompleted: boolean;
@@ -148,7 +149,8 @@ export class AcademicCalendarConstraintService {
 
     // Check if the term has actually ended
     const currentDate = new Date();
-    if (currentDate < term.endDate) {
+    const allowEarlyCompletion = process.env.ALLOW_EARLY_TERM_COMPLETION === 'true' || process.env.NODE_ENV === 'development' || options?.force === true;
+    if (!allowEarlyCompletion && currentDate < term.endDate) {
       throw new BadRequestException(
         `Term ${term.termNumber} has not ended yet. End date: ${term.endDate.toDateString()}`
       );

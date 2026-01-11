@@ -199,6 +199,23 @@ Response: High-level payment summary and statistics
 
 ## Technical Implementation Details
 
+### Term Auto-Completion When Setting Current Term
+When a school sets a later term as current (e.g., Term 2 or Term 3), all earlier terms in the same academic calendar are automatically marked as completed.
+
+**Affected Service Methods:**
+- `SettingsService.activateTermPeriod()`
+- `SettingsService.createTermPeriod()`
+- `SettingsService.updateTermPeriod()`
+- `SettingsService.updateCurrentPeriod()`
+
+**Behavior:**
+- Deactivates any previously active term (`isCurrent=false`).
+- Iterates prior terms (`termNumber < current`) and completes them via `AcademicCalendarConstraintService.completeTerm()`.
+- If a prior term cannot be completed (e.g., end date not reached), activation proceeds and a warning is logged.
+
+**Rationale:**
+- Supports schools joining mid-year: selecting the current term cascades completion for earlier terms without manual steps.
+
 ### Database Considerations
 - Foreign key relationships properly established
 - Term filtering implemented across services
