@@ -313,25 +313,146 @@ export class FinanceService {
         }
       }
 
-      const validPaymentTypes = [
-        'tuition',
-        'exam',
-        'transport',
-        'library',
-        'hostel',
-        'uniform',
-        'other',
-      ];
-      if (!validPaymentTypes.includes(processPaymentDto.paymentType.toLowerCase())) {
-        throw new BadRequestException('Invalid payment type');
-      }
-
-      // Get current term
-      const currentTerm = await this.settingsService.getCurrentTerm();
+      // Get current term scoped by school and validate payment type dynamically
+      const currentTerm = await this.settingsService.getCurrentTerm(user.schoolId);
       if (!currentTerm) {
         throw new BadRequestException('No active term found. Please contact administration.');
       }
 
+      const configuredFeeStructures = await this.feeStructureRepository.find({
+        where: {
+          isActive: true,
+          termId: currentTerm.id,
+          ...(user.schoolId ? { schoolId: user.schoolId } : {}),
+        },
+      });
+      const configuredTypes = new Set(
+        configuredFeeStructures
+          .map((fs: any) => String((fs.feeType ?? fs.type ?? '').toLowerCase()))
+          .filter((t: string) => !!t)
+      );
+
+      const incomingType = String(processPaymentDto.paymentType || '').toLowerCase();
+      const isFullAllocation = incomingType === 'full';
+      if (!isFullAllocation && !configuredTypes.has(incomingType)) {
+        throw new BadRequestException('Invalid payment type for this school/term');
+      }
+
+      // Special case: Full payment allocation across configured fee types
+      let savedPayment = null as any;
+      let savedPayments: any[] = [];
+      if (isFullAllocation) {
+        // Compute expected fees per feeType for the student and term (scoped by school)
+        const expected = await this.studentFeeExpectationService.computeExpectedFeesForStudent(
+          student.id,
+          currentTerm.id,
+          user.schoolId,
+          false
+        );
+
+        // Aggregate previous payments by feeType for this student + term + school
+        const previousPayments = await this.paymentRepository
+          .createQueryBuilder('payment')
+          .select('payment.paymentType', 'paymentType')
+          .addSelect('SUM(payment.amount)', 'total')
+          .where('payment.studentId = :studentId', { studentId: student.id })
+          .andWhere('payment.termId = :termId', { termId: currentTerm.id })
+          .andWhere(user.schoolId ? 'payment.schoolId = :schoolId' : '1=1', user.schoolId ? { schoolId: user.schoolId } : {})
+          .groupBy('payment.paymentType')
+          .getRawMany();
+
+        const paidMap: Record<string, number> = {};
+        for (const row of previousPayments) {
+          const key = String(row.paymentType || '').toLowerCase();
+          paidMap[key] = Number(row.total || 0);
+        }
+
+        // Build outstanding per feeType (mandatory first, then optional)
+        const itemsOrdered = [
+          ...expected.mandatoryFees.map((f: any) => ({ feeType: String(f.feeType || '').toLowerCase(), amount: Number(f.amount || 0), optional: false })),
+          ...expected.optionalFees.map((f: any) => ({ feeType: String(f.feeType || '').toLowerCase(), amount: Number(f.amount || 0), optional: true })),
+        ];
+
+        let remaining = Number(processPaymentDto.amount || 0);
+        for (const item of itemsOrdered) {
+          if (remaining <= 0) break;
+          const alreadyPaid = paidMap[item.feeType] || 0;
+          const outstanding = Math.max(0, item.amount - alreadyPaid);
+          if (outstanding <= 0) continue;
+          const alloc = Math.min(remaining, outstanding);
+          remaining -= alloc;
+
+          const allocPayment = this.paymentRepository.create({
+            amount: alloc,
+            receiptNumber: processPaymentDto.receiptNumber,
+            paymentType: item.feeType,
+            paymentMethod: processPaymentDto.paymentMethod,
+            notes: processPaymentDto.notes,
+            status: 'completed',
+            paymentDate: new Date(processPaymentDto.paymentDate),
+            student: { id: student.id },
+            termId: currentTerm.id,
+            schoolId: user.schoolId || undefined,
+            ...(financeUser
+              ? { processedBy: { id: financeUser.id } }
+              : { processedByAdmin: { id: processingUser.id } }),
+          });
+          const saved = await this.paymentRepository.save(allocPayment);
+          savedPayments.push(saved);
+        }
+
+        // If any remainder after allocation, create a credit
+        let creditCreated = false;
+        let creditAmount = 0;
+        if (remaining > 0) {
+          creditAmount = Number(remaining.toFixed(2));
+          const credit = this.creditRepository.create({
+            student: { id: student.id } as any,
+            termId: currentTerm.id,
+            schoolId: user.schoolId || null,
+            sourcePayment: undefined,
+            amount: creditAmount as any,
+            remainingAmount: creditAmount as any,
+            status: 'active',
+            notes: 'Surplus from full payment allocation',
+          });
+          await this.creditRepository.save(credit);
+          creditCreated = true;
+        }
+
+        // Log each allocated payment
+        for (const sp of savedPayments) {
+          await this.systemLoggingService.logFeePaymentProcessed(
+            sp.id,
+            student.id,
+            sp.amount,
+            {
+              id: processingUser.id,
+              email: processingUser.email,
+              role: processingUser.role,
+              name: financeUser ? `${financeUser.firstName} ${financeUser.lastName}` : processingUser.username
+            },
+            request,
+            user.schoolId
+          );
+        }
+
+        const duration = Date.now() - startTime;
+        console.log(`Full payment allocated across ${savedPayments.length} fee types in ${duration}ms for student ${student.id}`);
+
+        return {
+          success: true,
+          payments: savedPayments.map(sp => ({
+            ...sp,
+            studentName: `${student.firstName} ${student.lastName}`,
+            processedByName: processingUser.username,
+          })),
+          credit: creditCreated ? { created: true, amount: creditAmount } : { created: false, amount: 0 },
+          message: 'Full payment allocated successfully',
+        };
+      }
+
+      // Normal single-type payment
       const payment = this.paymentRepository.create({
         amount: processPaymentDto.amount,
         receiptNumber: processPaymentDto.receiptNumber,
@@ -347,10 +468,8 @@ export class FinanceService {
           ? { processedBy: { id: financeUser.id } }
           : { processedByAdmin: { id: processingUser.id } }),
       });
-
       console.log('Payment object created with schoolId:', payment.schoolId);
-
-      const savedPayment = await this.paymentRepository.save(payment);
+      savedPayment = await this.paymentRepository.save(payment);
 
       // Overpayment handling: compute outstanding for the student and term
       let creditCreated = false;

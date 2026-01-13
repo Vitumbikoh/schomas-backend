@@ -194,32 +194,49 @@ export class FinanceController {
         processPaymentDto,
         req,
       );
-      const payment = paymentResult.payment;
-      await this.systemLoggingService.logAction({
-        action: 'FEE_PAYMENT_CREATED_CONTROLLER',
-        module: 'FINANCE',
-        level: 'info',
-        schoolId: req.user.schoolId,
-        performedBy: req?.user
-          ? { id: req.user.sub, email: req.user.email, role: req.user.role }
-          : undefined,
-        entityId: payment.id,
-        entityType: 'FeePayment',
-        newValues: {
-          id: payment.id,
-          amount: payment.amount,
-          paymentDate: payment.paymentDate
-            ? new Date(payment.paymentDate).toISOString()
+      const payments = (paymentResult as any).payments || ((paymentResult as any).payment ? [(paymentResult as any).payment] : []);
+      if (payments.length) {
+        for (const payment of payments) {
+          await this.systemLoggingService.logAction({
+            action: 'FEE_PAYMENT_CREATED_CONTROLLER',
+            module: 'FINANCE',
+            level: 'info',
+            schoolId: req.user.schoolId,
+            performedBy: req?.user
+              ? { id: req.user.sub || req.user.id, email: req.user.email, role: req.user.role }
+              : undefined,
+            entityId: payment.id,
+            entityType: 'FeePayment',
+            newValues: {
+              id: payment.id,
+              amount: payment.amount,
+              paymentDate: payment.paymentDate
+                ? new Date(payment.paymentDate).toISOString()
+                : undefined,
+              paymentMethod: payment.paymentMethod,
+              status: payment.status,
+              studentName: payment.studentName,
+              schoolId: payment.schoolId,
+            },
+            metadata: {
+              description: 'Fee payment processed via FinanceController',
+            },
+          });
+        }
+      } else {
+        await this.systemLoggingService.logAction({
+          action: 'FEE_PAYMENT_CREATED_CONTROLLER',
+          module: 'FINANCE',
+          level: 'info',
+          schoolId: req.user.schoolId,
+          performedBy: req?.user
+            ? { id: req.user.sub || req.user.id, email: req.user.email, role: req.user.role }
             : undefined,
-          paymentMethod: payment.paymentMethod,
-          status: payment.status,
-          studentName: payment.studentName,
-          schoolId: payment.schoolId,
-        },
-        metadata: {
-          description: 'Fee payment processed via FinanceController',
-        },
-      });
+          metadata: {
+            description: 'Fee payment processed via FinanceController (no entity returned)',
+          },
+        });
+      }
       return paymentResult;
     } catch (error) {
       await this.systemLoggingService.logSystemError(
