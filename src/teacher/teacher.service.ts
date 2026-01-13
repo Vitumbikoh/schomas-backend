@@ -459,6 +459,9 @@ export class TeachersService {
               firstName: student.firstName,
               lastName: student.lastName,
               email: student.user?.email || null,
+              user: {
+                email: student.user?.email || null,
+              },
               class: student.class
                 ? {
                     id: student.class.id,

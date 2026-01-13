@@ -288,7 +288,7 @@ export class CourseService {
     // Adjust the relation names and entity as per your actual model
     const course = await this.courseRepository.findOne({
       where: { id: courseId },
-      relations: ['enrollments', 'enrollments.student'],
+      relations: ['enrollments', 'enrollments.student', 'enrollments.student.user'],
     });
     if (!course) {
       return [];
