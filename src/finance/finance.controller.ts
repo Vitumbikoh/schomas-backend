@@ -795,13 +795,16 @@ export class FinanceController {
           ((metrics.monthlyRevenue - metrics.monthlyRevenueLastMonth) / metrics.monthlyRevenueLastMonth) * 100,
         );
         isPositive = trendValue >= 0;
-      } else if (metrics.monthlyRevenue > 0 && metrics.monthlyRevenueLastMonth === 0) {
-        // Special case: revenue this month but none last month
-        // Instead of 100%, show "New" or a more meaningful indicator
-        trendValue = 0; // We'll handle this in the frontend
-        isPositive = true;
+      } else if (metrics.monthlyRevenueLastMonth === 0) {
+        // Always provide a percentage even without previous data
+        if (metrics.monthlyRevenue > 0) {
+          trendValue = 100;
+          isPositive = true;
+        } else {
+          trendValue = 0;
+          isPositive = true;
+        }
       }
-      // If both months are 0, trendValue stays 0
 
       // Use total accumulated revenue for display, not just monthly
       const revenueNumber = Number(totalStats.totalRevenue) || 0;
@@ -833,7 +836,7 @@ export class FinanceController {
         trend: {
           value: Math.abs(trendValue),
           isPositive,
-          hasComparativeData: metrics.monthlyRevenueLastMonth > 0, // Flag to indicate if trend is meaningful
+          hasComparativeData: true,
         },
         monthlyRevenue: metrics.monthlyRevenue,
         monthlyRevenueLastMonth: metrics.monthlyRevenueLastMonth,

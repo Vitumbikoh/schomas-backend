@@ -22,7 +22,7 @@ import { UpdateStudentDto } from 'src/student/dto/update-student.dto';
 import { StudentsService } from 'src/student/student.service';
 import { CreateStudentDto } from 'src/user/dtos/create-student.dto';
 import { Role } from 'src/user/enums/role.enum';
-import { Like, Between } from 'typeorm';
+import { Like, Between, LessThanOrEqual } from 'typeorm';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Logger } from '@nestjs/common';
 import { LearningMaterialsService } from 'src/learning-materials/learning-materials.service';
@@ -256,11 +256,54 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
       const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
       
       const total = await this.studentService.getTotalStudentsCount(activeOnly, effectiveSchoolId, isSuper);
+
+      // Calculate month-over-month trend
+      const now = new Date();
+      const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+
+      const whereScope: any = {};
+      if (!isSuper) {
+        if (!effectiveSchoolId) {
+          return { success: true, totalStudents: 0, activeOnly: activeOnly || false, schoolId: null, trend: { value: 0, isPositive: true, hasComparativeData: false } };
+        }
+        whereScope.schoolId = effectiveSchoolId;
+      } else if (effectiveSchoolId) {
+        whereScope.schoolId = effectiveSchoolId;
+      }
+
+      // Snapshot-based totals
+      const [currentTotalSnapshot, previousTotalSnapshot] = await Promise.all([
+        this.studentService.count({ ...whereScope }),
+        this.studentService.count({ ...whereScope, createdAt: LessThanOrEqual(previousMonthEnd) as any }),
+      ]);
+
+      let trendValue = 0;
+      let isPositive = true;
+      let hasComparativeData = true;
+
+      if (previousTotalSnapshot > 0) {
+        trendValue = Math.round(((currentTotalSnapshot - previousTotalSnapshot) / previousTotalSnapshot) * 100);
+        isPositive = trendValue >= 0;
+      } else {
+        // Always show a percentage even when there is no previous data
+        if (currentTotalSnapshot > 0) {
+          trendValue = 100;
+          isPositive = true;
+        } else {
+          trendValue = 0;
+          isPositive = true;
+        }
+      }
+
       return {
         success: true,
         totalStudents: total,
         activeOnly: activeOnly || false,
         schoolId: effectiveSchoolId,
+        trend: { value: Math.abs(trendValue), isPositive, hasComparativeData: true },
       };
     } catch (error) {
       this.logger.error(`Failed to fetch total student count: ${error.message}`);

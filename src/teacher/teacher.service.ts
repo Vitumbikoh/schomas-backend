@@ -122,6 +122,20 @@ export class TeachersService {
         .createQueryBuilder('teacher')
         .leftJoin('teacher.user', 'user')
         .where('(teacher.schoolId = :schoolId OR user.schoolId = :schoolId)', { schoolId });
+      // Apply simple date filters when provided
+      if (whereConditions.hireDate && (whereConditions.hireDate as any)._type === 'between') {
+        const op: any = whereConditions.hireDate;
+        const [start, end] = op._value || op.value || [];
+        if (start && end) {
+          qb.andWhere('teacher.hireDate BETWEEN :start AND :end', { start, end });
+        }
+      } else if (whereConditions.hireDate && (whereConditions.hireDate as any)._type === 'lte') {
+        const op: any = whereConditions.hireDate;
+        const end = op._value ?? op.value;
+        if (end) {
+          qb.andWhere('teacher.hireDate <= :end', { end });
+        }
+      }
       return qb.getCount();
     }
     return this.teacherRepository.count({ where: whereConditions, relations: ['user'] });
@@ -134,6 +148,36 @@ export class TeachersService {
       .leftJoin('teacher.user', 'user')
       .where('(teacher.schoolId = :schoolId OR user.schoolId = :schoolId)', { schoolId })
       .getCount();
+  }
+
+  async countHiresBetween(schoolId: string | undefined, start: Date, end: Date, superAdmin = false): Promise<number> {
+    const qb = this.teacherRepository
+      .createQueryBuilder('teacher')
+      .leftJoin('teacher.user', 'user')
+      .where('teacher.hireDate BETWEEN :start AND :end', { start, end });
+
+    if (!superAdmin) {
+      if (!schoolId) return 0;
+      qb.andWhere('(teacher.schoolId = :schoolId OR user.schoolId = :schoolId)', { schoolId });
+    } else if (schoolId) {
+      qb.andWhere('(teacher.schoolId = :schoolId OR user.schoolId = :schoolId)', { schoolId });
+    }
+    return qb.getCount();
+  }
+
+  async countTeachersUpTo(schoolId: string | undefined, end: Date, superAdmin = false): Promise<number> {
+    const qb = this.teacherRepository
+      .createQueryBuilder('teacher')
+      .leftJoin('teacher.user', 'user')
+      .where('teacher.hireDate <= :end', { end });
+
+    if (!superAdmin) {
+      if (!schoolId) return 0;
+      qb.andWhere('(teacher.schoolId = :schoolId OR user.schoolId = :schoolId)', { schoolId });
+    } else if (schoolId) {
+      qb.andWhere('(teacher.schoolId = :schoolId OR user.schoolId = :schoolId)', { schoolId });
+    }
+    return qb.getCount();
   }
 
 

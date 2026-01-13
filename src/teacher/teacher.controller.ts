@@ -47,7 +47,43 @@ export class TeacherController {
     const total = schoolScope
       ? await this.teacherService.countTeachersBySchool(schoolScope)
       : await this.teacherService.count({});
-    return { total, filters: { schoolId: schoolScope } };
+    // Calculate month-over-month trend based on hireDate
+    const now = new Date();
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+
+    const scopeWhere: any = {};
+    if (schoolScope) scopeWhere.schoolId = schoolScope;
+
+    // Snapshot-based totals for teachers using hireDate
+    const [currentMonthHires, previousSnapshot] = await Promise.all([
+      this.teacherService.countHiresBetween(schoolScope, currentMonthStart, currentMonthEnd, isSuper),
+      this.teacherService.countTeachersUpTo(schoolScope, previousMonthEnd, isSuper),
+    ]);
+
+    let trendValue = 0;
+    let isPositive = true;
+    let hasComparativeData = true;
+    if (previousSnapshot > 0) {
+      trendValue = Math.round(((total - previousSnapshot) / previousSnapshot) * 100);
+      isPositive = trendValue >= 0;
+    } else {
+      if (total > 0) {
+        trendValue = 100;
+        isPositive = true;
+      } else {
+        trendValue = 0;
+        isPositive = true;
+      }
+    }
+
+    return {
+      total,
+      filters: { schoolId: schoolScope },
+      trend: { value: Math.abs(trendValue), isPositive, hasComparativeData: true },
+    };
   }
 
   @Get('teacher-management')
