@@ -521,6 +521,33 @@ export class AggregationService {
     return this.schemeRepo.find({ where, relations:['components'] });
   }
 
+  async deleteSchemeForTeacher(teacherUserId: string, schoolId: string | undefined, courseId: string, termId: string){
+    // Ensure the teacher owns the course/scheme for this term
+    const { course } = await this.ensureTeacherOwnsCourse(teacherUserId, schoolId, courseId, termId);
+
+    // Find existing course-specific scheme
+    const scheme = await this.schemeRepo.findOne({ where: { courseId, termId } });
+    if(!scheme){
+      // Nothing to delete; treat as already using default scheme
+      return { success: true, message: 'No custom scheme exists. Using default scheme.' };
+    }
+    if(scheme.isLocked){
+      throw new BadRequestException('Scheme is locked and cannot be deleted');
+    }
+
+    // Delete scheme (components cascade)
+    await this.schemeRepo.delete({ id: scheme.id });
+
+    // Recompute existing results for students with grades using default scheme fallback
+    const grades = await this.examGradeRepo.find({ where: { courseId, termId } });
+    const studentIds = Array.from(new Set(grades.map(g => g.studentId)));
+    for(const sid of studentIds){
+      await this.recomputeStudent(courseId, termId, sid);
+    }
+
+    return { success: true, message: 'Custom scheme deleted. Default scheme will be used.' };
+  }
+
   // Admin methods for managing default schemes
   async createOrUpdateDefaultScheme(dto: CreateOrUpdateDefaultSchemeDto, adminUserId: string, schoolId: string) {
     // For default schemes, we don't need to find the admin in teacher table

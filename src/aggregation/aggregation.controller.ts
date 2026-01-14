@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Req, Get, Query, UseGuards, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Body, Req, Get, Query, UseGuards, BadRequestException, Delete } from '@nestjs/common';
 import { AggregationService } from './aggregation.service';
 import { CreateOrUpdateSchemeDto, CreateOrUpdateDefaultSchemeDto, RecordExamGradeDto } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -59,6 +59,19 @@ export class AggregationController {
   @Get('schemes')
   async listSchemes(@Query('courseId') courseId: string, @Query('termId') termId: string, @Req() req: any){
     return this.aggService.listSchemesForTeacher(req.user?.sub, termId, courseId);
+  }
+
+  // Allow teachers to delete their course-specific scheme and fall back to default
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Delete('scheme')
+  async deleteScheme(
+    @Query('courseId') courseId: string,
+    @Query('termId') termId: string,
+    @Req() req: any
+  ){
+    if(!courseId || !termId) throw new BadRequestException('courseId and termId are required');
+    return this.aggService.deleteSchemeForTeacher(req.user?.sub, req.user?.schoolId, courseId, termId);
   }
 
   // Admin endpoints for default schemes
