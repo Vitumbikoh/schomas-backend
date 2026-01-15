@@ -134,6 +134,39 @@ export class ScheduleController {
     return result;
   }
 
+  @Delete('bulk/delete')
+  @Roles(Role.ADMIN)
+  @ApiResponse({ status: 200, description: 'Bulk schedules deleted' })
+  async bulkDelete(@Request() req, @Body() deleteData: { ids?: string[]; classId?: string; deleteAll?: boolean }) {
+    let result;
+    
+    if (deleteData.deleteAll) {
+      // Delete all schedules for all classes in the school
+      result = await this.scheduleService.bulkDeleteAllSchedules(req.user?.schoolId);
+    } else if (deleteData.classId) {
+      // Delete all schedules for a specific class
+      result = await this.scheduleService.bulkDeleteByClass(deleteData.classId, req.user?.schoolId);
+    } else if (deleteData.ids && deleteData.ids.length > 0) {
+      // Delete specific schedules by IDs
+      result = await this.scheduleService.bulkDelete(deleteData.ids, req.user?.schoolId);
+    } else {
+      throw new Error('Invalid delete request. Provide ids, classId, or set deleteAll to true.');
+    }
+    
+    await this.systemLoggingService.logAction({
+      action: 'SCHEDULES_BULK_DELETED',
+      module: 'SCHEDULE',
+      level: 'info',
+      entityType: 'Schedule',
+      metadata: { 
+        deletedCount: result.deleted, 
+        totalRequested: deleteData.ids?.length || 'all',
+        deleteType: deleteData.deleteAll ? 'all' : deleteData.classId ? 'class' : 'specific'
+      }
+    });
+    return result;
+  }
+
   @Get('teacher/:teacherId')
   @Roles(Role.ADMIN, Role.TEACHER)
   @ApiResponse({
@@ -159,6 +192,19 @@ export class ScheduleController {
   @Roles(Role.ADMIN, Role.TEACHER, Role.STUDENT)
   @ApiResponse({ status: 200, description: 'Weekly timetable for class' })
   async getWeekly(
+    @Request() req,
+    @Param('classId', ParseUUIDPipe) classId: string,
+    @Query('days') days?: string,
+  ) {
+    const dayList = days ? days.split(',') : undefined;
+    return this.scheduleService.getWeeklyTimetable(classId, req.user?.schoolId, dayList as any);
+  }
+
+  // Weekly timetable (alternative endpoint for compatibility)
+  @Get('class/:classId/timetable')
+  @Roles(Role.ADMIN, Role.TEACHER, Role.STUDENT)
+  @ApiResponse({ status: 200, description: 'Weekly timetable for class' })
+  async getTimetable(
     @Request() req,
     @Param('classId', ParseUUIDPipe) classId: string,
     @Query('days') days?: string,

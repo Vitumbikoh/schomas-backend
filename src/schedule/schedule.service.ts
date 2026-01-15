@@ -53,20 +53,25 @@ export class ScheduleService {
   }) {
     const { schoolId, classId, teacherId, classroomId, day, startTime, endTime, excludeId } = params;
 
-    // time overlap predicate
-    const qb = this.scheduleRepository
+    // Base query for time overlap
+    const baseQuery = this.scheduleRepository
       .createQueryBuilder('s')
-  .where('s.schoolId = :schoolId', { schoolId })
+      .leftJoinAndSelect('s.class', 'class')
+      .leftJoinAndSelect('s.teacher', 'teacher')
+      .leftJoinAndSelect('s.classroom', 'classroom')
+      .where('s.schoolId = :schoolId', { schoolId })
       .andWhere('s.day = :day', { day })
       .andWhere('NOT (s.endTime <= :startTime OR s.startTime >= :endTime)', { startTime, endTime });
 
-    if (excludeId) qb.andWhere('s.id != :excludeId', { excludeId });
+    if (excludeId) {
+      baseQuery.andWhere('s.id != :excludeId', { excludeId });
+    }
 
-    // conflicts: same class, same teacher, optional room
+    // Check for conflicts: same class, same teacher, optional room
     const [classClash, teacherClash, roomClash] = await Promise.all([
-  qb.clone().andWhere('s.classId = :classId', { classId }).getOne(),
-  qb.clone().andWhere('s.teacherId = :teacherId', { teacherId }).getOne(),
-  classroomId ? qb.clone().andWhere('s.classroomId = :classroomId', { classroomId }).getOne() : Promise.resolve(null),
+      baseQuery.clone().andWhere('class.id = :classId', { classId }).getOne(),
+      baseQuery.clone().andWhere('teacher.id = :teacherId', { teacherId }).getOne(),
+      classroomId ? baseQuery.clone().andWhere('classroom.id = :classroomId', { classroomId }).getOne() : Promise.resolve(null),
     ]);
 
     if (classClash) throw new BadRequestException('This class is already booked in the selected time period.');
@@ -782,5 +787,95 @@ export class ScheduleService {
       }
     }
     return { imported, total: rows.length, results };
+  }
+
+  // Bulk delete schedules
+  async bulkDelete(ids: string[], schoolId: string): Promise<{ deleted: number; errors: string[] }> {
+    const errors: string[] = [];
+    let deleted = 0;
+
+    for (const id of ids) {
+      try {
+        const schedule = await this.scheduleRepository.findOne({
+          where: { id, schoolId }
+        });
+
+        if (!schedule) {
+          errors.push(`Schedule with ID ${id} not found or access denied`);
+          continue;
+        }
+
+        await this.scheduleRepository.remove(schedule);
+        deleted++;
+      } catch (error) {
+        errors.push(`Failed to delete schedule ${id}: ${error.message}`);
+      }
+    }
+
+    return { deleted, errors };
+  }
+
+  // Bulk delete all schedules for a specific class
+  async bulkDeleteByClass(classId: string, schoolId: string): Promise<{ deleted: number; errors: string[] }> {
+    const errors: string[] = [];
+    let deleted = 0;
+
+    try {
+      const schedules = await this.scheduleRepository.find({
+        where: { 
+          class: { id: classId },
+          schoolId 
+        },
+        relations: ['class']
+      });
+
+      if (schedules.length === 0) {
+        errors.push('No schedules found for the specified class');
+        return { deleted: 0, errors };
+      }
+
+      for (const schedule of schedules) {
+        try {
+          await this.scheduleRepository.remove(schedule);
+          deleted++;
+        } catch (error) {
+          errors.push(`Failed to delete schedule ${schedule.id}: ${error.message}`);
+        }
+      }
+    } catch (error) {
+      errors.push(`Failed to fetch schedules for class: ${error.message}`);
+    }
+
+    return { deleted, errors };
+  }
+
+  // Bulk delete all schedules for the entire school
+  async bulkDeleteAllSchedules(schoolId: string): Promise<{ deleted: number; errors: string[] }> {
+    const errors: string[] = [];
+    let deleted = 0;
+
+    try {
+      const schedules = await this.scheduleRepository.find({
+        where: { schoolId }
+      });
+
+      if (schedules.length === 0) {
+        errors.push('No schedules found for this school');
+        return { deleted: 0, errors };
+      }
+
+      for (const schedule of schedules) {
+        try {
+          await this.scheduleRepository.remove(schedule);
+          deleted++;
+        } catch (error) {
+          errors.push(`Failed to delete schedule ${schedule.id}: ${error.message}`);
+        }
+      }
+    } catch (error) {
+      errors.push(`Failed to fetch schedules for school: ${error.message}`);
+    }
+
+    return { deleted, errors };
   }
 }

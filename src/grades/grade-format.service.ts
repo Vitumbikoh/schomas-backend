@@ -28,11 +28,21 @@ export class GradeFormatService {
   async createFormat(dto: CreateGradeFormatDto, user: any) {
     if (!user.schoolId) throw new BadRequestException('User not linked to a school');
     if (dto.minPercentage > dto.maxPercentage) throw new BadRequestException('minPercentage cannot exceed maxPercentage');
+    
+    // Check for overlapping ranges with existing formats
     const existingOverlap = await this.formatRepo.createQueryBuilder('f')
       .where('f.schoolId = :schoolId', { schoolId: user.schoolId })
-      .andWhere('( (:min BETWEEN f.minPercentage AND f.maxPercentage) OR (:max BETWEEN f.minPercentage AND f.maxPercentage) )', { min: dto.minPercentage, max: dto.maxPercentage })
+      .andWhere('( (:min BETWEEN f.minPercentage AND f.maxPercentage) OR (:max BETWEEN f.minPercentage AND f.maxPercentage) OR (f.minPercentage BETWEEN :min AND :max) )', 
+        { min: dto.minPercentage, max: dto.maxPercentage })
       .getOne();
     if (existingOverlap) throw new BadRequestException('Percentage range overlaps with an existing format');
+    
+    // Check for duplicate grade letters
+    const existingGrade = await this.formatRepo.findOne({ 
+      where: { grade: dto.grade, schoolId: user.schoolId } 
+    });
+    if (existingGrade) throw new BadRequestException('Grade letter already exists for this school');
+    
     const format = this.formatRepo.create({ ...dto, schoolId: user.schoolId });
     return this.formatRepo.save(format);
   }
@@ -42,8 +52,31 @@ export class GradeFormatService {
     if (!format) throw new NotFoundException('Format not found');
     if (format.schoolId && format.schoolId !== user.schoolId) throw new BadRequestException('Cannot modify another school\'s format');
     if (!format.schoolId && user.role !== Role.SUPER_ADMIN) throw new BadRequestException('Only SUPER_ADMIN can edit global formats');
+    
     Object.assign(format, dto);
     if (format.minPercentage > format.maxPercentage) throw new BadRequestException('minPercentage cannot exceed maxPercentage');
+    
+    // Check for duplicate grade letters (excluding the current one being updated)
+    if (dto.grade !== undefined) {
+      const existingGrade = await this.formatRepo.findOne({ 
+        where: { grade: dto.grade, schoolId: format.schoolId || null } 
+      });
+      if (existingGrade && existingGrade.id !== id) {
+        throw new BadRequestException('Grade letter already exists for this school');
+      }
+    }
+    
+    // Check for overlapping ranges with other formats (excluding the current one being updated)
+    if (dto.minPercentage !== undefined || dto.maxPercentage !== undefined) {
+      const existingOverlap = await this.formatRepo.createQueryBuilder('f')
+        .where('f.schoolId = :schoolId', { schoolId: format.schoolId || null })
+        .andWhere('f.id != :id', { id })
+        .andWhere('( (:min BETWEEN f.minPercentage AND f.maxPercentage) OR (:max BETWEEN f.minPercentage AND f.maxPercentage) OR (f.minPercentage BETWEEN :min AND :max) )', 
+          { min: format.minPercentage, max: format.maxPercentage })
+        .getOne();
+      if (existingOverlap) throw new BadRequestException('Percentage range overlaps with an existing format');
+    }
+    
     return this.formatRepo.save(format);
   }
 
