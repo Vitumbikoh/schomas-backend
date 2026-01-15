@@ -2,12 +2,15 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ExamResultController } from './exam-result.controller';
 import { ExamResultService } from './exam-result.service';
+import { TestGradingController } from './test-grading.controller';
+import { DebugController } from './debug.controller';
 import { ExamResultAggregate } from '../aggregation/entities/exam-result-aggregate.entity';
 import { Student } from '../user/entities/student.entity';
 import { Class } from '../classes/entity/class.entity';
 import { Course } from '../course/entities/course.entity';
 import { User } from '../user/entities/user.entity';
 import { Term } from '../settings/entities/term.entity';
+import { GradeFormat } from '../grades/entity/grade-format.entity';
 
 @Module({
   imports: [
@@ -18,9 +21,10 @@ import { Term } from '../settings/entities/term.entity';
       Course,
       User,
       Term,
+      GradeFormat,
     ]),
   ],
-  controllers: [ExamResultController],
+  controllers: [ExamResultController, TestGradingController, DebugController],
   providers: [ExamResultService],
   exports: [ExamResultService],
 })

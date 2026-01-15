@@ -1,12 +1,13 @@
 import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, IsNull } from 'typeorm';
 import { ExamResultAggregate } from '../aggregation/entities/exam-result-aggregate.entity';
 import { Student } from '../user/entities/student.entity';
 import { Class } from '../classes/entity/class.entity';
 import { Course } from '../course/entities/course.entity';
 import { User } from '../user/entities/user.entity';
 import { Term } from '../settings/entities/term.entity';
+import { GradeFormat } from '../grades/entity/grade-format.entity';
 
 @Injectable()
 export class ExamResultService {
@@ -23,6 +24,8 @@ export class ExamResultService {
     private userRepository: Repository<User>,
     @InjectRepository(Term)
     private termRepository: Repository<Term>,
+    @InjectRepository(GradeFormat)
+    private gradeFormatRepository: Repository<GradeFormat>,
   ) {}
 
   /**
@@ -132,29 +135,25 @@ export class ExamResultService {
       ? resultsWithScores.reduce((sum, r) => sum + r.finalPercentage, 0) / resultsWithScores.length 
       : 0;
 
-    // Calculate GPA (assuming 4.0 scale, only for results with scores)
-    const gpaPoints = resultsWithScores.map(result => {
-      const percentage = result.finalPercentage;
-      if (percentage >= 90) return 4.0;
-      if (percentage >= 80) return 3.0;
-      if (percentage >= 70) return 2.0;
-      if (percentage >= 60) return 1.0;
-      return 0.0;
+// Calculate GPA using grading formats instead of hardcoded values
+    const gpaPromises = resultsWithScores.map(async result => {
+      // Use student's schoolId if available, otherwise use user's schoolId
+      const schoolIdToUse = student?.schoolId || user?.schoolId;
+      return await this.getGpaFromPercentage(result.finalPercentage, schoolIdToUse);
     });
-
+    const gpaPoints = await Promise.all(gpaPromises);
+    
     const overallGPA = gpaPoints.length > 0 
       ? gpaPoints.reduce((sum, gpa) => sum + gpa, 0) / gpaPoints.length 
       : 0;
 
-    // Determine performance remarks
-    const getRemarks = (average: number) => {
-      if (average >= 80) return 'Very Good';
-      if (average >= 70) return 'Good';
-      if (average >= 60) return 'Satisfactory';
-      if (average >= 50) return 'Needs Improvement';
-      return 'Needs Improvement';
+    // Use grading format for remarks instead of hardcoded values
+    const getRemarks = async (average: number) => {
+      // Use student's schoolId if available, otherwise use user's schoolId
+      const schoolIdToUse = student?.schoolId || user?.schoolId;
+      return await this.getRemarksFromPercentage(average, schoolIdToUse);
     };
-
+    
     return {
       student: {
         id: studentRecord.id,
@@ -167,7 +166,7 @@ export class ExamResultService {
         totalResults,
         averageScore: Math.round(averageScore * 100) / 100,
         overallGPA: Math.round(overallGPA * 10) / 10,
-        remarks: getRemarks(averageScore),
+        remarks: await getRemarks(averageScore),
         totalMarks: Math.round(averageScore),
         totalPossible: totalResults > 0 ? totalResults * 100 : 0,
       },
@@ -305,7 +304,7 @@ export class ExamResultService {
     });
 
     // Process each student's results
-    const studentResults = classEntity.students.map(student => {
+    const studentResults = await Promise.all(classEntity.students.map(async student => {
       // Try to find results by studentId first, then by UUID
       let studentExamResults = resultsByStudentId.get(student.studentId) || [];
       
@@ -339,26 +338,23 @@ export class ExamResultService {
         ? resultsWithScores.reduce((sum, r) => sum + parseFloat(r.finalPercentage), 0) / resultsWithScores.length 
         : 0;
 
-      // Calculate GPA (only for results with actual scores)
-      const gpaPoints = resultsWithScores.map(result => {
-        const percentage = parseFloat(result.finalPercentage);
-        if (percentage >= 90) return 4.0;
-        if (percentage >= 80) return 3.0;
-        if (percentage >= 70) return 2.0;
-        if (percentage >= 60) return 1.0;
-        return 0.0;
-      });
+// Calculate GPA using grading formats instead of hardcoded values
+    const gpaPromises = resultsWithScores.map(async result => {
+      // Use the provided schoolId parameter, or fall back to user's schoolId
+      const schoolIdToUse = schoolId || user?.schoolId;
+      return await this.getGpaFromPercentage(parseFloat(result.finalPercentage), schoolIdToUse);
+    });
+    const gpaPoints = await Promise.all(gpaPromises);
+    
+    const overallGPA = gpaPoints.length > 0 
+      ? gpaPoints.reduce((sum, gpa) => sum + gpa, 0) / gpaPoints.length 
+      : 0;
 
-      const overallGPA = gpaPoints.length > 0 
-        ? gpaPoints.reduce((sum, gpa) => sum + gpa, 0) / gpaPoints.length 
-        : 0;
-
-      const getRemarks = (average: number) => {
-        if (average >= 80) return 'Very Good';
-        if (average >= 70) return 'Good';
-        if (average >= 60) return 'Satisfactory';
-        if (average >= 50) return 'Needs Improvement';
-        return 'Needs Improvement';
+    // Use grading format for remarks instead of hardcoded values
+    const getRemarks = async (average: number) => {
+      // Use the provided schoolId parameter, or fall back to user's schoolId  
+      const schoolIdToUse = schoolId || user?.schoolId;
+      return await this.getRemarksFromPercentage(average, schoolIdToUse);
       };
 
       return {
@@ -371,7 +367,7 @@ export class ExamResultService {
         totalResults,
         averageScore: Math.round(averageScore * 100) / 100,
         overallGPA: Math.round(overallGPA * 10) / 10,
-        remarks: getRemarks(averageScore),
+        remarks: await getRemarks(averageScore),
         resultsWithScoresCount: resultsWithScores.length, // Debug info
         results: studentExamResults.map(result => ({
           courseId: result.courseId,
@@ -383,7 +379,7 @@ export class ExamResultService {
           status: result.status, // Include status for debugging
         })),
       };
-    });
+    }));
 
     return {
       classInfo: {
@@ -472,5 +468,113 @@ export class ExamResultService {
       })),
       termFilter: termId,
     };
+  }
+
+  /**
+   * Helper method to resolve grade formats for a school (falls back to global defaults)
+   */
+  private async resolveGradeFormats(schoolId?: string | null): Promise<GradeFormat[]> {
+    let formats: GradeFormat[] = [];
+    
+    // Try school-specific active formats first
+    if (schoolId) {
+      formats = await this.gradeFormatRepository.find({ 
+        where: { schoolId, isActive: true }, 
+        order: { minPercentage: 'DESC' } 
+      });
+    }
+    
+    // Fall back to global defaults if no school-specific formats
+    if (formats.length === 0) {
+      formats = await this.gradeFormatRepository.find({ 
+        where: { schoolId: IsNull(), isActive: true }, 
+        order: { minPercentage: 'DESC' } 
+      });
+    }
+    
+    // If still no formats, ensure global defaults exist and use them
+    if (formats.length === 0) {
+      // Initialize default formats if none exist at all
+      await this.ensureDefaultGradeFormats();
+      formats = await this.gradeFormatRepository.find({ 
+        where: { schoolId: IsNull(), isActive: true }, 
+        order: { minPercentage: 'DESC' } 
+      });
+    }
+    
+    return formats;
+  }
+
+  /**
+   * Ensure default grade formats exist in the database
+   */
+  private async ensureDefaultGradeFormats(): Promise<void> {
+    const existingCount = await this.gradeFormatRepository.count({ 
+      where: { schoolId: IsNull() } 
+    });
+    
+    if (existingCount === 0) {
+      const defaultFormats = [
+        { grade: 'A+', description: 'Distinction', minPercentage: 90, maxPercentage: 100, gpa: 4.0, isActive: true, schoolId: null },
+        { grade: 'A', description: 'Excellent', minPercentage: 80, maxPercentage: 89, gpa: 3.7, isActive: true, schoolId: null },
+        { grade: 'B+', description: 'Very Good', minPercentage: 75, maxPercentage: 79, gpa: 3.3, isActive: true, schoolId: null },
+        { grade: 'B', description: 'Good', minPercentage: 70, maxPercentage: 74, gpa: 3.0, isActive: true, schoolId: null },
+        { grade: 'C+', description: 'Credit', minPercentage: 65, maxPercentage: 69, gpa: 2.7, isActive: true, schoolId: null },
+        { grade: 'C', description: 'Pass', minPercentage: 60, maxPercentage: 64, gpa: 2.3, isActive: true, schoolId: null },
+        { grade: 'D+', description: 'Marginal Pass', minPercentage: 55, maxPercentage: 59, gpa: 2.0, isActive: true, schoolId: null },
+        { grade: 'D', description: 'Poor Pass', minPercentage: 50, maxPercentage: 54, gpa: 1.7, isActive: true, schoolId: null },
+        { grade: 'F', description: 'Fail', minPercentage: 0, maxPercentage: 49, gpa: 0.0, isActive: true, schoolId: null },
+      ];
+      
+      await this.gradeFormatRepository.save(defaultFormats);
+    }
+  }
+
+  /**
+   * Get GPA points from percentage using grading formats
+   */
+  private async getGpaFromPercentage(percentage: number, schoolId?: string | null): Promise<number> {
+    const formats = await this.resolveGradeFormats(schoolId);
+    
+    if (formats.length === 0) {
+      // Fallback to hardcoded GPA if no formats found
+      if (percentage >= 90) return 4.0;
+      if (percentage >= 80) return 3.7;
+      if (percentage >= 75) return 3.3;
+      if (percentage >= 70) return 3.0;
+      if (percentage >= 65) return 2.7;
+      if (percentage >= 60) return 2.3;
+      if (percentage >= 55) return 2.0;
+      if (percentage >= 50) return 1.7;
+      return 0.0;
+    }
+    
+    const matchingFormat = formats.find(format => 
+      percentage >= format.minPercentage && percentage <= format.maxPercentage
+    );
+    
+    return matchingFormat ? Number(matchingFormat.gpa) : 0.0;
+  }
+
+  /**
+   * Get remarks from percentage using grading formats
+   */
+  private async getRemarksFromPercentage(percentage: number, schoolId?: string | null): Promise<string> {
+    const formats = await this.resolveGradeFormats(schoolId);
+    
+    if (formats.length === 0) {
+      // Fallback to hardcoded remarks if no formats found
+      if (percentage >= 90) return 'Excellent';
+      if (percentage >= 80) return 'Very Good';
+      if (percentage >= 70) return 'Good';
+      if (percentage >= 60) return 'Satisfactory';
+      return 'Needs Improvement';
+    }
+    
+    const matchingFormat = formats.find(format => 
+      percentage >= format.minPercentage && percentage <= format.maxPercentage
+    );
+    
+    return matchingFormat ? matchingFormat.description : 'Needs Improvement';
   }
 }
