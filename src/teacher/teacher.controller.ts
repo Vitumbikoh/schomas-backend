@@ -881,8 +881,24 @@ export class TeacherController {
         `Total attendance records found for teacher ${teacher.id}: ${attendance.length}`,
       );
 
+      // Check if teacher has no courses/attendance records - show welcome message
+      if (!attendance || attendance.length === 0) {
+        return {
+          success: true,
+          isNewTeacher: true,
+          message: "Welcome! Getting started with Schomas",
+          welcomeData: {
+            title: "Welcome to Schomas! 🎓",
+            content: "Hello! We're excited to have you join our teaching community. Your attendance dashboard will populate as soon as classes are assigned to you. In the meantime, feel free to explore the platform and familiarize yourself with the various features available.",
+            helpText: "💡 Need help getting started? Contact your school administrator or check our help center for guidance."
+          },
+          attendance: []
+        };
+      }
+
       return {
         success: true,
+        isNewTeacher: false,
         attendance,
       };
     } catch (error) {

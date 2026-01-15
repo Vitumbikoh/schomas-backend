@@ -383,15 +383,21 @@ export class TeachersService {
 
     console.log(`Teacher found: ${teacher.firstName} ${teacher.lastName}`);
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
-
     const courses = await this.courseRepository.find({
       where: { teacher: { id: teacherId } },
       relations: ['enrollments', 'enrollments.student', 'class'],
     });
+
+    // If teacher has no courses, return empty array (no error)
+    if (!courses || courses.length === 0) {
+      console.log(`Teacher ${teacher.firstName} ${teacher.lastName} has no courses assigned`);
+      return [];
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
 
     const courseIds = courses.map((course) => course.id);
     const attendanceRecords = await this.attendanceRepository
