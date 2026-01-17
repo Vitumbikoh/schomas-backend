@@ -366,6 +366,7 @@ export class SettingsController {
     return result;
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post('terms/:termId/unpublish-results')
   async unpublishTermResults(
     @Request() req,

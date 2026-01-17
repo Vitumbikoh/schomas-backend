@@ -1404,9 +1404,7 @@ export class SettingsService {
   async publishTermResults(termId: string, schoolId: string) {
     const term = await this.termRepository.findOne({ where: { id: termId, schoolId }, relations: ['academicCalendar'] });
     if (!term) throw new NotFoundException('Term not found');
-    if (!term.inExamPeriod) throw new BadRequestException('Term has not entered exam period');
     if (term.resultsPublished) return { success: true, message: 'Results already published' };
-    if (term.isCompleted) throw new BadRequestException('Cannot publish results for a completed term');
 
     // TODO: Add real validation: ensure all exams are graded
     term.resultsPublished = true;
@@ -1422,7 +1420,6 @@ export class SettingsService {
     const term = await this.termRepository.findOne({ where: { id: termId, schoolId }, relations: ['academicCalendar'] });
     if (!term) throw new NotFoundException('Term not found');
     if (!term.resultsPublished) return { success: true, message: 'Results are not published' };
-    if (term.isCompleted) throw new BadRequestException('Cannot unpublish results for a completed term');
 
     term.resultsPublished = false;
     term.resultsPublishedAt = null;
