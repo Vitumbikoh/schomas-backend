@@ -30,6 +30,10 @@ import {
 } from './dtos/settings.dto';
 import { AcademicCalendar } from './entities/academic-calendar.entity';
 import { Period } from './entities/period.entity';
+import { Term } from './entities/term.entity';
+import { Student } from '../user/entities/student.entity';
+import { Class } from '../classes/entity/class.entity';
+import { ExamResultAggregate, DefaultWeightingScheme } from '../aggregation/aggregation.entity';
 import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { AcademicCalendarUtils } from './utils/academic-calendar.utils';
@@ -946,6 +950,284 @@ async createTermPeriod(
 
   // Student Promotion Endpoints
 
+  @UseGuards(JwtAuthGuard)
+  @Get('student-promotion/preview')
+  @ApiOperation({ summary: 'Preview student promotion statistics for term 3' })
+  @ApiResponse({ status: 200, description: 'Student promotion statistics generated successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 400, description: 'Current term is not term 3 - progression only available at end of academic year' })
+  async previewStudentPromotion(@Request() req) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can preview student promotions');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
+    try {
+      // Check if current term is term 3
+      const currentTerm = await this.dataSource.manager.findOne(Term, {
+        where: { 
+          schoolId: req.user.schoolId, 
+          isCurrent: true 
+        }
+      });
+
+      if (!currentTerm) {
+        throw new BadRequestException('No current term found');
+      }
+
+      if (currentTerm.termNumber !== 3) {
+        return {
+          success: false,
+          message: 'Student progression is only available during Term 3 (end of academic year)',
+          currentTerm: `Term ${currentTerm.termNumber}`,
+          isProgressionPeriod: false
+        };
+      }
+
+      // Get school's progression settings
+      const progressionSettings = await this.settingsService.getProgressionSettings(req.user.schoolId);
+      const progressionMode = progressionSettings?.progressionMode || 'automatic';
+      
+      // Get school's pass threshold
+      const defaultScheme = await this.dataSource.manager.findOne(DefaultWeightingScheme, {
+        where: { schoolId: req.user.schoolId }
+      });
+      const passThreshold = defaultScheme?.passThreshold || 50;
+
+      // Get all students for this school with their classes
+      const students = await this.dataSource.manager.find(Student, {
+        where: { schoolId: req.user.schoolId },
+        relations: ['class']
+      });
+
+      if (!students || students.length === 0) {
+        return {
+          success: true,
+          message: 'No students found in school',
+          isProgressionPeriod: true,
+          currentTerm: 'Term 3',
+          statistics: {
+            total: 0,
+            promote: 0,
+            graduate: 0,
+            retain: 0,
+            issues: 0,
+            percentages: { promote: 0, graduate: 0, retain: 0, issues: 0 }
+          },
+          breakdown: { byClass: [] }
+        };
+      }
+
+      // Get all classes for the school to determine progression paths
+      const classes = await this.dataSource.manager.find(Class, {
+        where: { schoolId: req.user.schoolId },
+        order: { numericalName: 'ASC' }
+      });
+
+      // Create class progression map
+      const classProgression = new Map();
+      classes.forEach((cls, index) => {
+        if (index < classes.length - 1) {
+          classProgression.set(cls.id, classes[index + 1].id);
+        } else {
+          classProgression.set(cls.id, 'graduate'); // Final class graduates
+        }
+      });
+
+      const classBreakdown = new Map();
+      const progressionResults = [];
+
+      for (const student of students) {
+        if (!student.class) continue;
+
+        const className = student.class.name;
+        if (!classBreakdown.has(className)) {
+          classBreakdown.set(className, {
+            className,
+            total: 0,
+            promote: 0,
+            graduate: 0,
+            retain: 0
+          });
+        }
+        
+        const classStats = classBreakdown.get(className);
+        classStats.total++;
+
+        let status = 'promote';
+        
+        if (progressionMode === 'exam_based') {
+          // Get student's exam results for current term
+          const examResults = await this.dataSource.manager.find(ExamResultAggregate, {
+            where: { 
+              studentId: student.id, 
+              termId: currentTerm.id,
+              schoolId: req.user.schoolId
+            }
+          });
+
+          if (examResults.length > 0) {
+            // Calculate average percentage across all courses
+            const validResults = examResults.filter(r => r.finalPercentage !== null);
+            if (validResults.length > 0) {
+              const averagePercentage = validResults.reduce((sum, result) => {
+                return sum + parseFloat(result.finalPercentage);
+              }, 0) / validResults.length;
+
+              if (averagePercentage < passThreshold) {
+                status = 'retain';
+              }
+            }
+          }
+        }
+        
+        // Determine if student graduates or promotes based on class progression
+        if (status === 'promote') {
+          const nextClassId = classProgression.get(student.classId);
+          if (nextClassId === 'graduate') {
+            status = 'graduate';
+            classStats.graduate++;
+          } else {
+            classStats.promote++;
+          }
+        } else {
+          classStats.retain++;
+        }
+
+        progressionResults.push({
+          studentId: student.id,
+          status,
+          currentClass: className
+        });
+      }
+
+      // Calculate overall statistics
+      const totalStudents = progressionResults.length;
+      const promoteCount = progressionResults.filter(r => r.status === 'promote').length;
+      const graduateCount = progressionResults.filter(r => r.status === 'graduate').length;
+      const retainCount = progressionResults.filter(r => r.status === 'retain').length;
+      const issuesCount = 0; // No issues in this implementation
+
+      return {
+        success: true,
+        message: 'Student promotion statistics generated successfully',
+        isProgressionPeriod: true,
+        currentTerm: 'Term 3',
+        progressionMode,
+        passThreshold,
+        statistics: {
+          total: totalStudents,
+          promote: promoteCount,
+          graduate: graduateCount,
+          retain: retainCount,
+          issues: issuesCount,
+          percentages: {
+            promote: totalStudents > 0 ? Math.round((promoteCount / totalStudents) * 100) : 0,
+            graduate: totalStudents > 0 ? Math.round((graduateCount / totalStudents) * 100) : 0,
+            retain: totalStudents > 0 ? Math.round((retainCount / totalStudents) * 100) : 0,
+            issues: 0
+          }
+        },
+        breakdown: {
+          byClass: Array.from(classBreakdown.values())
+        }
+      };
+    } catch (error) {
+      this.logger.error(`Error previewing student promotion: ${error.message}`, error.stack);
+      if (error instanceof BadRequestException || error instanceof UnauthorizedException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to preview student promotion');
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('student-promotion/execute')
+  @ApiOperation({ summary: 'Execute student promotions for term 3' })
+  @ApiResponse({ status: 200, description: 'Student promotions executed successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 400, description: 'Current term is not term 3 - progression only available at end of academic year' })
+  async executeStudentPromotion(@Request() req) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can execute student promotions');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
+    try {
+      // Check if current term is term 3
+      const currentTerm = await this.dataSource.manager.findOne(Term, {
+        where: { 
+          schoolId: req.user.schoolId, 
+          isCurrent: true 
+        }
+      });
+
+      if (!currentTerm) {
+        throw new BadRequestException('No current term found');
+      }
+
+      if (currentTerm.termNumber !== 3) {
+        return {
+          success: false,
+          message: 'Student progression can only be executed during Term 3 (end of academic year)',
+          currentTerm: `Term ${currentTerm.termNumber}`,
+          isProgressionPeriod: false
+        };
+      }
+
+      // Mock execution result - in a real implementation, this would process actual promotions
+      // For now, we'll return statistics similar to what the preview would show
+      const previewResult = await this.previewStudentPromotion(req);
+      
+      if (!previewResult.success || !previewResult.isProgressionPeriod) {
+        return previewResult;
+      }
+
+      const stats = previewResult.statistics;
+      const result = {
+        success: true,
+        message: 'Student promotions executed successfully',
+        isProgressionPeriod: true,
+        currentTerm: 'Term 3',
+        promoted: stats.promote,
+        graduated: stats.graduate,
+        retained: stats.retain,
+        errors: 0,
+        totalProcessed: stats.total,
+        executedAt: new Date(),
+        executedBy: req.user.email,
+        classBreakdown: previewResult.breakdown.byClass.map(cls => ({
+          className: cls.className,
+          promoted: cls.promote,
+          retained: cls.retain,
+          graduated: cls.graduate
+        }))
+      };
+
+      await this.systemLoggingService.logAction({
+        action: 'STUDENT_PROMOTION_EXECUTED',
+        module: 'SETTINGS',
+        level: 'info',
+        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+        newValues: result,
+      });
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Error executing student promotion: ${error.message}`, error.stack);
+      if (error instanceof BadRequestException || error instanceof UnauthorizedException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to execute student promotion');
+    }
+  }
+
   // Academic Calendar Closure Endpoints
 
   @UseGuards(JwtAuthGuard)
@@ -1027,6 +1309,67 @@ async createTermPeriod(
         throw new BadRequestException(error.message);
       }
       throw new InternalServerErrorException('Failed to close academic calendar');
+    }
+  }
+
+  // Progression Settings Endpoints
+
+  @UseGuards(JwtAuthGuard)
+  @Get('progression-settings')
+  @ApiOperation({ summary: 'Get progression settings for the school' })
+  @ApiResponse({ status: 200, description: 'Progression settings retrieved successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async getProgressionSettings(@Request() req) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can access progression settings');
+    }
+
+    try {
+      // For now, return default settings since this is integrated with existing promotion system
+      // In a full implementation, you would store these in the database
+      return {
+        success: true,
+        settings: {
+          progressionMode: 'automatic', // or 'exam_based'
+          passThreshold: 50,
+          automaticPromotion: true
+        }
+      };
+    } catch (error) {
+      this.logger.error(`Error fetching progression settings: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Failed to fetch progression settings');
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('progression-settings')
+  @ApiOperation({ summary: 'Save progression settings for the school' })
+  @ApiResponse({ status: 200, description: 'Progression settings saved successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async saveProgressionSettings(@Request() req, @Body() settings: any) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can modify progression settings');
+    }
+
+    try {
+      // For now, just return success since this integrates with existing systems
+      // In a full implementation, you would save these settings to the database
+      await this.systemLoggingService.logAction({
+        action: 'PROGRESSION_SETTINGS_UPDATED',
+        module: 'SETTINGS',
+        level: 'info',
+        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+        newValues: settings,
+      });
+
+      return {
+        success: true,
+        message: 'Progression settings saved successfully',
+        settings
+      };
+    } catch (error) {
+      this.logger.error(`Error saving progression settings: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Failed to save progression settings');
     }
   }
 

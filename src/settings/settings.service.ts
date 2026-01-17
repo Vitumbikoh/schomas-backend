@@ -2001,4 +2001,20 @@ export class SettingsService {
       return null;
     }
   }
+
+  /**
+   * Get progression settings for a school
+   */
+  async getProgressionSettings(schoolId: string): Promise<{ progressionMode: 'automatic' | 'exam_based' } | null> {
+    try {
+      // For now, return default settings. In a real implementation, this would
+      // fetch from a progression settings table or school settings
+      return {
+        progressionMode: 'automatic' // Default to automatic progression
+      };
+    } catch (error) {
+      this.logger.error(`Failed to get progression settings for school ${schoolId}:`, error);
+      return null;
+    }
+  }
 }
