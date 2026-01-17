@@ -81,6 +81,12 @@ export class ExamResultService {
       query = query.andWhere('er.schoolId = :schoolId', { schoolId: student.schoolId });
     }
 
+    // For students, only show results if they are published
+    // Admins and teachers can see unpublished results
+    if (user.role === 'STUDENT') {
+      query = query.andWhere('term.resultsPublished = :published', { published: true });
+    }
+
     // Note: Do not hard-filter by course.classId; we already scoped to student's class via student ids
     // Some courses may not have the classId set or may be cross-listed; filtering here can hide valid results
 
@@ -252,6 +258,12 @@ export class ExamResultService {
     // Add filtering conditions
     if (schoolId) {
       query = query.andWhere('er.schoolId = :schoolId', { schoolId });
+    }
+
+    // For students, only show results if they are published
+    // Admins and teachers can see unpublished results
+    if (user.role === 'STUDENT') {
+      query = query.andWhere('term.resultsPublished = :published', { published: true });
     }
 
     // Do not apply additional course.classId filtering to avoid hiding results recorded for students in this class

@@ -1416,6 +1416,21 @@ export class SettingsService {
   }
 
   /**
+   * Unpublish results for a term
+   */
+  async unpublishTermResults(termId: string, schoolId: string) {
+    const term = await this.termRepository.findOne({ where: { id: termId, schoolId }, relations: ['academicCalendar'] });
+    if (!term) throw new NotFoundException('Term not found');
+    if (!term.resultsPublished) return { success: true, message: 'Results are not published' };
+    if (term.isCompleted) throw new BadRequestException('Cannot unpublish results for a completed term');
+
+    term.resultsPublished = false;
+    term.resultsPublishedAt = null;
+    await this.termRepository.save(term);
+    return { success: true, message: 'Results unpublished', termId: term.id };
+  }
+
+  /**
    * Complete an term and advance to next year or complete calendar
    */
   async completeTerm(TermId: string, schoolId: string, force?: boolean): Promise<{

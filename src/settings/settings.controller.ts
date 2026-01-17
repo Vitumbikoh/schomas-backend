@@ -366,6 +366,30 @@ export class SettingsController {
     return result;
   }
 
+  @Post('terms/:termId/unpublish-results')
+  async unpublishTermResults(
+    @Request() req,
+    @Param('termId', ParseUUIDPipe) termId: string,
+  ) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can unpublish results');
+    }
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Missing school scope');
+    }
+    const result = await this.settingsService.unpublishTermResults(termId, req.user.schoolId);
+    await this.systemLoggingService.logAction({
+      action: 'TERM_RESULTS_UNPUBLISHED',
+      module: 'SETTINGS',
+      level: 'info',
+      performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+      entityId: termId,
+      entityType: 'Term',
+      newValues: result as any,
+    });
+    return result;
+  }
+
   @UseGuards(JwtAuthGuard)
   @Patch('periods/:id')
   async updatePeriod(
