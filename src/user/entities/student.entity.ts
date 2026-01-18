@@ -26,6 +26,9 @@ export class Student extends BaseEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Column({ type: 'boolean', default: false })
+  isGraduated: boolean;
+
 
   @Column({ unique: true }) 
   studentId: string;

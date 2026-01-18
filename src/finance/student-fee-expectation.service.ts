@@ -87,6 +87,10 @@ export class StudentFeeExpectationService {
   async computeExpectedFeesForStudent(studentId: string, termId: string, schoolId?: string, superAdmin = false) {
     const student = await this.studentRepo.findOne({ where: { id: studentId, ...(schoolId && !superAdmin ? { schoolId } : {}) }, relations: ['class'] });
     if (!student) throw new NotFoundException('Student not found');
+    // If student is graduated, they are not expected to pay any fees
+    if (student.isGraduated) {
+      return { studentId, termId, totalExpected: 0, breakdown: [], mandatoryFees: [], optionalFees: [] };
+    }
     const feeItems = await this.feeStructureRepo.find({ where: { termId, isActive: true, ...(schoolId ? { schoolId } : {}) } });
     const applicableFees = feeItems.filter(item => !item.classId || item.classId === (student.class?.id));
     const breakdown = applicableFees.map(item => ({ feeType: item.feeType, amount: Number(item.amount), optional: item.isOptional, frequency: item.frequency }));
