@@ -72,6 +72,62 @@ export class StudentController {
     }
   }
 
+  @Get('students/stats')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get student statistics for admin dashboard' })
+  @ApiResponse({ status: 200, description: 'Student statistics retrieved successfully' })
+  async getStudentStats(@Request() req) {
+    this.logger.log('Fetching student statistics');
+    try {
+      const schoolId = req.user?.schoolId;
+      if (!schoolId) {
+        throw new ForbiddenException('School ID not found');
+      }
+
+      // Get all students for the school
+      const students = await this.studentService.findAll(undefined, schoolId, false);
+
+      // Calculate class-based statistics
+      const classStats = new Map<string, number>();
+      let graduatedCount = 0;
+
+      for (const student of students) {
+        if (student.class) {
+          const className = student.class.name;
+          classStats.set(className, (classStats.get(className) || 0) + 1);
+        } else {
+          // Students without a class are considered graduated or inactive
+          graduatedCount++;
+        }
+      }
+
+      // Convert class stats to array format
+      const classBreakdown = Array.from(classStats.entries()).map(([className, count]) => ({
+        className,
+        count,
+      })).sort((a, b) => {
+        // Sort by class name (Form 1, Form 2, etc.)
+        const getClassNumber = (name: string): number => {
+          const match = name.match(/(\d+)/);
+          return match ? parseInt(match[1], 10) : 999;
+        };
+        return getClassNumber(a.className) - getClassNumber(b.className);
+      });
+
+      return {
+        success: true,
+        data: {
+          totalStudents: students.length,
+          classBreakdown,
+          graduatedStudents: graduatedCount,
+        }
+      };
+    } catch (error) {
+      this.logger.error(`Failed to fetch student statistics: ${error.message}`);
+      throw new Error('Failed to fetch student statistics: ' + error.message);
+    }
+  }
+
   @Post('students/bulk-upload')
   @Roles(Role.ADMIN)
   @UseInterceptors(FileInterceptor('file'))
