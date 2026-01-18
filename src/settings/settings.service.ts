@@ -2005,16 +2005,45 @@ export class SettingsService {
   /**
    * Get progression settings for a school
    */
-  async getProgressionSettings(schoolId: string): Promise<{ progressionMode: 'automatic' | 'exam_based' } | null> {
+  async getProgressionSettings(schoolId: string): Promise<{ progressionMode: 'automatic' | 'exam_based' }> {
     try {
-      // For now, return default settings. In a real implementation, this would
-      // fetch from a progression settings table or school settings
+      const schoolSettings = await this.schoolSettingsRepository.findOne({
+        where: { schoolId }
+      });
+
       return {
-        progressionMode: 'automatic' // Default to automatic progression
+        progressionMode: schoolSettings?.progressionMode || 'automatic'
       };
     } catch (error) {
       this.logger.error(`Failed to get progression settings for school ${schoolId}:`, error);
-      return null;
+      return { progressionMode: 'automatic' }; // Default fallback
+    }
+  }
+
+  /**
+   * Save progression settings for a school
+   */
+  async saveProgressionSettings(schoolId: string, progressionMode: 'automatic' | 'exam_based'): Promise<void> {
+    try {
+      let schoolSettings = await this.schoolSettingsRepository.findOne({
+        where: { schoolId }
+      });
+
+      if (!schoolSettings) {
+        // Create new settings if they don't exist
+        schoolSettings = this.schoolSettingsRepository.create({
+          schoolId,
+          progressionMode
+        });
+      } else {
+        // Update existing settings
+        schoolSettings.progressionMode = progressionMode;
+      }
+
+      await this.schoolSettingsRepository.save(schoolSettings);
+    } catch (error) {
+      this.logger.error(`Failed to save progression settings for school ${schoolId}:`, error);
+      throw new InternalServerErrorException('Failed to save progression settings');
     }
   }
 }

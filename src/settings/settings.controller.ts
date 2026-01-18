@@ -1069,10 +1069,16 @@ async createTermPeriod(
             }
           });
 
-          if (examResults.length > 0) {
+          if (examResults.length === 0) {
+            // Student hasn't written any exams - retain
+            status = 'retain';
+          } else {
             // Calculate average percentage across all courses
             const validResults = examResults.filter(r => r.finalPercentage !== null);
-            if (validResults.length > 0) {
+            if (validResults.length === 0) {
+              // Student wrote exams but has no valid results - retain
+              status = 'retain';
+            } else {
               const averagePercentage = validResults.reduce((sum, result) => {
                 return sum + parseFloat(result.finalPercentage);
               }, 0) / validResults.length;
@@ -1228,7 +1234,44 @@ async createTermPeriod(
     }
   }
 
-  // Academic Calendar Closure Endpoints
+  @UseGuards(JwtAuthGuard)
+  @Post('progression-settings')
+  @ApiOperation({ summary: 'Save progression settings for the school' })
+  @ApiResponse({ status: 200, description: 'Progression settings saved successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async saveProgressionSettings(
+    @Request() req,
+    @Body() body: { progressionMode: 'automatic' | 'exam_based' }
+  ) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can save progression settings');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
+    try {
+      await this.settingsService.saveProgressionSettings(req.user.schoolId, body.progressionMode);
+
+      await this.systemLoggingService.logAction({
+        action: 'PROGRESSION_SETTINGS_UPDATED',
+        module: 'SETTINGS',
+        level: 'info',
+        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+        newValues: { progressionMode: body.progressionMode },
+      });
+
+      return {
+        success: true,
+        message: 'Progression settings saved successfully',
+        progressionMode: body.progressionMode
+      };
+    } catch (error) {
+      this.logger.error(`Error saving progression settings: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Failed to save progression settings');
+    }
+  }
 
   @UseGuards(JwtAuthGuard)
   @Get('academic-calendar/:id/closure-preview')
@@ -1324,52 +1367,30 @@ async createTermPeriod(
       throw new UnauthorizedException('Only admins can access progression settings');
     }
 
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
     try {
-      // For now, return default settings since this is integrated with existing promotion system
-      // In a full implementation, you would store these in the database
+      const progressionSettings = await this.settingsService.getProgressionSettings(req.user.schoolId);
+      
+      // Also get pass threshold
+      const defaultScheme = await this.dataSource.manager.findOne(DefaultWeightingScheme, {
+        where: { schoolId: req.user.schoolId }
+      });
+      const passThreshold = defaultScheme?.passThreshold || 50;
+
       return {
         success: true,
         settings: {
-          progressionMode: 'automatic', // or 'exam_based'
-          passThreshold: 50,
-          automaticPromotion: true
+          progressionMode: progressionSettings?.progressionMode || 'automatic',
+          passThreshold,
+          automaticPromotion: progressionSettings?.progressionMode === 'automatic'
         }
       };
     } catch (error) {
       this.logger.error(`Error fetching progression settings: ${error.message}`, error.stack);
       throw new InternalServerErrorException('Failed to fetch progression settings');
-    }
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Post('progression-settings')
-  @ApiOperation({ summary: 'Save progression settings for the school' })
-  @ApiResponse({ status: 200, description: 'Progression settings saved successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async saveProgressionSettings(@Request() req, @Body() settings: any) {
-    if (req.user.role !== 'ADMIN') {
-      throw new UnauthorizedException('Only admins can modify progression settings');
-    }
-
-    try {
-      // For now, just return success since this integrates with existing systems
-      // In a full implementation, you would save these settings to the database
-      await this.systemLoggingService.logAction({
-        action: 'PROGRESSION_SETTINGS_UPDATED',
-        module: 'SETTINGS',
-        level: 'info',
-        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
-        newValues: settings,
-      });
-
-      return {
-        success: true,
-        message: 'Progression settings saved successfully',
-        settings
-      };
-    } catch (error) {
-      this.logger.error(`Error saving progression settings: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to save progression settings');
     }
   }
 

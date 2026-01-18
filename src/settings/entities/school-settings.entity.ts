@@ -30,4 +30,7 @@ export class SchoolSettings {
 
   @Column({ nullable: true })
   schoolLogo: string;
+
+  @Column({ type: 'enum', enum: ['automatic', 'exam_based'], default: 'automatic' })
+  progressionMode: 'automatic' | 'exam_based';
 }
