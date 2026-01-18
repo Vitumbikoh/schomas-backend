@@ -1039,4 +1039,31 @@ export class FinanceController {
       },
     };
   }
+
+  @Get('reports/term-based')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Get term-based financial report with carry-forward balances' })
+  @ApiQuery({ name: 'schoolId', required: false, type: String })
+  @ApiQuery({ name: 'includeCarryForward', required: false, type: Boolean })
+  async getTermBasedFinancialReport(
+    @Request() req,
+    @Query('schoolId') schoolIdOverride?: string,
+    @Query('includeCarryForward') includeCarryForward?: boolean,
+  ) {
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    const schoolScope = isSuper
+      ? schoolIdOverride || req.user?.schoolId
+      : req.user?.schoolId;
+
+    const result = await this.financeService.getTermBasedFinancialReport({
+      schoolId: schoolScope,
+      superAdmin: isSuper,
+      includeCarryForward: includeCarryForward !== false, // Default to true
+    });
+
+    return {
+      success: true,
+      ...result,
+    };
+  }
 }

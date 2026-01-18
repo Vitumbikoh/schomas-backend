@@ -7,6 +7,8 @@ import { Course } from 'src/course/entities/course.entity';
 import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { StudentClassPromotion } from '../entities/student-class-promotion.entity';
 import { Term } from 'src/settings/entities/term.entity';
+import { ExamResultAggregate, DefaultWeightingScheme } from 'src/aggregation/aggregation.entity';
+import { SchoolSettings } from 'src/settings/entities/school-settings.entity';
 
 @Injectable()
 export class StudentPromotionService {
@@ -38,6 +40,38 @@ export class StudentPromotionService {
     schoolId: string;
     dryRun?: boolean;
     note?: string;
+    manager?: any; // Optional manager for transaction reuse
+  }): Promise<{
+    studentId: string;
+    fromClassId: string | null;
+    toClassId: string | null;
+    addedCourseIds: string[];
+    removedCourseIds: string[];
+    retainedCourseIds: string[];
+    dryRun: boolean;
+  }> {
+    const { studentId, targetClassId, triggeredByUserId, schoolId, dryRun = false, note, manager: providedManager } = options;
+
+    // If a manager is provided, use it directly; otherwise create a transaction
+    if (providedManager) {
+      return this.promoteSingleStudentWithManager(providedManager, { studentId, targetClassId, triggeredByUserId, schoolId, dryRun, note });
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      return this.promoteSingleStudentWithManager(manager, { studentId, targetClassId, triggeredByUserId, schoolId, dryRun, note });
+    });
+  }
+
+  /**
+   * Internal method to promote a single student using a provided manager
+   */
+  private async promoteSingleStudentWithManager(manager: any, options: {
+    studentId: string;
+    targetClassId?: string;
+    triggeredByUserId?: string;
+    schoolId: string;
+    dryRun: boolean;
+    note?: string;
   }): Promise<{
     studentId: string;
     fromClassId: string | null;
@@ -48,154 +82,152 @@ export class StudentPromotionService {
     dryRun: boolean;
   }> {
     const { studentId, targetClassId, triggeredByUserId, schoolId, dryRun = false, note } = options;
-    return this.dataSource.transaction(async (manager) => {
-      const student = await manager.findOne(Student, { where: { id: studentId, schoolId }, relations: ['class'] });
-      if (!student) {
-        throw new Error('Student not found');
+    const student = await manager.findOne(Student, { where: { id: studentId, schoolId }, relations: ['class'] });
+    if (!student) {
+      throw new Error('Student not found');
+    }
+    const classes = await manager.find(Class, { where: { schoolId }, order: { numericalName: 'ASC' } });
+    const currentClass = student.class || null;
+    let destinationClass: Class | null = null;
+    if (targetClassId) {
+      destinationClass = classes.find(c => c.id === targetClassId) || null;
+    } else if (currentClass) {
+      destinationClass = classes.find(c => c.numericalName === currentClass.numericalName + 1) || null;
+    }
+    if (!destinationClass) {
+      // nothing to promote to (maybe graduate)
+      return {
+        studentId,
+        fromClassId: currentClass?.id || null,
+        toClassId: null,
+        addedCourseIds: [],
+        removedCourseIds: [],
+        retainedCourseIds: [],
+        dryRun,
+      };
+    }
+    if (currentClass && currentClass.id === destinationClass.id) {
+      return {
+        studentId,
+        fromClassId: currentClass.id,
+        toClassId: destinationClass.id,
+        addedCourseIds: [],
+        removedCourseIds: [],
+        retainedCourseIds: [],
+        dryRun,
+      };
+    }
+    // current term context for enrollment operations
+    // fetch current term directly to avoid service circular dependency
+    let currentTerm = await this.termRepository.findOne({ where: { isCurrent: true }, select: ['id'] });
+    let termId = currentTerm?.id || null;
+    // fetch enrollments (active only) with their courses
+    const currentEnrollments = await manager.find(Enrollment, {
+      where: { studentId },
+      relations: { course: true },
+    });
+    const previousSnapshot = currentEnrollments.map(e => ({
+      courseId: e.courseId,
+      courseName: e.course?.name || '',
+      classId: e.course?.classId || null,
+      termId: e.termId || null,
+    }));
+    // courses available in destination class
+    const destinationCourses = await manager.find(Course, { where: { classId: destinationClass.id, schoolId } });
+    const destinationCourseIds = new Set(destinationCourses.map(c => c.id));
+    const currentCourseIds = new Set(currentEnrollments.map(e => e.courseId));
+    // Determine removals: enrollment whose course belongs to old class and not in destination class
+    const enrollmentsToRemove = currentEnrollments.filter(e => e.course?.classId && e.course.classId !== destinationClass.id);
+    // Determine additions: destination class courses not already enrolled
+    const coursesToAdd = destinationCourses.filter(c => !currentCourseIds.has(c.id));
+    const retainedCourseIds = currentEnrollments
+      .filter(e => !enrollmentsToRemove.includes(e))
+      .map(e => e.courseId);
+    if (!dryRun) {
+      // update class
+      await manager.update(Student, { id: student.id }, { classId: destinationClass.id });
+      // remove enrollments
+      if (enrollmentsToRemove.length) {
+        await manager.delete(Enrollment, enrollmentsToRemove.map(e => e.id));
+        // decrement enrollmentCount for affected courses
+        for (const e of enrollmentsToRemove) {
+          if (e.course) {
+            await manager.decrement(Course, { id: e.courseId }, 'enrollmentCount', 1);
+          }
+        }
       }
-      const classes = await manager.find(Class, { where: { schoolId }, order: { numericalName: 'ASC' } });
-      const currentClass = student.class || null;
-      let destinationClass: Class | null = null;
-      if (targetClassId) {
-        destinationClass = classes.find(c => c.id === targetClassId) || null;
-      } else if (currentClass) {
-        destinationClass = classes.find(c => c.numericalName === currentClass.numericalName + 1) || null;
+      // add new enrollments
+      // Determine effective termId for new enrollments (fallback chain):
+      // 1. Current active term (isCurrent)
+      // 2. Any termId from previous enrollments (last snapshot)
+      // 3. Latest term for the school (by startDate desc / createdAt desc)
+      if (!termId) {
+        const previousTermId = previousSnapshot.find(s => s.termId)?.termId || null;
+        if (previousTermId) {
+          termId = previousTermId;
+        } else {
+          const latestTerm = await manager.findOne(Term, {
+            where: { schoolId },
+            order: { startDate: 'DESC' },
+          });
+          termId = latestTerm?.id || null;
+        }
+        if (!termId) {
+          this.logger.warn(`No term context found for student ${student.studentId} during promotion; new course enrollments will be skipped.`);
+        }
       }
-      if (!destinationClass) {
-        // nothing to promote to (maybe graduate)
-        return {
-          studentId,
-          fromClassId: currentClass?.id || null,
-            toClassId: null,
-            addedCourseIds: [],
-            removedCourseIds: [],
-            retainedCourseIds: [],
-            dryRun,
-        };
+
+      for (const course of coursesToAdd) {
+        if (!termId) {
+          // Skip adding new enrollment if we cannot satisfy NOT NULL constraint
+          continue;
+        }
+        const enrollment = manager.create(Enrollment, {
+          courseId: course.id,
+          studentId: student.id,
+          enrollmentDate: new Date(),
+          status: 'active',
+          termId: termId,
+          schoolId,
+        });
+        await manager.save(enrollment);
+        await manager.increment(Course, { id: course.id }, 'enrollmentCount', 1);
       }
-      if (currentClass && currentClass.id === destinationClass.id) {
-        return {
-          studentId,
-          fromClassId: currentClass.id,
-          toClassId: destinationClass.id,
-          addedCourseIds: [],
-          removedCourseIds: [],
-          retainedCourseIds: [],
-          dryRun,
-        };
-      }
-  // current term context for enrollment operations
-  // fetch current term directly to avoid service circular dependency
-  let currentTerm = await this.termRepository.findOne({ where: { isCurrent: true }, select: ['id'] });
-  let termId = currentTerm?.id || null;
-      // fetch enrollments (active only) with their courses
-      const currentEnrollments = await manager.find(Enrollment, {
-        where: { studentId },
-        relations: { course: true },
-      });
-      const previousSnapshot = currentEnrollments.map(e => ({
+      // build new snapshot after changes
+      const newEnrollments = await manager.find(Enrollment, { where: { studentId }, relations: { course: true } });
+      const newSnapshot = newEnrollments.map(e => ({
         courseId: e.courseId,
         courseName: e.course?.name || '',
         classId: e.course?.classId || null,
         termId: e.termId || null,
       }));
-      // courses available in destination class
-      const destinationCourses = await manager.find(Course, { where: { classId: destinationClass.id, schoolId } });
-      const destinationCourseIds = new Set(destinationCourses.map(c => c.id));
-      const currentCourseIds = new Set(currentEnrollments.map(e => e.courseId));
-      // Determine removals: enrollment whose course belongs to old class and not in destination class
-      const enrollmentsToRemove = currentEnrollments.filter(e => e.course?.classId && e.course.classId !== destinationClass.id);
-      // Determine additions: destination class courses not already enrolled
-      const coursesToAdd = destinationCourses.filter(c => !currentCourseIds.has(c.id));
-      const retainedCourseIds = currentEnrollments
-        .filter(e => !enrollmentsToRemove.includes(e))
-        .map(e => e.courseId);
-      if (!dryRun) {
-        // update class
-        await manager.update(Student, { id: student.id }, { classId: destinationClass.id });
-        // remove enrollments
-        if (enrollmentsToRemove.length) {
-          await manager.delete(Enrollment, enrollmentsToRemove.map(e => e.id));
-          // decrement enrollmentCount for affected courses
-          for (const e of enrollmentsToRemove) {
-            if (e.course) {
-              await manager.decrement(Course, { id: e.courseId }, 'enrollmentCount', 1);
-            }
-          }
-        }
-        // add new enrollments
-        // Determine effective termId for new enrollments (fallback chain):
-        // 1. Current active term (isCurrent)
-        // 2. Any termId from previous enrollments (last snapshot)
-        // 3. Latest term for the school (by startDate desc / createdAt desc)
-        if (!termId) {
-          const previousTermId = previousSnapshot.find(s => s.termId)?.termId || null;
-          if (previousTermId) {
-            termId = previousTermId;
-          } else {
-            const latestTerm = await manager.findOne(Term, {
-              where: { schoolId },
-              order: { startDate: 'DESC' },
-            });
-            termId = latestTerm?.id || null;
-          }
-          if (!termId) {
-            this.logger.warn(`No term context found for student ${student.studentId} during promotion; new course enrollments will be skipped.`);
-          }
-        }
-
-        for (const course of coursesToAdd) {
-          if (!termId) {
-            // Skip adding new enrollment if we cannot satisfy NOT NULL constraint
-            continue;
-          }
-          const enrollment = manager.create(Enrollment, {
-            courseId: course.id,
-            studentId: student.id,
-            enrollmentDate: new Date(),
-            status: 'active',
-            termId: termId,
-            schoolId,
-          });
-            await manager.save(enrollment);
-            await manager.increment(Course, { id: course.id }, 'enrollmentCount', 1);
-        }
-        // build new snapshot after changes
-        const newEnrollments = await manager.find(Enrollment, { where: { studentId }, relations: { course: true } });
-        const newSnapshot = newEnrollments.map(e => ({
-          courseId: e.courseId,
-          courseName: e.course?.name || '',
-          classId: e.course?.classId || null,
-          termId: e.termId || null,
-        }));
-        // persist history
-        const history = manager.create(StudentClassPromotion, {
-          studentId: student.id,
-          fromClassId: currentClass?.id || null,
-          toClassId: destinationClass.id,
-          triggeredByUserId: triggeredByUserId || null,
-          previousEnrollments: previousSnapshot,
-          newEnrollments: newSnapshot,
-          changes: {
-            added: coursesToAdd.map(c => c.id),
-            removed: enrollmentsToRemove.map(e => e.courseId),
-            retained: retainedCourseIds,
-          },
-          note: note || null,
-          schoolId,
-        });
-        await manager.save(history);
-      }
-      return {
+      // persist history
+      const history = manager.create(StudentClassPromotion, {
         studentId: student.id,
         fromClassId: currentClass?.id || null,
         toClassId: destinationClass.id,
-        addedCourseIds: coursesToAdd.map(c => c.id),
-        removedCourseIds: enrollmentsToRemove.map(e => e.courseId),
-        retainedCourseIds,
-        dryRun,
-      };
-    });
+        triggeredByUserId: triggeredByUserId || null,
+        previousEnrollments: previousSnapshot,
+        newEnrollments: newSnapshot,
+        changes: {
+          added: coursesToAdd.map(c => c.id),
+          removed: enrollmentsToRemove.map(e => e.courseId),
+          retained: retainedCourseIds,
+        },
+        note: note || null,
+        schoolId,
+      });
+      await manager.save(history);
+    }
+    return {
+      studentId: student.id,
+      fromClassId: currentClass?.id || null,
+      toClassId: destinationClass.id,
+      addedCourseIds: coursesToAdd.map(c => c.id),
+      removedCourseIds: enrollmentsToRemove.map(e => e.courseId),
+      retainedCourseIds,
+      dryRun,
+    };
   }
 
   /**
@@ -221,6 +253,33 @@ export class StudentPromotionService {
     }
 
     try {
+      // Get school's progression settings
+      const schoolSettings = await queryRunner.manager.findOne(SchoolSettings, {
+        where: { schoolId }
+      });
+      const progressionMode = schoolSettings?.progressionMode || 'automatic';
+
+      // Get progression term (current Term 3 or completed Term 3)
+      let progressionTerm = await queryRunner.manager.findOne(Term, {
+        where: { schoolId, isCurrent: true }
+      });
+
+      if (!progressionTerm || progressionTerm.termNumber !== 3) {
+        progressionTerm = await queryRunner.manager.findOne(Term, {
+          where: { schoolId, termNumber: 3, isCompleted: true }
+        });
+      }
+
+      if (!progressionTerm) {
+        throw new Error('No valid progression term found (Term 3 current or completed)');
+      }
+
+      // Get pass threshold for exam-based progression
+      const defaultScheme = await queryRunner.manager.findOne(DefaultWeightingScheme, {
+        where: { schoolId }
+      });
+      const passThreshold = defaultScheme?.passThreshold || 50;
+
       // Get all classes for this school ordered by numerical level
       let classes = await queryRunner.manager.find(Class, {
         where: { schoolId },
@@ -292,19 +351,57 @@ export class StudentPromotionService {
             continue;
           }
 
+          // Check if student should be promoted based on progression mode
+          let shouldPromote = true;
+
+          if (progressionMode === 'exam_based') {
+            // Get student's exam results for progression term
+            const examResults = await queryRunner.manager.find(ExamResultAggregate, {
+              where: {
+                studentId: student.id,
+                termId: progressionTerm.id,
+                schoolId
+              }
+            });
+
+            if (examResults.length === 0) {
+              // Student hasn't written any exams - retain
+              shouldPromote = false;
+            } else {
+              // Calculate average percentage across all courses
+              const validResults = examResults.filter(r => r.finalPercentage !== null);
+              if (validResults.length === 0) {
+                // Student wrote exams but has no valid results - retain
+                shouldPromote = false;
+              } else {
+                const averagePercentage = validResults.reduce((sum, result) => {
+                  return sum + parseFloat(result.finalPercentage);
+                }, 0) / validResults.length;
+
+                if (averagePercentage < passThreshold) {
+                  shouldPromote = false;
+                }
+              }
+            }
+          }
+
           const nextClassId = classPromotionMap.get(student.class.id);
-          if (nextClassId) {
+          if (nextClassId && shouldPromote) {
             // Use single-student promotion logic for consistency & history
             const result = await this.promoteSingleStudent({
               studentId: student.id,
               targetClassId: nextClassId,
               schoolId,
+              manager: queryRunner.manager,
             });
             if (result.toClassId) {
               promotedCount++;
               this.logger.log(`Promoted student ${student.studentId} from ${student.class.name} to next class`);
             }
-          } else {
+          } else if (nextClassId && !shouldPromote) {
+            // Student should be retained in current class
+            this.logger.log(`Student ${student.studentId} retained in ${student.class.name} (did not meet promotion criteria)`);
+          } else if (!nextClassId) {
             // Highest class - considered graduated
             graduatedCount++;
             this.logger.log(`Student ${student.studentId} in highest class (${student.class.name}) - considered graduated`);
@@ -452,5 +549,111 @@ export class StudentPromotionService {
     };
 
     return { promotions, summary };
+  }
+
+  /**
+   * Revert student promotions by moving students back to their previous classes
+   * This should only be called when progression has been executed
+   */
+  async revertStudentPromotions(
+    schoolId: string,
+    queryRunner?: QueryRunner,
+  ): Promise<{
+    revertedStudents: number;
+    errors: string[];
+  }> {
+    this.logger.log(`Starting student promotion revert for school: ${schoolId}`);
+
+    const isExternalTransaction = !!queryRunner;
+    if (!queryRunner) {
+      queryRunner = this.dataSource.createQueryRunner();
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+    }
+
+    try {
+      // Get all recent promotion records for this school (assuming they were created during the last promotion execution)
+      const recentPromotions = await queryRunner.manager.find(StudentClassPromotion, {
+        where: { schoolId },
+        relations: ['student', 'fromClass', 'toClass'],
+        order: { createdAt: 'DESC' },
+      });
+
+      if (recentPromotions.length === 0) {
+        this.logger.warn(`No promotion records found to revert for school ${schoolId}`);
+        return { revertedStudents: 0, errors: [] };
+      }
+
+      // Group promotions by student to get the most recent one for each student
+      const studentPromotions = new Map<string, StudentClassPromotion>();
+      for (const promotion of recentPromotions) {
+        if (!studentPromotions.has(promotion.studentId)) {
+          studentPromotions.set(promotion.studentId, promotion);
+        }
+      }
+
+      let revertedCount = 0;
+      const errors: string[] = [];
+
+      for (const promotion of studentPromotions.values()) {
+        try {
+          const student = promotion.student;
+          if (!student) {
+            this.logger.warn(`Student not found for promotion ${promotion.id}`);
+            errors.push(`Student not found for promotion ${promotion.id}`);
+            continue;
+          }
+
+          // Move student back to their previous class
+          if (promotion.fromClass) {
+            await queryRunner.manager.update(Student, student.id, {
+              classId: promotion.fromClass.id,
+              updatedAt: new Date(),
+            });
+
+            // Handle course enrollments - remove courses from new class and restore courses from old class
+            // This is a simplified version - in a real implementation, you'd need more sophisticated logic
+            // to properly manage enrollments based on the class requirements
+
+            revertedCount++;
+            this.logger.log(`Reverted student ${student.studentId} from ${promotion.toClass?.name || 'graduated'} back to ${promotion.fromClass.name}`);
+          } else {
+            this.logger.warn(`No fromClass found for promotion ${promotion.id} - cannot revert`);
+            errors.push(`No previous class found for student ${student.studentId}`);
+          }
+
+          // Note: We don't update the promotion record itself as it's a historical record
+          // The revert action is logged separately in the system logs
+
+        } catch (error) {
+          const errorMsg = `Failed to revert student ${promotion.studentId}: ${error.message}`;
+          this.logger.error(errorMsg);
+          errors.push(errorMsg);
+        }
+      }
+
+      if (!isExternalTransaction) {
+        await queryRunner.commitTransaction();
+      }
+
+      this.logger.log(
+        `Promotion revert completed for school ${schoolId}: ${revertedCount} reverted, ${errors.length} errors`
+      );
+
+      return {
+        revertedStudents: revertedCount,
+        errors,
+      };
+    } catch (error) {
+      if (!isExternalTransaction) {
+        await queryRunner.rollbackTransaction();
+      }
+      this.logger.error(`Failed to revert student promotions for school ${schoolId}:`, error.stack);
+      throw error;
+    } finally {
+      if (!isExternalTransaction) {
+        await queryRunner.release();
+      }
+    }
   }
 }

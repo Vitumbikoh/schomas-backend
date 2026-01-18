@@ -45,6 +45,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 import type { Multer } from 'multer';
+import { StudentPromotionService } from '../student/services/student-promotion.service';
 
 @ApiTags('settings')
 @Controller('settings')
@@ -64,6 +65,7 @@ export class SettingsController {
     private readonly settingsService: SettingsService,
     private readonly dataSource: DataSource,
     private readonly systemLoggingService: SystemLoggingService,
+    private readonly studentPromotionService: StudentPromotionService,
     @InjectRepository(AcademicCalendar)
     private readonly academicCalendarRepository: Repository<AcademicCalendar>,
     @InjectRepository(Period)
@@ -952,10 +954,10 @@ async createTermPeriod(
 
   @UseGuards(JwtAuthGuard)
   @Get('student-promotion/preview')
-  @ApiOperation({ summary: 'Preview student promotion statistics for term 3' })
+  @ApiOperation({ summary: 'Preview student promotion statistics for term 3 or term 3 holiday' })
   @ApiResponse({ status: 200, description: 'Student promotion statistics generated successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 400, description: 'Current term is not term 3 - progression only available at end of academic year' })
+  @ApiResponse({ status: 400, description: 'Not in progression period - only available during Term 3 or Term 3 holiday' })
   async previewStudentPromotion(@Request() req) {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can preview student promotions');
@@ -966,7 +968,7 @@ async createTermPeriod(
     }
 
     try {
-      // Check if current term is term 3
+      // Check if progression can be previewed (Term 3 current or Term 3 completed)
       const currentTerm = await this.dataSource.manager.findOne(Term, {
         where: { 
           schoolId: req.user.schoolId, 
@@ -974,16 +976,62 @@ async createTermPeriod(
         }
       });
 
-      if (!currentTerm) {
-        throw new BadRequestException('No current term found');
+      // Check if Term 3 is available for progression (current or completed)
+      let progressionTerm = currentTerm;
+      let canPreviewProgression = false;
+
+      if (currentTerm && currentTerm.termNumber === 3) {
+        canPreviewProgression = true;
+      } else {
+        // Check if Term 3 is completed
+        const term3 = await this.dataSource.manager.findOne(Term, {
+          where: { 
+            schoolId: req.user.schoolId,
+            termNumber: 3,
+            isCompleted: true
+          }
+        });
+
+        if (term3) {
+          canPreviewProgression = true;
+          progressionTerm = term3;
+        }
       }
 
-      if (currentTerm.termNumber !== 3) {
+      if (!canPreviewProgression) {
         return {
           success: false,
-          message: 'Student progression is only available during Term 3 (end of academic year)',
-          currentTerm: `Term ${currentTerm.termNumber}`,
+          message: 'Student progression is only available during Term 3 or after Term 3 completion',
+          currentTerm: currentTerm ? `Term ${currentTerm.termNumber}` : 'None',
           isProgressionPeriod: false
+        };
+      }
+
+      // Get the current academic calendar
+      const currentAcademicCalendar = await this.dataSource.manager.findOne(AcademicCalendar, {
+        where: { 
+          schoolId: req.user.schoolId, 
+          isActive: true 
+        }
+      });
+
+      if (!currentAcademicCalendar) {
+        return {
+          success: false,
+          message: 'No active academic calendar found',
+          isProgressionPeriod: false
+        };
+      }
+
+      // Check if progression has already been executed for this academic year
+      if (currentAcademicCalendar.studentProgressionExecuted) {
+        return {
+          success: false,
+          message: 'Student progression has already been executed for this academic year',
+          isProgressionPeriod: false,
+          progressionPeriod: progressionTerm.termNumber === 3 && progressionTerm.isCompleted ? 'Term 3 completed (holiday period)' : 'Current term is Term 3',
+          term: `Term ${progressionTerm.termNumber}`,
+          executed: true
         };
       }
 
@@ -1040,31 +1088,40 @@ async createTermPeriod(
       const classBreakdown = new Map();
       const progressionResults = [];
 
+      // First, count students per class to ensure accurate totals
+      const studentCountByClass = new Map<string, number>();
+      for (const student of students) {
+        if (!student.class) continue;
+        const className = student.class.name;
+        studentCountByClass.set(className, (studentCountByClass.get(className) || 0) + 1);
+      }
+
+      // Initialize breakdown for all classes that have students
+      studentCountByClass.forEach((count, className) => {
+        classBreakdown.set(className, {
+          className,
+          total: count,
+          promote: 0,
+          graduate: 0,
+          retain: 0
+        });
+      });
+
       for (const student of students) {
         if (!student.class) continue;
 
         const className = student.class.name;
-        if (!classBreakdown.has(className)) {
-          classBreakdown.set(className, {
-            className,
-            total: 0,
-            promote: 0,
-            graduate: 0,
-            retain: 0
-          });
-        }
-        
-        const classStats = classBreakdown.get(className);
-        classStats.total++;
+        const currentClassStats = classBreakdown.get(className);
+        if (!currentClassStats) continue; // Should not happen
 
         let status = 'promote';
         
         if (progressionMode === 'exam_based') {
-          // Get student's exam results for current term
+          // Get student's exam results for progression term
           const examResults = await this.dataSource.manager.find(ExamResultAggregate, {
             where: { 
               studentId: student.id, 
-              termId: currentTerm.id,
+              termId: progressionTerm.id,
               schoolId: req.user.schoolId
             }
           });
@@ -1090,22 +1147,25 @@ async createTermPeriod(
           }
         }
         
-        // Determine if student graduates or promotes based on class progression
+        // Update current class breakdown (outcomes only, totals already set)
+        let outcome = 'retain';
+
         if (status === 'promote') {
           const nextClassId = classProgression.get(student.classId);
           if (nextClassId === 'graduate') {
-            status = 'graduate';
-            classStats.graduate++;
+            outcome = 'graduate';
+            currentClassStats.graduate++;
           } else {
-            classStats.promote++;
+            outcome = 'promote';
+            currentClassStats.promote++;
           }
         } else {
-          classStats.retain++;
+          currentClassStats.retain++;
         }
 
         progressionResults.push({
           studentId: student.id,
-          status,
+          status: outcome,
           currentClass: className
         });
       }
@@ -1121,7 +1181,8 @@ async createTermPeriod(
         success: true,
         message: 'Student promotion statistics generated successfully',
         isProgressionPeriod: true,
-        currentTerm: 'Term 3',
+        progressionPeriod: progressionTerm.termNumber === 3 && progressionTerm.isCompleted ? 'Term 3 completed (holiday period)' : 'Current term is Term 3',
+        term: `Term ${progressionTerm.termNumber}`,
         progressionMode,
         passThreshold,
         statistics: {
@@ -1138,7 +1199,40 @@ async createTermPeriod(
           }
         },
         breakdown: {
-          byClass: Array.from(classBreakdown.values())
+          byClass: Array.from(classBreakdown.values()).sort((a, b) => {
+            // Sort classes by numerical order (Form 1, Form 2, etc.), put graduated at the end
+            if (a.className === 'Graduated') return 1;
+            if (b.className === 'Graduated') return -1;
+
+            // Extract numbers from class names (handle both digits and word numbers)
+            const getClassNumber = (className: string): number => {
+              // First try to find digits
+              const digitMatch = className.match(/(\d+)/);
+              if (digitMatch) {
+                return parseInt(digitMatch[1], 10);
+              }
+
+              // If no digits, try to match word numbers
+              const wordNumbers: { [key: string]: number } = {
+                'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+                'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10
+              };
+
+              const words = className.toLowerCase().split(/\s+/);
+              for (const word of words) {
+                if (wordNumbers[word]) {
+                  return wordNumbers[word];
+                }
+              }
+
+              return 999; // Fallback for unknown class names
+            };
+
+            const aNum = getClassNumber(a.className);
+            const bNum = getClassNumber(b.className);
+
+            return aNum - bNum;
+          })
         }
       };
     } catch (error) {
@@ -1152,10 +1246,10 @@ async createTermPeriod(
 
   @UseGuards(JwtAuthGuard)
   @Post('student-promotion/execute')
-  @ApiOperation({ summary: 'Execute student promotions for term 3' })
+  @ApiOperation({ summary: 'Execute student promotions for term 3 or term 3 holiday' })
   @ApiResponse({ status: 200, description: 'Student promotions executed successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 400, description: 'Current term is not term 3 - progression only available at end of academic year' })
+  @ApiResponse({ status: 400, description: 'Not in progression period - only available during Term 3 or Term 3 holiday' })
   async executeStudentPromotion(@Request() req) {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can execute student promotions');
@@ -1166,7 +1260,7 @@ async createTermPeriod(
     }
 
     try {
-      // Check if current term is term 3
+      // Check if progression can be executed (Term 3 current or Term 3 completed)
       const currentTerm = await this.dataSource.manager.findOne(Term, {
         where: { 
           schoolId: req.user.schoolId, 
@@ -1174,46 +1268,86 @@ async createTermPeriod(
         }
       });
 
-      if (!currentTerm) {
-        throw new BadRequestException('No current term found');
+      // Check if Term 3 is available for progression (current or completed)
+      let progressionTerm = currentTerm;
+      let canExecuteProgression = false;
+      let progressionReason = '';
+
+      if (currentTerm && currentTerm.termNumber === 3) {
+        canExecuteProgression = true;
+        progressionReason = 'Current term is Term 3';
+      } else {
+        // Check if Term 3 is completed
+        const term3 = await this.dataSource.manager.findOne(Term, {
+          where: { 
+            schoolId: req.user.schoolId,
+            termNumber: 3,
+            isCompleted: true
+          }
+        });
+
+        if (term3) {
+          canExecuteProgression = true;
+          progressionTerm = term3;
+          progressionReason = 'Term 3 is completed (holiday period)';
+        }
       }
 
-      if (currentTerm.termNumber !== 3) {
+      if (!canExecuteProgression) {
         return {
           success: false,
-          message: 'Student progression can only be executed during Term 3 (end of academic year)',
-          currentTerm: `Term ${currentTerm.termNumber}`,
+          message: 'Student progression can only be executed during Term 3 or after Term 3 completion',
+          currentTerm: currentTerm ? `Term ${currentTerm.termNumber}` : 'None',
           isProgressionPeriod: false
         };
       }
 
-      // Mock execution result - in a real implementation, this would process actual promotions
-      // For now, we'll return statistics similar to what the preview would show
-      const previewResult = await this.previewStudentPromotion(req);
-      
-      if (!previewResult.success || !previewResult.isProgressionPeriod) {
-        return previewResult;
+      // Get the current academic calendar
+      const currentAcademicCalendar = await this.dataSource.manager.findOne(AcademicCalendar, {
+        where: { 
+          schoolId: req.user.schoolId, 
+          isActive: true 
+        }
+      });
+
+      if (!currentAcademicCalendar) {
+        throw new BadRequestException('No active academic calendar found');
       }
 
-      const stats = previewResult.statistics;
+      if (currentAcademicCalendar.studentProgressionExecuted) {
+        return {
+          success: false,
+          message: 'Student progression has already been executed for this academic year',
+          isProgressionPeriod: true,
+          progressionPeriod: progressionReason,
+          term: `Term ${progressionTerm.termNumber}`
+        };
+      }
+
+      // Execute the actual student promotions
+      const promotionResult = await this.studentPromotionService.promoteStudentsToNextClass(req.user.schoolId);
+
+      // Mark progression as executed in the academic calendar
+      await this.dataSource.manager.update(
+        AcademicCalendar,
+        { id: currentAcademicCalendar.id },
+        { studentProgressionExecuted: true, updatedAt: new Date() }
+      );
+
       const result = {
         success: true,
-        message: 'Student promotions executed successfully',
+        message: `Student promotions executed successfully during ${progressionReason.toLowerCase()}`,
         isProgressionPeriod: true,
-        currentTerm: 'Term 3',
-        promoted: stats.promote,
-        graduated: stats.graduate,
-        retained: stats.retain,
-        errors: 0,
-        totalProcessed: stats.total,
+        progressionPeriod: progressionReason,
+        term: `Term ${progressionTerm.termNumber}`,
+        promoted: promotionResult.promotedStudents,
+        graduated: promotionResult.graduatedStudents,
+        retained: 0, // This would be calculated based on exam results
+        errors: promotionResult.errors.length,
+        totalProcessed: promotionResult.promotedStudents + promotionResult.graduatedStudents,
         executedAt: new Date(),
         executedBy: req.user.email,
-        classBreakdown: previewResult.breakdown.byClass.map(cls => ({
-          className: cls.className,
-          promoted: cls.promote,
-          retained: cls.retain,
-          graduated: cls.graduate
-        }))
+        classBreakdown: [] // Would need to be populated based on actual promotion results
       };
 
       await this.systemLoggingService.logAction({
@@ -1221,6 +1355,7 @@ async createTermPeriod(
         module: 'SETTINGS',
         level: 'info',
         performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+        schoolId: req.user.schoolId,
         newValues: result,
       });
 
@@ -1231,6 +1366,130 @@ async createTermPeriod(
         throw error;
       }
       throw new InternalServerErrorException('Failed to execute student promotion');
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('student-promotion/revert')
+  @ApiOperation({ summary: 'Revert student promotions executed during term 3 or term 3 holiday' })
+  @ApiResponse({ status: 200, description: 'Student promotions reverted successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 400, description: 'Not in progression period or progression not executed' })
+  async revertStudentPromotion(@Request() req) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can revert student promotions');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
+    try {
+      // Check if revert can be executed (Term 3 current or Term 3 completed)
+      const currentTerm = await this.dataSource.manager.findOne(Term, {
+        where: {
+          schoolId: req.user.schoolId,
+          isCurrent: true
+        }
+      });
+
+      // Check if Term 3 is available for revert (current or completed)
+      let progressionTerm = currentTerm;
+      let canRevertProgression = false;
+      let revertReason = '';
+
+      if (currentTerm && currentTerm.termNumber === 3) {
+        canRevertProgression = true;
+        revertReason = 'Current term is Term 3';
+      } else {
+        // Check if Term 3 is completed
+        const term3 = await this.dataSource.manager.findOne(Term, {
+          where: {
+            schoolId: req.user.schoolId,
+            termNumber: 3,
+            isCompleted: true
+          }
+        });
+
+        if (term3) {
+          canRevertProgression = true;
+          progressionTerm = term3;
+          revertReason = 'Term 3 is completed (holiday period)';
+        }
+      }
+
+      if (!canRevertProgression) {
+        return {
+          success: false,
+          message: 'Student progression can only be reverted during Term 3 or after Term 3 completion',
+          currentTerm: currentTerm ? `Term ${currentTerm.termNumber}` : 'None',
+          canRevert: false
+        };
+      }
+
+      // Get the current academic calendar
+      const currentAcademicCalendar = await this.dataSource.manager.findOne(AcademicCalendar, {
+        where: {
+          schoolId: req.user.schoolId,
+          isActive: true
+        }
+      });
+
+      if (!currentAcademicCalendar) {
+        throw new BadRequestException('No active academic calendar found');
+      }
+
+      if (!currentAcademicCalendar.studentProgressionExecuted) {
+        return {
+          success: false,
+          message: 'Student progression has not been executed for this academic year',
+          canRevert: false,
+          progressionPeriod: revertReason,
+          term: `Term ${progressionTerm.termNumber}`
+        };
+      }
+
+      // Execute the revert operation
+      const revertResult = await this.studentPromotionService.revertStudentPromotions(req.user.schoolId);
+
+      // Mark progression as not executed in the academic calendar
+      await this.dataSource.manager.update(
+        AcademicCalendar,
+        { id: currentAcademicCalendar.id },
+        { studentProgressionExecuted: false, updatedAt: new Date() }
+      );
+
+      const result = {
+        success: true,
+        message: `Student promotions reverted successfully during ${revertReason.toLowerCase()}`,
+        canRevert: true,
+        progressionPeriod: revertReason,
+        term: `Term ${progressionTerm.termNumber}`,
+        reverted: revertResult.revertedStudents,
+        errors: revertResult.errors.length,
+        totalProcessed: revertResult.revertedStudents,
+        revertedAt: new Date(),
+        revertedBy: req.user.email,
+        classBreakdown: [] // Would need to be populated based on actual revert results
+      };
+
+      await this.systemLoggingService.logAction({
+        action: 'STUDENT_PROMOTION_REVERTED',
+        module: 'SETTINGS',
+        level: 'warn',
+        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+        schoolId: req.user.schoolId,
+        oldValues: { studentProgressionExecuted: true },
+        newValues: { ...result, studentProgressionExecuted: false },
+      });
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Error reverting student promotion: ${error.message}`, error.stack);
+      if (error instanceof BadRequestException || error instanceof UnauthorizedException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to revert student promotion');
     }
   }
 

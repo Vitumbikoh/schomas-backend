@@ -25,6 +25,7 @@ import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { Expense } from '../expenses/entities/expense.entity';
 import { CreditLedger } from './entities/credit-ledger.entity';
 import { StudentFeeExpectationService } from './student-fee-expectation.service';
+import { Term } from '../settings/entities/term.entity';
 
 @Injectable()
 export class FinanceService {
@@ -168,6 +169,168 @@ export class FinanceService {
         netBalance,
       },
       trends,
+    };
+  }
+
+  // Term-based financial report with carry-forward balances
+  async getTermBasedFinancialReport(params: {
+    schoolId?: string;
+    superAdmin?: boolean;
+    includeCarryForward?: boolean;
+  }): Promise<{
+    currentTerm: {
+      termId: string;
+      termName: string;
+      startDate: Date;
+      endDate: Date;
+      revenue: number;
+      expenses: number;
+      profit: number;
+      profitMargin: number;
+    };
+    previousTerms: Array<{
+      termId: string;
+      termName: string;
+      startDate: Date;
+      endDate: Date;
+      revenue: number;
+      expenses: number;
+      profit: number;
+      profitMargin: number;
+    }>;
+    cumulative: {
+      totalRevenue: number;
+      totalExpenses: number;
+      totalProfit: number;
+      totalProfitMargin: number;
+      broughtForward: number;
+    };
+    carryForwardBalance: number;
+  }> {
+    const { schoolId, superAdmin = false, includeCarryForward = true } = params || {};
+
+    if (!superAdmin && !schoolId) {
+      throw new BadRequestException('School ID is required');
+    }
+
+    // Get all completed terms for the school, ordered by end date
+    const terms = await this.financeRepository.manager
+      .createQueryBuilder(Term, 'term')
+      .leftJoinAndSelect('term.academicCalendar', 'calendar')
+      .leftJoinAndSelect('term.period', 'period')
+      .where('term.schoolId = :schoolId', { schoolId })
+      .andWhere('term.isCompleted = :isCompleted', { isCompleted: true })
+      .orderBy('term.endDate', 'ASC')
+      .getMany();
+
+    if (terms.length === 0) {
+      return {
+        currentTerm: null,
+        previousTerms: [],
+        cumulative: {
+          totalRevenue: 0,
+          totalExpenses: 0,
+          totalProfit: 0,
+          totalProfitMargin: 0,
+          broughtForward: 0,
+        },
+        carryForwardBalance: 0,
+      };
+    }
+
+    // Get current term (latest incomplete term or latest completed term)
+    const currentTerm = await this.financeRepository.manager
+      .createQueryBuilder(Term, 'term')
+      .leftJoinAndSelect('term.academicCalendar', 'calendar')
+      .leftJoinAndSelect('term.period', 'period')
+      .where('term.schoolId = :schoolId', { schoolId })
+      .orderBy('term.endDate', 'DESC')
+      .getOne();
+
+    const previousTerms = terms.slice(0, -1); // All except the last one
+    const lastCompletedTerm = terms[terms.length - 1];
+
+    // Calculate financial data for each term
+    const calculateTermFinancials = async (term: Term) => {
+      // Revenue: completed payments within term dates
+      const revenueResult = await this.paymentRepository
+        .createQueryBuilder('payment')
+        .select('COALESCE(SUM(payment.amount), 0)', 'revenue')
+        .where('payment.schoolId = :schoolId', { schoolId })
+        .andWhere('payment.status = :status', { status: 'completed' })
+        .andWhere('payment.paymentDate BETWEEN :start AND :end', {
+          start: term.startDate,
+          end: term.endDate,
+        })
+        .getRawOne();
+
+      // Expenses: approved expenses within term dates
+      const expenseResult = await this.expenseRepository
+        .createQueryBuilder('expense')
+        .select('COALESCE(SUM(COALESCE(expense.approvedAmount, expense.amount)), 0)', 'expenses')
+        .where('expense.schoolId = :schoolId', { schoolId })
+        .andWhere('expense.status = :status', { status: 'Approved' })
+        .andWhere('expense.approvedDate BETWEEN :start AND :end', {
+          start: term.startDate,
+          end: term.endDate,
+        })
+        .getRawOne();
+
+      const revenue = parseFloat(revenueResult?.revenue || '0');
+      const expenses = parseFloat(expenseResult?.expenses || '0');
+      const profit = revenue - expenses;
+      const profitMargin = revenue > 0 ? (profit / revenue) * 100 : 0;
+
+      return {
+        termId: term.id,
+        termName: `${term.academicCalendar?.term || 'Unknown'} Term ${term.termNumber}`,
+        startDate: term.startDate,
+        endDate: term.endDate,
+        revenue,
+        expenses,
+        profit,
+        profitMargin,
+      };
+    };
+
+    // Calculate financials for all terms
+    const previousTermsData = await Promise.all(
+      previousTerms.map(calculateTermFinancials)
+    );
+
+    let currentTermData = null;
+    if (currentTerm) {
+      currentTermData = await calculateTermFinancials(currentTerm);
+    }
+
+    // Calculate cumulative data
+    const allTermsData = [...previousTermsData];
+    if (currentTermData) {
+      allTermsData.push(currentTermData);
+    }
+
+    const totalRevenue = allTermsData.reduce((sum, term) => sum + term.revenue, 0);
+    const totalExpenses = allTermsData.reduce((sum, term) => sum + term.expenses, 0);
+    const totalProfit = totalRevenue - totalExpenses;
+    const totalProfitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+
+    // Calculate brought forward balance (cumulative profit from previous terms)
+    const broughtForward = previousTermsData.reduce((sum, term) => sum + term.profit, 0);
+
+    // Calculate carry-forward balance (what will be brought forward to next term)
+    const carryForwardBalance = totalProfit;
+
+    return {
+      currentTerm: currentTermData,
+      previousTerms: previousTermsData,
+      cumulative: {
+        totalRevenue,
+        totalExpenses,
+        totalProfit,
+        totalProfitMargin,
+        broughtForward,
+      },
+      carryForwardBalance,
     };
   }
 

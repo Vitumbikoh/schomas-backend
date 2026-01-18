@@ -30,6 +30,9 @@ export class AcademicCalendar {
   @Column({ default: false })
   isCompleted: boolean;
 
+  @Column({ default: false })
+  studentProgressionExecuted: boolean;
+
   @Column({ type: 'int', default: 0 })
   completedYearsCount: number;
 

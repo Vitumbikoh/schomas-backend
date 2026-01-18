@@ -1554,8 +1554,22 @@ export class SettingsService {
   }
 
   async completeTermHoliday(id: string, schoolId: string): Promise<TermHolidayDto> {
-    const holiday = await this.termHolidayRepository.findOne({ where: { id, schoolId } });
+    const holiday = await this.termHolidayRepository.findOne({
+      where: { id, schoolId },
+      relations: ['term', 'term.academicCalendar']
+    });
     if (!holiday) throw new NotFoundException('Holiday not found');
+
+    // Check if this is a Term 3 holiday and if student progression has been executed
+    if (holiday.term && holiday.term.termNumber === 3 && holiday.name.toLowerCase().includes('end term 3 holiday')) {
+      const academicCalendar = holiday.term.academicCalendar;
+      if (!academicCalendar?.studentProgressionExecuted) {
+        throw new BadRequestException(
+          'Cannot close Term 3 holiday. Student progression must be executed before closing the Term 3 holiday.'
+        );
+      }
+    }
+
     holiday.isCompleted = true;
     holiday.isCurrent = false;
     const saved = await this.termHolidayRepository.save(holiday);
@@ -1710,6 +1724,13 @@ export class SettingsService {
         );
       }
 
+      // Check if student progression has been executed
+      if (!calendarToClose.studentProgressionExecuted) {
+        throw new BadRequestException(
+          'Cannot close academic calendar. Student progression must be executed before closing the academic year.'
+        );
+      }
+
       // Check if there's a next academic calendar available
       const nextCalendar = await this.getNextAcademicCalendar(schoolId, academicCalendarId);
       if (!nextCalendar) {
@@ -1745,28 +1766,6 @@ export class SettingsService {
         }
       );
 
-      // Perform student promotion
-      let promotionResult = {
-        promotedStudents: 0,
-        graduatedStudents: 0,
-        errors: [] as string[],
-      };
-
-      try {
-        this.logger.log(`Starting student promotion for academic calendar closure. School: ${schoolId}`);
-        promotionResult = await this.studentPromotionService.promoteStudentsToNextClass(
-          schoolId,
-          queryRunner,
-        );
-        this.logger.log(
-          `Student promotion completed for calendar closure. Promoted: ${promotionResult.promotedStudents}, Graduated: ${promotionResult.graduatedStudents}, Errors: ${promotionResult.errors.length}`
-        );
-      } catch (promotionError) {
-        this.logger.error(`Student promotion failed during calendar closure:`, promotionError.stack);
-        // Don't fail the entire operation if promotion fails
-        promotionResult.errors.push(`Promotion failed: ${promotionError.message}`);
-      }
-
       // Commit the transaction
       await queryRunner.commitTransaction();
 
@@ -1788,7 +1787,6 @@ export class SettingsService {
           closedCalendarTerm: calendarToClose.term,
           newActiveCalendarId: nextCalendar.id,
           newActiveCalendarTerm: nextCalendar.term,
-          promotionResult,
         },
       });
 
@@ -1797,12 +1795,12 @@ export class SettingsService {
         closedCalendarTerm: calendarToClose.term,
         newActiveCalendarId: nextCalendar.id,
         newActiveCalendarTerm: nextCalendar.term,
-        studentsPromoted: promotionResult.promotedStudents,
-        studentsGraduated: promotionResult.graduatedStudents,
-        promotionErrors: promotionResult.errors,
+        studentsPromoted: 0,
+        studentsGraduated: 0,
+        promotionErrors: [],
         completedTerms: termStatus.completedTerms,
         totalTerms: termStatus.totalTerms,
-        message: `Academic calendar ${calendarToClose.term} has been successfully closed. ${nextCalendar.term} is now active. ${promotionResult.promotedStudents} students promoted, ${promotionResult.graduatedStudents} students graduated.`,
+        message: `Academic calendar ${calendarToClose.term} has been successfully closed. ${nextCalendar.term} is now active.`,
       };
 
       return result;
@@ -1880,6 +1878,12 @@ export class SettingsService {
 
     if (calendar && calendar.isCompleted) {
       reasons.push('Academic calendar is already closed');
+      canClose = false;
+    }
+
+    // Check if student progression has been executed
+    if (calendar && !calendar.studentProgressionExecuted) {
+      reasons.push('Student progression must be executed before closing the academic year');
       canClose = false;
     }
 
