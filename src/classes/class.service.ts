@@ -66,7 +66,7 @@ export class ClassService {
 
   async getAllClasses(schoolId?: string, isElevated = false): Promise<ClassResponseDto[]> {
     const qb = this.classRepository.createQueryBuilder('class');
-    
+
     if (!isElevated) {
       if (!schoolId) {
         return []; // Non-elevated users without schoolId gets empty results
@@ -77,8 +77,13 @@ export class ClassService {
       qb.where('class.schoolId = :schoolId', { schoolId });
     }
     // If elevated user and no schoolId specified, return all classes
-    
+
     const classes = await qb.getMany();
+    console.log(`🔍 getAllClasses: schoolId=${schoolId}, isElevated=${isElevated}, found ${classes.length} classes`);
+    classes.forEach(cls => {
+      console.log(`  - ${cls.name} (numericalName: ${cls.numericalName}, schoolId: ${cls.schoolId})`);
+    });
+
     return classes.map(classItem => ({
       id: classItem.id,
       name: classItem.name,

@@ -96,9 +96,16 @@ export class StudentController {
       for (const student of students) {
         if (student.class) {
           const className = student.class.name;
-          classStats.set(className, (classStats.get(className) || 0) + 1);
+          
+          // If student is in the "Graduated" class, count as graduated
+          if (className === 'Graduated') {
+            graduatedCount++;
+          } else {
+            // Count in class breakdown for regular classes
+            classStats.set(className, (classStats.get(className) || 0) + 1);
+          }
         } else {
-          // Students without a class are considered graduated or inactive
+          // Students without a class are also considered graduated
           graduatedCount++;
         }
       }

@@ -4,6 +4,7 @@ import { Repository, ILike, DataSource } from 'typeorm';
 import { School } from './entities/school.entity';
 import { SchoolAdminCredentials } from './entities/school-admin-credentials.entity';
 import { User } from '../user/entities/user.entity';
+import { Class } from '../classes/entity/class.entity';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from '../user/user.service';
 import { Role } from '../user/enums/role.enum';
@@ -143,10 +144,26 @@ export class SchoolsService {
     };
   }
 
-  // Placeholder for seeding default tenant data (periods, fee categories, etc.)
+  // Seed default data for new schools
   async seedDefaults(schoolId: string) {
-    // TODO: implement actual seeding of default term, roles, etc.
-    return { schoolId, status: 'OK' };
+    const classRepo = this.dataSource.getRepository(Class);
+    
+    // Create the default "Graduated" class for the school
+    const graduatedClass = classRepo.create({
+      name: 'Graduated',
+      numericalName: 999, // Very high number to ensure it's always last
+      description: 'Default graduation class for completed students',
+      isActive: true,
+      schoolId: schoolId,
+    });
+    
+    await classRepo.save(graduatedClass);
+    
+    return { 
+      schoolId, 
+      status: 'OK', 
+      graduatedClassId: graduatedClass.id 
+    };
   }
 
   findAll(search?: string) {

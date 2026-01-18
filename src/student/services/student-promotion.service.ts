@@ -402,9 +402,27 @@ export class StudentPromotionService {
             // Student should be retained in current class
             this.logger.log(`Student ${student.studentId} retained in ${student.class.name} (did not meet promotion criteria)`);
           } else if (!nextClassId) {
-            // Highest class - considered graduated
-            graduatedCount++;
-            this.logger.log(`Student ${student.studentId} in highest class (${student.class.name}) - considered graduated`);
+            // Highest class - move to graduated class
+            const graduatedClass = await queryRunner.manager.findOne(Class, {
+              where: { schoolId, name: 'Graduated' }
+            });
+
+            if (graduatedClass) {
+              // Move student to graduated class
+              const result = await this.promoteSingleStudent({
+                studentId: student.id,
+                targetClassId: graduatedClass.id,
+                schoolId,
+                manager: queryRunner.manager,
+              });
+              if (result.toClassId) {
+                graduatedCount++;
+                this.logger.log(`Student ${student.studentId} moved from ${student.class.name} to Graduated class`);
+              }
+            } else {
+              this.logger.error(`Graduated class not found for school ${schoolId}. Student ${student.studentId} cannot be graduated.`);
+              errors.push(`Graduated class not found for school ${schoolId}`);
+            }
           }
         } catch (error) {
           const errorMsg = `Failed to promote student ${student.studentId}: ${error.message}`;
