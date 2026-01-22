@@ -5,6 +5,7 @@ import { FeePayment } from '../entities/fee-payment.entity';
 import { FeeStructure } from '../entities/fee-structure.entity';
 import { Student } from '../../user/entities/student.entity';
 import { Enrollment } from '../../enrollment/entities/enrollment.entity';
+import { Term } from '../../settings/entities/term.entity';
 import { SettingsService } from '../../settings/settings.service';
 
 export interface FeeAnalytics {
@@ -46,6 +47,8 @@ export interface FeeAnalytics {
     byMonth: Array<{ month: string; amount: number; count: number }>;
     byFeeType: Array<{ feeType: string; totalPaid: number; percentage: number }>;
   };
+  overdueTotal?: number;
+  overdueBreakdown?: Array<{ studentId: string; amount: number }>;
   noData?: boolean;
   message?: string;
 }
@@ -63,17 +66,19 @@ export class FeeAnalyticsService {
     private studentRepository: Repository<Student>,
     @InjectRepository(Enrollment)
     private enrollmentRepository: Repository<Enrollment>,
+    @InjectRepository(Term)
+    private termRepository: Repository<Term>,
     private settingsService: SettingsService,
   ) {}
 
-  async getFeeAnalytics(TermId?: string, schoolId?: string, superAdmin = false): Promise<FeeAnalytics> {
-    this.logger.log(`Generating fee analytics report for term: ${TermId}, school: ${schoolId}, superAdmin: ${superAdmin}`);
+  async getFeeAnalytics(TermId?: string, academicCalendarId?: string, schoolId?: string, superAdmin = false): Promise<FeeAnalytics> {
+    this.logger.log(`Generating fee analytics report for term: ${TermId}, calendar: ${academicCalendarId}, school: ${schoolId}, superAdmin: ${superAdmin}`);
 
     try {
       // Get current term if not provided
-      let currentTerm;
+      let currentTerm: any = null;
       if (TermId) {
-        currentTerm = { id: TermId };
+        currentTerm = await this.termRepository.findOne({ where: { id: TermId }, relations: ['academicCalendar'] });
       } else {
         currentTerm = await this.settingsService.getCurrentTerm(schoolId);
       }
@@ -96,7 +101,7 @@ export class FeeAnalyticsService {
       this.logger.log(`Analyzing fees for term: ${currentTerm.id}`);
 
       // Get term details
-      const termDetails = await this.settingsService.getCurrentTerm();
+      const termDetails = currentTerm || await this.settingsService.getCurrentTerm();
 
       // Get all students enrolled in current term with school filtering
       const enrollmentQuery: any = { termId: currentTerm.id };
@@ -163,15 +168,23 @@ export class FeeAnalyticsService {
       // Calculate expected fees per student
       const feeStructureAnalysis = this.calculateFeeStructure(feeStructures);
 
-      // Get all payments for current term with school filtering
-      const payments = await this.feePaymentRepository
+      // Get all payments for current term with school filtering and calendar filter when provided
+      const paymentsQuery = this.feePaymentRepository
         .createQueryBuilder('payment')
         .leftJoinAndSelect('payment.student', 'student')
         .leftJoinAndSelect('payment.term', 'term')
         .where('payment.termId = :termId', { termId: currentTerm.id })
-        .andWhere('payment.status = :status', { status: 'completed' })
-        .andWhere(Object.keys(studentQuery).length > 0 ? 'payment.schoolId = :schoolId' : '1=1', studentQuery.schoolId ? { schoolId: studentQuery.schoolId } : {})
-        .getMany();
+        .andWhere('payment.status = :status', { status: 'completed' });
+
+      if (academicCalendarId) {
+        paymentsQuery.andWhere('payment.academicCalendarId = :academicCalendarId', { academicCalendarId });
+      }
+
+      if (studentQuery.schoolId) {
+        paymentsQuery.andWhere('payment.schoolId = :schoolId', { schoolId: studentQuery.schoolId });
+      }
+
+      const payments = await paymentsQuery.getMany();
 
       // Calculate payment summary
       const paymentSummary = this.calculatePaymentSummary(
@@ -179,6 +192,61 @@ export class FeeAnalyticsService {
         feeStructureAnalysis.totalExpectedAmount,
         payments
       );
+
+      // Calculate overdue from previous terms in the same academic calendar (exclude selected term)
+      let overdueTotal = 0;
+      let perStudentOverdue: Record<string, number> = {};
+      if (currentTerm && currentTerm.academicCalendar?.id) {
+        const calendarId = academicCalendarId || currentTerm.academicCalendar?.id;
+        const allTerms = await this.settingsService.getTerms(calendarId, schoolId);
+        const priorTerms = allTerms.filter((t: any) => t.id !== currentTerm.id && (t.termNumber || 0) < (currentTerm.termNumber || 0));
+        const priorTermIds = priorTerms.map((t: any) => t.id);
+
+        if (priorTermIds.length > 0) {
+          // Build per-student expected across prior terms
+          const studentsForOverdue = await this.studentRepository.find({ where: studentQuery });
+
+          // Load payments in prior terms
+          const priorPayments = await this.feePaymentRepository
+            .createQueryBuilder('payment')
+            .where('payment.termId IN (:...termIds)', { termIds: priorTermIds })
+            .andWhere('payment.status = :status', { status: 'completed' })
+            .andWhere(studentQuery.schoolId ? 'payment.schoolId = :schoolId' : '1=1', studentQuery.schoolId ? { schoolId: studentQuery.schoolId } : {})
+            .getMany();
+
+          const paymentMap = new Map<string, number>();
+          priorPayments.forEach(p => {
+            const sid = (p as any).student?.id || (p as any).studentId;
+            if (!sid) return;
+            paymentMap.set(sid, (paymentMap.get(sid) || 0) + Number(p.amount));
+          });
+
+          // For each prior term, get fee structures and compute expected per student
+          const feeStructuresByTerm: Record<string, FeeStructure[]> = {};
+          for (const tId of priorTermIds) {
+            feeStructuresByTerm[tId] = await this.feeStructureRepository.find({ where: { termId: tId, isActive: true, ...(studentQuery.schoolId ? { schoolId: studentQuery.schoolId } : {}) }, relations: ['class'] });
+          }
+
+          for (const student of studentsForOverdue) {
+            let expected = 0;
+            for (const tId of priorTermIds) {
+              const fss = feeStructuresByTerm[tId] || [];
+              for (const fs of fss) {
+                if (!fs.classId || fs.classId === (student as any).classId) {
+                  expected += Number(fs.amount);
+                }
+              }
+            }
+
+            const paid = paymentMap.get(student.id) || 0;
+            const pending = Math.max(0, expected - paid);
+            if (pending > 0) {
+              overdueTotal += pending;
+              perStudentOverdue[student.id] = pending;
+            }
+          }
+        }
+      }
 
       // Get student payment statuses
       const studentPaymentStatus = await this.calculateStudentPaymentStatus(
@@ -203,7 +271,9 @@ export class FeeAnalyticsService {
         feeStructure: feeStructureAnalysis,
         paymentSummary,
         studentPaymentStatus,
-        paymentTrends
+        paymentTrends,
+        overdueTotal,
+        overdueBreakdown: Object.keys(perStudentOverdue).map(k => ({ studentId: k, amount: perStudentOverdue[k] }))
       };
 
     } catch (error) {

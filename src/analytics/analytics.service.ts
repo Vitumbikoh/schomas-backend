@@ -254,9 +254,9 @@ export class AnalyticsService {
     });
   }
 
-  async getFeeCollectionStatus(TermId?: string, schoolId?: string, superAdmin = false) {
+  async getFeeCollectionStatus(TermId?: string, academicCalendarId?: string, schoolId?: string, superAdmin = false) {
     // Use the fee analytics service with proper school filtering
-    return this.feeAnalyticsService.getFeeAnalytics(TermId || undefined, schoolId, superAdmin);
+    return this.feeAnalyticsService.getFeeAnalytics(TermId || undefined, academicCalendarId || undefined, schoolId, superAdmin);
   }
 
   async getCurrentTermDetails() {
@@ -341,7 +341,7 @@ export class AnalyticsService {
     
     let feePaymentPercentage = 0;
     try {
-      const feeStatus: any = await this.getFeeCollectionStatus(currentYear?.id, schoolId, superAdmin);
+      const feeStatus: any = await this.getFeeCollectionStatus(currentYear?.id, undefined, schoolId, superAdmin);
       // Support either paymentSummary or summary shape
       if (feeStatus?.paymentSummary?.paymentPercentage !== undefined) {
         feePaymentPercentage = feeStatus.paymentSummary.paymentPercentage;

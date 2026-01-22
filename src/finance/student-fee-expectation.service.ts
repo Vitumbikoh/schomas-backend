@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Student } from '../user/entities/student.entity';
+import { Enrollment } from 'src/enrollment/entities/enrollment.entity';
 import { FeePayment } from './entities/fee-payment.entity';
 import { FeeStructure } from './entities/fee-structure.entity';
 import { Term } from '../settings/entities/term.entity';
@@ -13,6 +14,7 @@ export class StudentFeeExpectationService {
     @InjectRepository(FeePayment) private paymentRepo: Repository<FeePayment>,
     @InjectRepository(FeeStructure) private feeStructureRepo: Repository<FeeStructure>,
     @InjectRepository(Term) private termRepo: Repository<Term>,
+    @InjectRepository(Enrollment) private enrollmentRepo: Repository<Enrollment>,
   ) {}
 
   async getFeeStructureForTerm(termId: string | undefined, schoolId?: string, superAdmin = false) {
@@ -84,46 +86,94 @@ export class StudentFeeExpectationService {
     return { success: true };
   }
 
-  async computeExpectedFeesForStudent(studentId: string, termId: string, schoolId?: string, superAdmin = false) {
+  async computeExpectedFeesForStudent(studentId: string, termId: string, schoolId?: string, superAdmin = false, classIdAtTerm?: string) {
     const student = await this.studentRepo.findOne({ where: { id: studentId, ...(schoolId && !superAdmin ? { schoolId } : {}) }, relations: ['class'] });
     if (!student) throw new NotFoundException('Student not found');
-    // If student is graduated, they are not expected to pay any fees
-    if (student.isGraduated) {
-      return { studentId, termId, totalExpected: 0, breakdown: [], mandatoryFees: [], optionalFees: [] };
-    }
+    // Graduated students can still have historical obligations for past terms.
     const feeItems = await this.feeStructureRepo.find({ where: { termId, isActive: true, ...(schoolId ? { schoolId } : {}) } });
-    const applicableFees = feeItems.filter(item => !item.classId || item.classId === (student.class?.id));
+    const applicableFees = feeItems.filter(item => {
+      const targetClassId = classIdAtTerm || student.class?.id;
+      return !item.classId || item.classId === targetClassId;
+    });
     const breakdown = applicableFees.map(item => ({ feeType: item.feeType, amount: Number(item.amount), optional: item.isOptional, frequency: item.frequency }));
     const totalExpected = applicableFees.filter(item => !item.isOptional).reduce((sum, item) => sum + Number(item.amount), 0);
     return { studentId, termId, totalExpected, breakdown, mandatoryFees: applicableFees.filter(i => !i.isOptional), optionalFees: applicableFees.filter(i => i.isOptional) };
   }
 
   async getFeeSummaryForTerm(termId: string, schoolId?: string, superAdmin = false) {
-    const [students, feeStructures, payments, term] = await Promise.all([
-      this.studentRepo.find({ where: { termId, ...(schoolId && !superAdmin ? { schoolId } : {}) } }),
+    // Fetch students (include graduated in initial set; we'll decide which graduated students to include)
+    const allStudents = await this.studentRepo.find({
+      where: schoolId && !superAdmin ? { schoolId } : {},
+      relations: ['user', 'class'],
+    });
+
+    const [feeStructures, payments, term] = await Promise.all([
       this.feeStructureRepo.find({ where: { termId, isActive: true, ...(schoolId ? { schoolId } : {}) } }),
-      this.paymentRepo.find({ where: { termId, status: 'completed', ...(schoolId ? { schoolId } : {}) } }),
+      this.paymentRepo.find({ where: { termId, status: 'completed', ...(schoolId ? { schoolId } : {}) }, relations: ['student'] }),
       this.termRepo.findOne({ where: { id: termId } })
     ]);
     if (!term) throw new NotFoundException('Term not found');
-    const totalStudents = students.length;
-    const expectedFees = feeStructures.filter(i => !i.isOptional).reduce((sum, i) => sum + (Number(i.amount) * totalStudents), 0);
+    // Determine which students to include:
+    // - currently enrolled (not graduated) and active
+    // - graduated students only if they had expected fees for the selected term or made payments in that term
+
+    const paymentsByStudent: Record<string, number> = {};
+    payments.forEach(p => { const sid = (p.student as any)?.id; if (sid) paymentsByStudent[sid] = (paymentsByStudent[sid] || 0) + Number(p.amount); });
+
+    // Fetch enrollments for the selected term to determine students who were enrolled in that term
+    const enrollments = await this.enrollmentRepo.find({ where: { termId, ...(schoolId ? { schoolId } : {}) }, relations: ['student', 'course', 'course.class'] });
+    const uniqueStudentsMap: Record<string, { student: Student; classIdAtTerm?: string }> = {};
+    enrollments.forEach(en => {
+      if (!en.student) return;
+      // exclude students whose class (from course) is the 'Graduated' class
+      const classObj: any = (en.course as any)?.class;
+      const className = classObj?.name || '';
+      if (className && className.toLowerCase() === 'graduated') return;
+      uniqueStudentsMap[en.student.id] = { student: en.student, classIdAtTerm: classObj?.id };
+    });
+
+    const studentsToInclude = Object.values(uniqueStudentsMap).map(v => v.student);
+
+    const totalStudents = studentsToInclude.length;
+    const expectedFees = studentsToInclude.reduce((total, student) => {
+      // determine class for this student at the term using enrollments
+      const classIdAtTerm = Object.values(uniqueStudentsMap).find(v => v.student.id === student.id)?.classIdAtTerm;
+      const studentFees = feeStructures.filter(f => !f.isOptional && (!f.classId || f.classId === classIdAtTerm || f.classId === student.class?.id));
+      const studentExpected = studentFees.reduce((sum, f) => sum + Number(f.amount), 0);
+      return total + studentExpected;
+    }, 0);
     const totalFeesPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
     const remainingFees = Math.max(0, expectedFees - totalFeesPaid);
     const now = new Date();
     let overdueFees = 0; let overdueStudents = 0;
     if (now > new Date(term.endDate)) {
-      const perStudentExpected = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
       const paidMap: Record<string, number> = {};
       payments.forEach(p => { const sid = (p.student as any)?.id; if (sid) paidMap[sid] = (paidMap[sid] || 0) + Number(p.amount); });
-      overdueStudents = students.reduce((count, st) => { const paid = paidMap[st.id] || 0; const outstanding = Math.max(0, perStudentExpected - paid); return count + (outstanding > 0 ? 1 : 0); }, 0);
-      overdueFees = remainingFees;
+
+      // Calculate overdue per included student, accounting for class-specific fees
+      const overdueData = studentsToInclude.reduce((acc, st) => {
+        const studentFees = feeStructures.filter(f => !f.isOptional && (!f.classId || f.classId === st.class?.id));
+        const studentExpected = studentFees.reduce((sum, f) => sum + Number(f.amount), 0);
+        const paid = paidMap[st.id] || 0;
+        const outstanding = Math.max(0, studentExpected - paid);
+        if (outstanding > 0) {
+          acc.count += 1;
+          acc.amount += outstanding;
+        }
+        return acc;
+      }, { count: 0, amount: 0 });
+      
+      overdueStudents = overdueData.count;
+      overdueFees = overdueData.amount;
     }
     return { termId, totalStudents, totalExpectedFees: expectedFees, totalPaidFees: totalFeesPaid, outstandingFees: remainingFees, paymentPercentage: expectedFees > 0 ? (totalFeesPaid / expectedFees) * 100 : 0, expectedFees, totalFeesPaid, remainingFees, overdueFees, overdueStudents, isPastTerm: now > new Date(term.endDate), termEndDate: term.endDate, feeStructures: feeStructures.map(f => ({ feeType: f.feeType, amount: f.amount, isOptional: f.isOptional, frequency: f.frequency })) };
   }
 
   async getStudentFeeStatus(studentId: string, termId: string, schoolId?: string, superAdmin = false) {
-    const { totalExpected, breakdown } = await this.computeExpectedFeesForStudent(studentId, termId, schoolId, superAdmin);
+    // Determine class for student in the given term via enrollment (if any)
+    const enrollmentForTerm = await this.enrollmentRepo.findOne({ where: { termId, studentId, ...(schoolId ? { schoolId } : {}) }, relations: ['course', 'course.class'] });
+    const classIdAtTerm = (enrollmentForTerm as any)?.course?.class?.id;
+    const { totalExpected, breakdown } = await this.computeExpectedFeesForStudent(studentId, termId, schoolId, superAdmin, classIdAtTerm);
     const payments = await this.paymentRepo.find({ where: { student: { id: studentId }, termId, status: 'completed', ...(schoolId ? { schoolId } : {}) } });
     const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
     const outstanding = Math.max(0, totalExpected - totalPaid);
@@ -131,22 +181,53 @@ export class StudentFeeExpectationService {
   }
 
   async listStudentFeeStatuses(termId: string, schoolId?: string, superAdmin = false) {
-    const [students, payments, feeStructures, term] = await Promise.all([
-      this.studentRepo.find({ where: { termId, ...(schoolId && !superAdmin ? { schoolId } : {}) } }),
+    // Payments and fee structures for the term
+    const [payments, feeStructures, term] = await Promise.all([
       this.paymentRepo.find({ where: { termId, status: 'completed', ...(schoolId ? { schoolId } : {}) }, relations: ['student'] }),
       this.feeStructureRepo.find({ where: { termId, isActive: true, ...(schoolId ? { schoolId } : {}) } }),
       this.termRepo.findOne({ where: { id: termId } })
     ]);
     const pastEnd = term ? new Date() > new Date(term.endDate) : false;
-    const perStudentMandatoryTotal = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
+    // Map payments by student
     const paidMap: Record<string, number> = {};
     payments.forEach(p => { if (p.student?.id) paidMap[p.student.id] = (paidMap[p.student.id] || 0) + Number(p.amount); });
-    const statuses = students.map(student => {
-      const totalExpected = perStudentMandatoryTotal;
+
+    // Fetch enrollments for the selected term; use enrollments to determine students and their class at that term
+    const enrollments = await this.enrollmentRepo.find({ where: { termId, ...(schoolId ? { schoolId } : {}) }, relations: ['student', 'student.user', 'course', 'course.class'] });
+    const uniqueStudentsMap: Record<string, { student: Student; classIdAtTerm?: string }> = {};
+    enrollments.forEach(en => {
+      if (!en.student) return;
+      const classObj: any = (en.course as any)?.class;
+      const className = classObj?.name || '';
+      if (className && className.toLowerCase() === 'graduated') return;
+      // include only active student users
+      if (en.student.user?.isActive === false) return;
+      uniqueStudentsMap[en.student.id] = { student: en.student, classIdAtTerm: classObj?.id };
+    });
+
+    const candidateEntries = Object.values(uniqueStudentsMap);
+
+    const statuses = candidateEntries.map(entry => {
+      const student = entry.student;
+      const classIdAtTerm = entry.classIdAtTerm;
+      const studentFees = feeStructures.filter(f => !f.isOptional && (!f.classId || f.classId === classIdAtTerm || f.classId === student.class?.id));
+      const totalExpected = studentFees.reduce((sum, f) => sum + Number(f.amount), 0);
       const totalPaid = paidMap[student.id] || 0;
       const outstanding = Math.max(0, totalExpected - totalPaid);
       const isOverdue = pastEnd && outstanding > 0;
-      return { studentId: student.id, humanId: student.studentId, studentName: `${student.firstName} ${student.lastName}`, termId, totalExpected, totalPaid, outstanding, paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0, status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'), isOverdue, overdueAmount: isOverdue ? outstanding : 0 };
+      return {
+        studentId: student.id,
+        humanId: student.studentId,
+        studentName: `${student.firstName} ${student.lastName}`,
+        termId,
+        totalExpected,
+        totalPaid,
+        outstanding,
+        paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0,
+        status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'),
+        isOverdue,
+        overdueAmount: isOverdue ? outstanding : 0
+      };
     });
     return statuses.sort((a, b) => b.outstanding - a.outstanding);
   }

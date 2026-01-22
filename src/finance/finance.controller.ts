@@ -33,6 +33,7 @@ import { ApproveBudgetDto } from './dtos/approve-budget.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CreateFinanceDto } from 'src/user/dtos/create-finance.dto';
 import { StudentFeeExpectationService } from './student-fee-expectation.service';
+import { SettingsService } from 'src/settings/settings.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { CreateFeeStructureDto } from './dtos/fees-structure.dto';
 
@@ -45,6 +46,7 @@ export class FinanceController {
     private readonly financeService: FinanceService,
     private readonly systemLoggingService: SystemLoggingService,
     private readonly studentFeeExpectationService: StudentFeeExpectationService,
+    private readonly settingsService: SettingsService,
     @InjectRepository(Student)
     private readonly studentRepository: Repository<Student>,
   ) {}
@@ -395,9 +397,15 @@ export class FinanceController {
   ) {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
+    const schoolScope = superAdmin ? req.query.schoolId : user.schoolId;
+    let selectedTermId = termId;
+    if (!selectedTermId) {
+      const current = await this.settingsService.getCurrentTerm(schoolScope);
+      selectedTermId = current?.id;
+    }
     return this.studentFeeExpectationService.getFeeSummaryForTerm(
-      termId,
-      superAdmin ? req.query.schoolId : user.schoolId,
+      selectedTermId,
+      schoolScope,
       superAdmin,
     );
   }
@@ -413,9 +421,15 @@ export class FinanceController {
   ) {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
+    const schoolScope = superAdmin ? req.query.schoolId : user.schoolId;
+    let selectedTermId = termId;
+    if (!selectedTermId) {
+      const current = await this.settingsService.getCurrentTerm(schoolScope);
+      selectedTermId = current?.id;
+    }
     return this.studentFeeExpectationService.listStudentFeeStatuses(
-      termId,
-      superAdmin ? req.query.schoolId : user.schoolId,
+      selectedTermId,
+      schoolScope,
       superAdmin,
     );
   }
@@ -452,10 +466,16 @@ export class FinanceController {
       actualStudentId = student.id;
     }
     
+    const schoolScope = superAdmin ? req.query.schoolId : user.schoolId;
+    let selectedTermId = termId;
+    if (!selectedTermId) {
+      const current = await this.settingsService.getCurrentTerm(schoolScope);
+      selectedTermId = current?.id;
+    }
     return this.studentFeeExpectationService.getStudentFeeStatus(
       actualStudentId,
-      termId,
-      superAdmin ? req.query.schoolId : user.schoolId,
+      selectedTermId,
+      schoolScope,
       superAdmin,
     );
   }
@@ -472,9 +492,15 @@ export class FinanceController {
   ) {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
+    const schoolScope = superAdmin ? req.query.schoolId : user.schoolId;
+    let selectedTermId = termId;
+    if (!selectedTermId) {
+      const current = await this.settingsService.getCurrentTerm(schoolScope);
+      selectedTermId = current?.id;
+    }
     return this.studentFeeExpectationService.getFeeSummaryForTerm(
-      termId,
-      superAdmin ? req.query.schoolId : user.schoolId,
+      selectedTermId,
+      schoolScope,
       superAdmin,
     );
   }
@@ -900,21 +926,30 @@ export class FinanceController {
     description: 'Transactions retrieved successfully',
   })
   async getTransactions(
+    @Request() req: any,
     @Query('page') page = 1,
     @Query('limit') limit = 10,
     @Query('search') search = '',
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query('termId') termId?: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
   ) {
     const dateRange = {
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
     };
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
     return this.financeService.getTransactions(
       Number(page),
       Number(limit),
       search,
       dateRange,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+      termId,
+      academicCalendarId,
     );
   }
 
@@ -929,14 +964,23 @@ export class FinanceController {
     description: 'List of fee payments retrieved successfully',
   })
   async getFeePayments(
+    @Request() req: any,
     @Query('page') page = 1,
     @Query('limit') limit = 10,
     @Query('search') search = '',
+    @Query('termId') termId?: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
   ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
     const { payments, total } = await this.financeService.getAllPayments(
       Number(page),
       Number(limit),
       search,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+      termId,
+      academicCalendarId,
     );
 
     const transformedPayments = payments.map((payment) => ({
@@ -980,12 +1024,20 @@ export class FinanceController {
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 10,
     @Query('search') search: string = '',
+    @Query('termId') termId?: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
   ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
     return this.financeService.getParentPayments(
       req.user.id,
       Number(page),
       Number(limit),
       search,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+      termId,
+      academicCalendarId,
     );
   }
 

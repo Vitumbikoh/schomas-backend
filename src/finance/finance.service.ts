@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, Like, In, Brackets, ILike } from 'typeorm';
+import { Repository, Between, Like, In, Brackets, ILike, Not } from 'typeorm';
 import { Finance } from '../user/entities/finance.entity';
 import { FeePayment } from './entities/fee-payment.entity';
 import { Budget } from './entities/budget.entity';
@@ -555,6 +555,7 @@ export class FinanceService {
             paymentDate: new Date(processPaymentDto.paymentDate),
             student: { id: student.id },
             termId: currentTerm.id,
+            academicCalendarId: currentTerm.academicCalendar?.id || undefined,
             schoolId: user.schoolId || undefined,
             ...(financeUser
               ? { processedBy: { id: financeUser.id } }
@@ -626,6 +627,7 @@ export class FinanceService {
         paymentDate: new Date(processPaymentDto.paymentDate),
         student: { id: student.id },
         termId: currentTerm.id,
+        academicCalendarId: currentTerm.academicCalendar?.id || undefined,
         schoolId: user.schoolId || undefined,
         ...(financeUser
           ? { processedBy: { id: financeUser.id } }
@@ -1076,14 +1078,25 @@ export class FinanceService {
     limit: number,
     search: string,
     dateRange?: { startDate?: Date; endDate?: Date },
+    schoolId?: string,
+    superAdmin = false,
+    termId?: string,
+    academicCalendarId?: string,
   ) {
-    // Get current term for filtering
-    const currentTerm = await this.settingsService.getCurrentTerm();
-    
+    // Get current term for filtering (scope by school if provided) when explicit termId not supplied
+    const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
+
     const where: any = {};
 
-    // Add term filter if available
-    if (currentTerm) {
+    // Prefer explicit term/academic calendar if provided
+    if (termId) {
+      where.termId = termId;
+    }
+    if (academicCalendarId) {
+      where.academicCalendarId = academicCalendarId;
+    }
+    // Fallback to current term when no explicit term provided
+    if (!termId && !academicCalendarId && currentTerm) {
       where.termId = currentTerm.id;
     }
 
@@ -1095,6 +1108,21 @@ export class FinanceService {
       where.paymentDate = Between(dateRange.startDate, dateRange.endDate);
     }
 
+    // Ensure school scoping when not super admin
+    if (!superAdmin) {
+      if (schoolId) {
+        where.schoolId = schoolId;
+      } else {
+        return {
+          transactions: [],
+          pagination: { totalItems: 0, totalPages: 0, itemsPerPage: limit, currentPage: page },
+        };
+      }
+    } else if (schoolId) {
+      // allow optional narrowing for super admin
+      where.schoolId = schoolId;
+    }
+
     const [transactions, total] = await this.paymentRepository.findAndCount({
       where,
       relations: ['student', 'processedBy', 'processedByAdmin', 'term'],
@@ -1102,30 +1130,32 @@ export class FinanceService {
       take: limit,
       order: { paymentDate: 'DESC' },
     });
-
-    return {
-      transactions: transactions.map((t) => ({
-        ...t,
-        studentName: t.student ? `${t.student.firstName} ${t.student.lastName}` : 'Unknown',
-  studentId: t.student ? t.student.studentId : undefined,
-        paymentDate: t.paymentDate?.toISOString(),
-        processedByName: t.processedBy?.user?.username || t.processedByAdmin?.username || 'Unknown',
-        term: t.term ? `${t.term.academicCalendar.term} - ${t.term.period.name}` : 'N/A',
-      })),
-      pagination: {
-        totalItems: total,
-        totalPages: Math.ceil(total / limit),
-        itemsPerPage: limit,
-        currentPage: page,
-      },
-    };
-  }
-
+      return {
+        transactions: transactions.map((t) => ({
+          ...t,
+          studentName: t.student ? `${t.student.firstName} ${t.student.lastName}` : 'Unknown',
+          studentId: t.student ? t.student.studentId : undefined,
+          paymentDate: t.paymentDate?.toISOString(),
+          processedByName: t.processedBy?.user?.username || t.processedByAdmin?.username || 'Unknown',
+          term: t.term ? `${t.term.academicCalendar.term} - ${t.term.period.name}` : 'N/A',
+        })),
+        pagination: {
+          totalItems: total,
+          totalPages: Math.ceil(total / limit),
+          itemsPerPage: limit,
+          currentPage: page,
+        },
+      };
+    }
 async getParentPayments(
   parentId: string,
   page: number,
   limit: number,
   search: string,
+  schoolId?: string,
+  superAdmin = false,
+  termId?: string,
+  academicCalendarId?: string,
 ) {
   const parent = await this.userRepository.findOne({
     where: { id: parentId, role: Role.PARENT },
@@ -1138,20 +1168,41 @@ async getParentPayments(
 
   const studentIds = parent.parent.children.map((child) => child.id);
 
-  // Get current term for filtering
-  const currentTerm = await this.settingsService.getCurrentTerm();
+  // Get current term for filtering (scope by school if provided) when explicit term not supplied
+  const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
 
   const where: any = {
     student: { id: In(studentIds) },
   };
 
-  // Add term filter if available
-  if (currentTerm) {
+  // Prefer explicit term/academic calendar if provided
+  if (termId) {
+    where.termId = termId;
+  }
+  if (academicCalendarId) {
+    where.academicCalendarId = academicCalendarId;
+  }
+  // Fallback to current term when no explicit term provided
+  if (!termId && !academicCalendarId && currentTerm) {
     where.termId = currentTerm.id;
   }
 
   if (search) {
     where.receiptNumber = Like(`%${search}%`);
+  }
+
+  // Ensure school scoping when not super admin
+  if (!superAdmin) {
+    if (schoolId) {
+      where.schoolId = schoolId;
+    } else {
+      return {
+        payments: [],
+        pagination: { totalItems: 0, totalPages: 0, currentPage: page, itemsPerPage: limit },
+      };
+    }
+  } else if (schoolId) {
+    where.schoolId = schoolId;
   }
 
   const [payments, total] = await this.paymentRepository.findAndCount({
@@ -1404,9 +1455,11 @@ async getParentPayments(
     search: string = '',
     schoolId?: string,
     superAdmin = false,
+    termId?: string,
+    academicCalendarId?: string,
   ) {
-    // Get current term for filtering
-    const currentTerm = await this.settingsService.getCurrentTerm();
+    // Get current term for filtering (scope by school if provided) when explicit term not supplied
+    const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
 
     const qb = this.paymentRepository
       .createQueryBuilder('payment')
@@ -1419,7 +1472,15 @@ async getParentPayments(
       .skip((page - 1) * limit)
       .take(limit);
 
-    if (currentTerm) {
+    // Prefer explicit term/academic calendar when provided
+    if (termId) {
+      qb.andWhere('payment.termId = :termId', { termId });
+    }
+    if (academicCalendarId) {
+      qb.andWhere('payment.academicCalendarId = :academicCalendarId', { academicCalendarId });
+    }
+    // Fallback to current term when no explicit term provided
+    if (!termId && !academicCalendarId && currentTerm) {
       qb.andWhere('payment.termId = :termId', { termId: currentTerm.id });
     }
 
@@ -1457,8 +1518,8 @@ async getParentPayments(
   }
 
   async getRecentPayments(limit: number, schoolId?: string, superAdmin = false): Promise<any[]> {
-    // Get current term for filtering
-    const currentTerm = await this.settingsService.getCurrentTerm();
+    // Get current term for filtering (scope by school)
+    const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
 
     const qb = this.paymentRepository
       .createQueryBuilder('payment')
@@ -1487,7 +1548,9 @@ async getParentPayments(
   async getDashboardCalculations(schoolId?: string, superAdmin = false) {
     // Get current term for filtering
     const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
-    const termFilter = currentTerm ? { termId: currentTerm.id } : {};
+    if (!currentTerm) {
+      throw new BadRequestException('No active term found');
+    }
 
     const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
     // Get current month and last month dates
@@ -1508,7 +1571,7 @@ async getParentPayments(
       .where('payment.status = :status', { status: 'completed' })
       .andWhere('payment.paymentDate >= :startDate', { startDate: currentMonthStart })
       .andWhere('payment.paymentDate <= :endDate', { endDate: currentMonthEnd })
-      .andWhere(currentTerm ? 'payment.termId = :termId' : '1=1', currentTerm ? { termId: currentTerm.id } : {})
+      .andWhere('payment.termId = :termId', { termId: currentTerm.id })
       .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
       .getRawOne();
 
@@ -1519,69 +1582,33 @@ async getParentPayments(
       .where('payment.status = :status', { status: 'completed' })
       .andWhere('payment.paymentDate >= :startDate', { startDate: lastMonthStart })
       .andWhere('payment.paymentDate <= :endDate', { endDate: lastMonthEnd })
-      .andWhere(currentTerm ? 'payment.termId = :termId' : '1=1', currentTerm ? { termId: currentTerm.id } : {})
+      .andWhere('payment.termId = :termId', { termId: currentTerm.id })
       .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
       .getRawOne();
 
-    // Calculate outstanding fees (expected fees - paid fees)
-    // First get expected fees from fee structures
-    const feeStructures = await this.feeStructureRepository.find({
-      where: { isActive: true, ...termFilter, ...schoolScope },
-    });
+    // Get fee summary using the proper student fee expectation service
+    const feeSummary = await this.studentFeeExpectationService.getFeeSummaryForTerm(
+      currentTerm.id,
+      schoolScope.schoolId,
+      superAdmin
+    );
 
-    const students = await this.studentRepository.count({
-      where: { ...termFilter, ...schoolScope },
-    });
-
-    const expectedFees = feeStructures
-      .filter(fs => !fs.isOptional)
-      .reduce((sum, fs) => sum + (parseFloat(fs.amount.toString()) * students), 0);
-
-    // Get total paid fees
-    const paidFeesResult = await this.paymentRepository
-      .createQueryBuilder('payment')
-      .select('SUM(payment.amount)', 'sum')
-      .where('payment.status = :status', { status: 'completed' })
-      .andWhere(currentTerm ? 'payment.termId = :termId' : '1=1', currentTerm ? { termId: currentTerm.id } : {})
-      .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
-      .getRawOne();
-
-    const paidFees = parseFloat(paidFeesResult?.sum || '0');
-    const outstandingFees = Math.max(0, expectedFees - paidFees);
+    const expectedFees = feeSummary.totalExpectedFees;
+    const paidFees = feeSummary.totalPaidFees;
+    const outstandingFees = feeSummary.outstandingFees;
 
     // Count payments today
     const paymentsToday = await this.paymentRepository.count({
       where: {
         status: 'completed',
         paymentDate: Between(todayStart, todayEnd),
-        ...termFilter,
+        termId: currentTerm.id,
         ...schoolScope,
       },
     });
 
-    // Calculate collection rate (completed payments vs total expected)
-    // This is a simplified calculation - you might want to get expected fees from fee expectations
-    const totalCompletedPayments = await this.paymentRepository
-      .createQueryBuilder('payment')
-      .select('SUM(payment.amount)', 'sum')
-      .where('payment.status = :status', { status: 'completed' })
-      .andWhere(currentTerm ? 'payment.termId = :termId' : '1=1', currentTerm ? { termId: currentTerm.id } : {})
-      .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
-      .getRawOne();
-
-    // For collection rate, we need expected fees. Let's get it from fee expectations or use a default
-    // This is a simplified version - you might want to calculate based on student fee expectations
-    const expectedFeesResult = await this.paymentRepository
-      .createQueryBuilder('payment')
-      .select('SUM(payment.amount)', 'sum')
-      .where('payment.status IN (:...statuses)', { statuses: ['completed', 'pending'] })
-      .andWhere(currentTerm ? 'payment.termId = :termId' : '1=1', currentTerm ? { termId: currentTerm.id } : {})
-      .andWhere(schoolScope.schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
-      .getRawOne();
-
-    const totalExpected = parseFloat(expectedFeesResult?.sum || '0');
-    const totalCollected = parseFloat(totalCompletedPayments?.sum || '0');
-    const collectionRate = totalExpected > 0 ? Math.round((totalCollected / totalExpected) * 100) : 0;
+    // Calculate collection rate using expected fees from fee summary
+    const collectionRate = expectedFees > 0 ? Math.round((paidFees / expectedFees) * 100) : 0;
 
     return {
       monthlyRevenue: parseFloat(monthlyRevenueResult?.sum || '0'),
@@ -1624,10 +1651,11 @@ async getParentPayments(
     const termFilter = currentTerm ? { termId: currentTerm.id } : {};
     const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
 
-    // Get all classes for the school/term
+    // Get all classes for the school/term (excluding Graduated class)
     const classes = await this.classRepository.find({
       where: {
         ...schoolScope,
+        name: Not('Graduated'),
       },
       order: { numericalName: 'ASC' },
     });
@@ -1647,13 +1675,14 @@ async getParentPayments(
 
     for (const classEntity of classes) {
       // Get students in this class
-      const studentsInClass = await this.studentRepository.count({
-        where: {
-          class: { id: classEntity.id },
-          ...termFilter,
-          ...schoolScope,
-        },
-      });
+      const studentsInClass = await this.studentRepository
+        .createQueryBuilder('student')
+        .leftJoin('student.user', 'user')
+        .where('student.classId = :classId', { classId: classEntity.id })
+        .andWhere('student.isGraduated = :isGraduated', { isGraduated: false })
+        .andWhere('user.isActive = :isActive', { isActive: true })
+        .andWhere(schoolScope.schoolId ? 'student.schoolId = :schoolId' : '1=1', schoolScope.schoolId ? { schoolId: schoolScope.schoolId } : {})
+        .getCount();
 
       if (studentsInClass === 0) continue; // Skip classes with no students
 

@@ -63,11 +63,12 @@ export class AnalyticsController {
   async feeCollectionStatus(
     @Request() req,
     @Query('TermId') TermId?: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
-    return this.analyticsService.getFeeCollectionStatus(TermId, effectiveSchoolId, isSuper);
+    return this.analyticsService.getFeeCollectionStatus(TermId, academicCalendarId, effectiveSchoolId, isSuper);
   }
 
   @Get('current-term')

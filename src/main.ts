@@ -35,6 +35,19 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
-  await app.listen(configService.get('PORT') || 5000);
+  // Resolve port in a safe order: Render (and other platforms) provide `process.env.PORT`.
+  // `ConfigService.get` throws when a key is missing, so call it in a try/catch.
+  let port: number;
+  if (process.env.PORT) {
+    port = parseInt(process.env.PORT, 10);
+  } else {
+    try {
+      port = parseInt(configService.get('PORT'), 10);
+    } catch (err) {
+      port = 5000;
+    }
+  }
+
+  await app.listen(port);
 }
 bootstrap();

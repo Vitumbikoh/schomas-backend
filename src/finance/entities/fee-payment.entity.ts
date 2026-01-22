@@ -3,6 +3,7 @@ import { Student } from '../../user/entities/student.entity';
 import { Finance } from '../../user/entities/finance.entity';
 import { User } from '../../user/entities/user.entity';
 import { Term } from '../../settings/entities/term.entity';
+import { AcademicCalendar } from '../../settings/entities/academic-calendar.entity';
 import { School } from 'src/school/entities/school.entity';
 
 @Entity()
@@ -50,6 +51,13 @@ export class FeePayment {
   @ManyToOne(() => Term)
   @JoinColumn({ name: 'termId' })
   term: Term;
+
+  @Column({ type: 'uuid', nullable: true })
+  academicCalendarId: string | null;
+
+  @ManyToOne(() => AcademicCalendar, { nullable: true })
+  @JoinColumn({ name: 'academicCalendarId' })
+  academicCalendar?: AcademicCalendar;
 
   @ManyToOne(() => Finance, { nullable: true })
   @JoinColumn({ name: 'processedById' })
