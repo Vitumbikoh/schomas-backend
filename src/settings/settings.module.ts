@@ -17,8 +17,13 @@ import { Period } from './entities/period.entity';
 import { Term } from './entities/term.entity';
 import { Class } from '../classes/entity/class.entity';
 import { AcademicCalendarConstraintService } from './services/academic-calendar-constraint.service';
+import { AcademicHistoryService } from './services/academic-history.service';
+import { AcademicHistoryController } from './academic-history.controller';
 import { TermHoliday } from './entities/term-holiday.entity';
 import { StudentsModule } from '../student/student.module';
+import { Enrollment } from '../academic/entities/enrollment.entity';
+import { FeePayment } from '../finance/entities/fee-payment.entity';
+import { FeeStructure } from '../finance/entities/fee-structure.entity';
 
 @Module({
   imports: [
@@ -32,17 +37,20 @@ import { StudentsModule } from '../student/student.module';
       Finance,
       AcademicCalendar,
       Period,
-  Term,
-  TermHoliday,
-      Class
+      Term,
+      TermHoliday,
+      Class,
+      Enrollment,
+      FeePayment,
+      FeeStructure
     ]),
     AuthModule,
     ConfigModule,
     LogsModule,
     forwardRef(() => StudentsModule),
   ],
-  providers: [SettingsService, AcademicCalendarConstraintService],
-  controllers: [SettingsController],
-  exports: [TypeOrmModule, SettingsService],
+  providers: [SettingsService, AcademicCalendarConstraintService, AcademicHistoryService],
+  controllers: [SettingsController, AcademicHistoryController],
+  exports: [TypeOrmModule, SettingsService, AcademicHistoryService],
 })
 export class SettingsModule {}

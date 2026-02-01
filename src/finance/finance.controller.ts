@@ -402,6 +402,62 @@ export class FinanceController {
     );
   }
 
+  @Get('summary')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({
+    summary: 'Get comprehensive finance summary for a term',
+  })
+  async getFinanceSummary(
+    @Request() req,
+    @Query('termId') termId?: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    
+    if (!termId) {
+      throw new BadRequestException('termId is required');
+    }
+
+    const summary = await this.studentFeeExpectationService.getFeeSummaryForTerm(
+      termId,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
+
+    const statuses = await this.studentFeeExpectationService.listStudentFeeStatuses(
+      termId,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+    );
+
+    // Get term info for display
+    const termInfo = await this.financeService.getTermInfo(termId);
+
+    return {
+      success: true,
+      filters: {
+        termId,
+        academicCalendarId,
+      },
+      labels: {
+        currentTermFigures: `${termInfo?.term || 'Current Term'} Figures`,
+        outstandingFromPreviousTerms: 'Outstanding From Previous Terms',
+      },
+      summary: {
+        totalFeesPaid: summary.totalFeesPaid || 0,
+        expectedFees: summary.totalExpectedFees || 0,
+        pending: summary.outstandingFees || 0,
+        overdue: summary.overdueFees || 0,
+      },
+      statuses: statuses.map(status => ({
+        ...status,
+        termId,
+        term: termInfo?.term || 'Current Term',
+      })),
+    };
+  }
+
   @Get('fee-statuses')
   @Roles(Role.ADMIN, Role.FINANCE)
   @ApiOperation({
@@ -457,6 +513,25 @@ export class FinanceController {
       termId,
       superAdmin ? req.query.schoolId : user.schoolId,
       superAdmin,
+    );
+  }
+
+  @Get('student-financial-details/:studentId')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Get comprehensive financial details for a student including transaction history and multi-term breakdown' })
+  async getStudentFinancialDetails(
+    @Request() req,
+    @Param('studentId') studentId: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    
+    return this.financeService.getStudentFinancialDetails(
+      studentId,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+      academicCalendarId,
     );
   }
 
@@ -893,6 +968,8 @@ export class FinanceController {
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiQuery({ name: 'termId', required: false, type: String })
+  @ApiQuery({ name: 'academicCalendarId', required: false, type: String })
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
   @ApiResponse({
@@ -900,12 +977,17 @@ export class FinanceController {
     description: 'Transactions retrieved successfully',
   })
   async getTransactions(
+    @Request() req,
     @Query('page') page = 1,
     @Query('limit') limit = 10,
     @Query('search') search = '',
+    @Query('termId') termId?: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
     const dateRange = {
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
@@ -915,6 +997,12 @@ export class FinanceController {
       Number(limit),
       search,
       dateRange,
+      {
+        termId,
+        academicCalendarId,
+        schoolId: superAdmin ? req.query.schoolId : user.schoolId,
+        superAdmin,
+      },
     );
   }
 

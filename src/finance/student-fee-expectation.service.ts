@@ -6,6 +6,7 @@ import { FeePayment } from './entities/fee-payment.entity';
 import { FeeStructure } from './entities/fee-structure.entity';
 import { Term } from '../settings/entities/term.entity';
 import { CreateFeeStructureDto } from './dtos/fees-structure.dto';
+import { AcademicCalendar } from '../settings/entities/academic-calendar.entity';
 @Injectable()
 export class StudentFeeExpectationService {
   constructor(
@@ -13,6 +14,7 @@ export class StudentFeeExpectationService {
     @InjectRepository(FeePayment) private paymentRepo: Repository<FeePayment>,
     @InjectRepository(FeeStructure) private feeStructureRepo: Repository<FeeStructure>,
     @InjectRepository(Term) private termRepo: Repository<Term>,
+    @InjectRepository(AcademicCalendar) private academicCalendarRepo: Repository<AcademicCalendar>,
   ) {}
 
   async getFeeStructureForTerm(termId: string | undefined, schoolId?: string, superAdmin = false) {
@@ -95,27 +97,91 @@ export class StudentFeeExpectationService {
   }
 
   async getFeeSummaryForTerm(termId: string, schoolId?: string, superAdmin = false) {
-    const [students, feeStructures, payments, term] = await Promise.all([
-      this.studentRepo.find({ where: { termId, ...(schoolId && !superAdmin ? { schoolId } : {}) } }),
-      this.feeStructureRepo.find({ where: { termId, isActive: true, ...(schoolId ? { schoolId } : {}) } }),
-      this.paymentRepo.find({ where: { termId, status: 'completed', ...(schoolId ? { schoolId } : {}) } }),
-      this.termRepo.findOne({ where: { id: termId } })
-    ]);
+    // Check if this is a historical term
+    const currentAcademicCalendar = await this.academicCalendarRepo.findOne({
+      where: { isActive: true, ...(schoolId && !superAdmin ? { schoolId } : {}) }
+    });
+
+    const term = await this.termRepo.findOne({ 
+      where: { id: termId }, 
+      relations: ['academicCalendar'] 
+    });
+    
     if (!term) throw new NotFoundException('Term not found');
-    const totalStudents = students.length;
+
+    let totalStudents: number = 0;
+    let isHistoricalTerm = false;
+
+    // If term is not from current academic calendar, use historical data
+    if (currentAcademicCalendar && term.academicCalendar?.id !== currentAcademicCalendar.id) {
+      isHistoricalTerm = true;
+      
+      // Query historical students from student_academic_history
+      const historicalQuery = `
+        SELECT COUNT(DISTINCT sah.student_id) as student_count
+        FROM student_academic_history sah
+        WHERE sah.term_id::uuid = $1
+        ${schoolId && !superAdmin ? 'AND sah.school_id = $2' : ''}
+      `;
+      
+      const queryParams = [termId];
+      if (schoolId && !superAdmin) queryParams.push(schoolId);
+      
+      const countResult = await this.studentRepo.query(historicalQuery, queryParams);
+      totalStudents = parseInt(countResult[0]?.student_count || 0);
+      
+      console.log(`📚 Historical term summary: ${totalStudents} students from history table`);
+    } else {
+      // Use current student assignments for current terms
+      const students = await this.studentRepo.find({ where: { termId, ...(schoolId && !superAdmin ? { schoolId } : {}) } });
+      totalStudents = students.length;
+      
+      console.log(`📖 Current term summary: ${totalStudents} current students`);
+    }
+
+    const [feeStructures, payments] = await Promise.all([
+      this.feeStructureRepo.find({ where: { termId, isActive: true, ...(schoolId ? { schoolId } : {}) } }),
+      this.paymentRepo.find({ where: { termId, status: 'completed', ...(schoolId ? { schoolId } : {}) } })
+    ]);
+
     const expectedFees = feeStructures.filter(i => !i.isOptional).reduce((sum, i) => sum + (Number(i.amount) * totalStudents), 0);
     const totalFeesPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
     const remainingFees = Math.max(0, expectedFees - totalFeesPaid);
     const now = new Date();
     let overdueFees = 0; let overdueStudents = 0;
+    
     if (now > new Date(term.endDate)) {
-      const perStudentExpected = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
-      const paidMap: Record<string, number> = {};
-      payments.forEach(p => { const sid = (p.student as any)?.id; if (sid) paidMap[sid] = (paidMap[sid] || 0) + Number(p.amount); });
-      overdueStudents = students.reduce((count, st) => { const paid = paidMap[st.id] || 0; const outstanding = Math.max(0, perStudentExpected - paid); return count + (outstanding > 0 ? 1 : 0); }, 0);
       overdueFees = remainingFees;
+      // For historical terms, estimate overdue students based on payment data
+      if (isHistoricalTerm) {
+        const perStudentExpected = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
+        overdueStudents = totalStudents - (totalFeesPaid > 0 && perStudentExpected > 0 ? Math.floor(totalFeesPaid / perStudentExpected) : 0);
+      } else {
+        const students = await this.studentRepo.find({ where: { termId, ...(schoolId && !superAdmin ? { schoolId } : {}) } });
+        const perStudentExpected = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
+        const paidMap: Record<string, number> = {};
+        payments.forEach(p => { const sid = (p.student as any)?.id; if (sid) paidMap[sid] = (paidMap[sid] || 0) + Number(p.amount); });
+        overdueStudents = students.reduce((count, st) => { const paid = paidMap[st.id] || 0; const outstanding = Math.max(0, perStudentExpected - paid); return count + (outstanding > 0 ? 1 : 0); }, 0);
+      }
     }
-    return { termId, totalStudents, totalExpectedFees: expectedFees, totalPaidFees: totalFeesPaid, outstandingFees: remainingFees, paymentPercentage: expectedFees > 0 ? (totalFeesPaid / expectedFees) * 100 : 0, expectedFees, totalFeesPaid, remainingFees, overdueFees, overdueStudents, isPastTerm: now > new Date(term.endDate), termEndDate: term.endDate, feeStructures: feeStructures.map(f => ({ feeType: f.feeType, amount: f.amount, isOptional: f.isOptional, frequency: f.frequency })) };
+    
+    return { 
+      termId, 
+      totalStudents, 
+      totalExpectedFees: expectedFees, 
+      totalPaidFees: totalFeesPaid, 
+      outstandingFees: remainingFees, 
+      paymentPercentage: expectedFees > 0 ? (totalFeesPaid / expectedFees) * 100 : 0, 
+      expectedFees, 
+      totalFeesPaid, 
+      remainingFees, 
+      overdueFees, 
+      overdueStudents, 
+      isPastTerm: now > new Date(term.endDate), 
+      termEndDate: term.endDate, 
+      isHistoricalTerm,
+      feeStructures: feeStructures.map(f => ({ feeType: f.feeType, amount: f.amount, isOptional: f.isOptional, frequency: f.frequency })) 
+    };
   }
 
   async getStudentFeeStatus(studentId: string, termId: string, schoolId?: string, superAdmin = false) {
@@ -127,23 +193,102 @@ export class StudentFeeExpectationService {
   }
 
   async listStudentFeeStatuses(termId: string, schoolId?: string, superAdmin = false) {
-    const [students, payments, feeStructures, term] = await Promise.all([
-      this.studentRepo.find({ where: { termId, ...(schoolId && !superAdmin ? { schoolId } : {}) } }),
+    // First check if this is a current term or historical term
+    const currentAcademicCalendar = await this.academicCalendarRepo.findOne({
+      where: { isActive: true, ...(schoolId && !superAdmin ? { schoolId } : {}) }
+    });
+
+    let students: any[] = [];
+    let isHistoricalTerm = false;
+
+    // Check if term belongs to current academic calendar
+    const term = await this.termRepo.findOne({ 
+      where: { id: termId }, 
+      relations: ['academicCalendar'] 
+    });
+    
+    if (!term) {
+      throw new NotFoundException('Term not found');
+    }
+
+    // If term is not from current academic calendar, use historical data
+    if (currentAcademicCalendar && term.academicCalendar?.id !== currentAcademicCalendar.id) {
+      isHistoricalTerm = true;
+      
+      // Query historical students from student_academic_history
+      const historicalQuery = `
+        SELECT DISTINCT
+          sah.student_id,
+          s."firstName",
+          s."lastName", 
+          s."studentId" as "humanId",
+          sah.term_id,
+          sah.status as history_status
+        FROM student_academic_history sah
+        LEFT JOIN student s ON sah.student_id = s.id
+        WHERE sah.term_id::uuid = $1
+        ${schoolId && !superAdmin ? 'AND sah.school_id = $2' : ''}
+        ORDER BY s."firstName", s."lastName"
+      `;
+      
+      const queryParams = [termId];
+      if (schoolId && !superAdmin) queryParams.push(schoolId);
+      
+      const historicalResults = await this.studentRepo.query(historicalQuery, queryParams);
+      
+      students = historicalResults.map((row: any) => ({
+        id: row.student_id,
+        firstName: row.firstName,
+        lastName: row.lastName,
+        studentId: row.humanId,
+        termId: row.term_id,
+        isHistorical: true,
+        historyStatus: row.history_status
+      }));
+
+      console.log(`📚 Historical term ${term.termNumber} from ${term.academicCalendar?.term}: Found ${students.length} historical students`);
+    } else {
+      // Use current student assignments for current terms
+      students = await this.studentRepo.find({ 
+        where: { termId, ...(schoolId && !superAdmin ? { schoolId } : {}) } 
+      });
+      
+      console.log(`📖 Current term ${term.termNumber}: Found ${students.length} current students`);
+    }
+
+    const [payments, feeStructures] = await Promise.all([
       this.paymentRepo.find({ where: { termId, status: 'completed', ...(schoolId ? { schoolId } : {}) }, relations: ['student'] }),
-      this.feeStructureRepo.find({ where: { termId, isActive: true, ...(schoolId ? { schoolId } : {}) } }),
-      this.termRepo.findOne({ where: { id: termId } })
+      this.feeStructureRepo.find({ where: { termId, isActive: true, ...(schoolId ? { schoolId } : {}) } })
     ]);
+
     const pastEnd = term ? new Date() > new Date(term.endDate) : false;
     const perStudentMandatoryTotal = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
     const paidMap: Record<string, number> = {};
     payments.forEach(p => { if (p.student?.id) paidMap[p.student.id] = (paidMap[p.student.id] || 0) + Number(p.amount); });
+    
     const statuses = students.map(student => {
       const totalExpected = perStudentMandatoryTotal;
       const totalPaid = paidMap[student.id] || 0;
       const outstanding = Math.max(0, totalExpected - totalPaid);
       const isOverdue = pastEnd && outstanding > 0;
-      return { studentId: student.id, humanId: student.studentId, studentName: `${student.firstName} ${student.lastName}`, termId, totalExpected, totalPaid, outstanding, paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0, status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'), isOverdue, overdueAmount: isOverdue ? outstanding : 0 };
+      
+      return { 
+        studentId: student.id, 
+        humanId: student.studentId || student.humanId, 
+        studentName: `${student.firstName} ${student.lastName}`, 
+        termId, 
+        totalExpected, 
+        totalPaid, 
+        outstanding, 
+        paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0, 
+        status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'), 
+        isOverdue, 
+        overdueAmount: isOverdue ? outstanding : 0,
+        isHistorical: isHistoricalTerm,
+        historyStatus: student.historyStatus || null
+      };
     });
+    
     return statuses.sort((a, b) => b.outstanding - a.outstanding);
   }
 }

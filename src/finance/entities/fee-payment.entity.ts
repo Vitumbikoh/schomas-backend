@@ -1,19 +1,20 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, JoinColumn, OneToMany } from 'typeorm';
 import { Student } from '../../user/entities/student.entity';
 import { Finance } from '../../user/entities/finance.entity';
 import { User } from '../../user/entities/user.entity';
 import { Term } from '../../settings/entities/term.entity';
 import { School } from 'src/school/entities/school.entity';
+import { PaymentAllocation } from './payment-allocation.entity';
 
 @Entity()
 export class FeePayment {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  @Column({ type: 'decimal', precision: 12, scale: 2 })
   amount: number;
 
-  @Column({ type: 'varchar', nullable: true }) // Fixed from previous error
+  @Column({ type: 'varchar', nullable: true })
   receiptNumber: string | null;
 
   @Column({ type: 'enum', enum: ['MWK', 'USD'], default: 'MWK' })
@@ -22,14 +23,14 @@ export class FeePayment {
   @Column()
   paymentType: string;
 
-  @Column({ type: 'enum', enum: ['cash', 'bank_transfer'], default: 'cash' })
-  paymentMethod: 'cash' | 'bank_transfer';
+  @Column({ type: 'enum', enum: ['cash', 'bank_transfer', 'mobile_money', 'cheque'], default: 'cash' })
+  paymentMethod: 'cash' | 'bank_transfer' | 'mobile_money' | 'cheque';
 
-  @Column({ type: 'text', nullable: true }) // Fix: Explicitly set type to text
+  @Column({ type: 'text', nullable: true })
   notes: string | null;
 
-  @Column({ type: 'enum', enum: ['pending', 'completed', 'failed'], default: 'completed' })
-  status: 'pending' | 'completed' | 'failed';
+  @Column({ type: 'enum', enum: ['pending', 'completed', 'failed', 'cancelled'], default: 'completed' })
+  status: 'pending' | 'completed' | 'failed' | 'cancelled';
 
   @Column()
   paymentDate: Date;
@@ -44,6 +45,10 @@ export class FeePayment {
   @JoinColumn({ name: 'studentId' })
   student: Student;
 
+  @Column({ type: 'uuid' })
+  studentId: string;
+
+  // Payment term (term when payment was made) - for historical tracking
   @Column({ type: 'uuid' })
   termId: string;
 
@@ -65,4 +70,19 @@ export class FeePayment {
   @ManyToOne(() => School, (school) => school.id, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'schoolId' })
   school: School;
+
+  // Payment allocations - explicit term assignments
+  @OneToMany(() => PaymentAllocation, allocation => allocation.payment, { cascade: true })
+  allocations: PaymentAllocation[];
+
+  // Allocation status tracking
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  totalAllocated: number;
+
+  @Column({ default: false })
+  isFullyAllocated: boolean;
+
+  // Auto-allocation preferences (for system convenience)
+  @Column({ default: true })
+  autoAllocateToCurrentTerm: boolean;
 }

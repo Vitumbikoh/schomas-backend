@@ -26,6 +26,7 @@ import { Expense } from '../expenses/entities/expense.entity';
 import { CreditLedger } from './entities/credit-ledger.entity';
 import { StudentFeeExpectationService } from './student-fee-expectation.service';
 import { Term } from '../settings/entities/term.entity';
+import { AcademicCalendar } from '../settings/entities/academic-calendar.entity';
 
 @Injectable()
 export class FinanceService {
@@ -51,6 +52,10 @@ export class FinanceService {
     private settingsService: SettingsService,
     private systemLoggingService: SystemLoggingService,
     private studentFeeExpectationService: StudentFeeExpectationService,
+    @InjectRepository(Term)
+    private readonly termRepository: Repository<Term>,
+    @InjectRepository(AcademicCalendar)
+    private readonly academicCalendarRepository: Repository<AcademicCalendar>,
   ) {}
 
   // Aggregated financial report: fees by type and approved expenses
@@ -1076,15 +1081,31 @@ export class FinanceService {
     limit: number,
     search: string,
     dateRange?: { startDate?: Date; endDate?: Date },
+    filters?: {
+      termId?: string;
+      academicCalendarId?: string;
+      schoolId?: string;
+      superAdmin?: boolean;
+    },
   ) {
-    // Get current term for filtering
-    const currentTerm = await this.settingsService.getCurrentTerm();
-    
     const where: any = {};
 
-    // Add term filter if available
-    if (currentTerm) {
-      where.termId = currentTerm.id;
+    // Apply school filter for multi-tenancy
+    if (filters?.schoolId && !filters.superAdmin) {
+      where.schoolId = filters.schoolId;
+    } else if (filters?.schoolId && filters.superAdmin) {
+      where.schoolId = filters.schoolId;
+    }
+
+    // Apply term filter if provided
+    if (filters?.termId) {
+      where.termId = filters.termId;
+    } else {
+      // Fallback to current term for filtering if no termId provided
+      const currentTerm = await this.settingsService.getCurrentTerm(filters?.schoolId);
+      if (currentTerm) {
+        where.termId = currentTerm.id;
+      }
     }
 
     if (search) {
@@ -1097,7 +1118,7 @@ export class FinanceService {
 
     const [transactions, total] = await this.paymentRepository.findAndCount({
       where,
-      relations: ['student', 'processedBy', 'processedByAdmin', 'term'],
+      relations: ['student', 'processedBy', 'processedByAdmin', 'term', 'term.academicCalendar', 'term.period'],
       skip: (page - 1) * limit,
       take: limit,
       order: { paymentDate: 'DESC' },
@@ -1107,10 +1128,11 @@ export class FinanceService {
       transactions: transactions.map((t) => ({
         ...t,
         studentName: t.student ? `${t.student.firstName} ${t.student.lastName}` : 'Unknown',
-  studentId: t.student ? t.student.studentId : undefined,
+        studentId: t.student ? t.student.studentId : undefined,
         paymentDate: t.paymentDate?.toISOString(),
         processedByName: t.processedBy?.user?.username || t.processedByAdmin?.username || 'Unknown',
-        term: t.term ? `${t.term.academicCalendar.term} - ${t.term.period.name}` : 'N/A',
+        term: t.term ? `Term ${t.term.termNumber}` : 'N/A',
+        academicYear: t.term?.academicCalendar?.term || 'N/A',
       })),
       pagination: {
         totalItems: total,
@@ -1119,6 +1141,19 @@ export class FinanceService {
         currentPage: page,
       },
     };
+  }
+
+  async getTermInfo(termId: string) {
+    const term = await this.termRepository.findOne({
+      where: { id: termId },
+      relations: ['academicCalendar', 'period'],
+    });
+    return term ? {
+      id: term.id,
+      term: `Term ${term.termNumber}`,
+      academicYear: term.academicCalendar?.term,
+      period: term.period?.name,
+    } : null;
   }
 
 async getParentPayments(
@@ -1813,5 +1848,205 @@ async getParentPayments(
     }
 
     return studentsWithOutstandingFees;
+  }
+
+  /**
+   * Get comprehensive financial details for a student including multi-term transaction history
+   */
+  async getStudentFinancialDetails(
+    studentId: string, 
+    schoolId?: string, 
+    superAdmin = false,
+    academicCalendarId?: string
+  ) {
+    // Get student with class information
+    const studentQuery: any = { id: studentId };
+    if (!superAdmin && schoolId) {
+      studentQuery.schoolId = schoolId;
+    }
+
+    const student = await this.studentRepository.findOne({
+      where: studentQuery,
+      relations: ['class', 'user']
+    });
+
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    // Get all terms for the academic calendar or current academic calendar
+    let termsQuery = `
+      SELECT t.id, t."termNumber", t."startDate", t."endDate", ac.term as academic_year
+      FROM term t
+      LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
+    `;
+    
+    const queryParams: any[] = [];
+    if (academicCalendarId) {
+      termsQuery += ` WHERE t."academicCalendarId"::uuid = $1`;
+      queryParams.push(academicCalendarId);
+    } else {
+      termsQuery += ` WHERE ac."isActive" = true`;
+    }
+
+    if (!superAdmin && schoolId) {
+      termsQuery += queryParams.length > 0 ? ` AND ` : ` WHERE `;
+      termsQuery += `t."schoolId" = $${queryParams.length + 1}`;
+      queryParams.push(schoolId);
+    }
+
+    termsQuery += ` ORDER BY t."termNumber" ASC`;
+    
+    const terms = await this.studentRepository.query(termsQuery, queryParams);
+
+    // Build comprehensive financial summary
+    const termFinancialData = [];
+    let totalExpectedAllTerms = 0;
+    let totalPaidAllTerms = 0;
+    
+    // Get all transactions for this student across all terms
+    const allTransactions = await this.paymentRepository
+      .createQueryBuilder('payment')
+      .leftJoinAndSelect('payment.term', 'term')
+      .leftJoinAndSelect('term.academicCalendar', 'academicCalendar')
+      .where('payment.studentId = :studentId', { studentId })
+      .andWhere('payment.status = :status', { status: 'completed' })
+      .andWhere(!superAdmin && schoolId ? 'payment.schoolId = :schoolId' : '1=1', { schoolId })
+      .orderBy('payment.paymentDate', 'DESC')
+      .getMany();
+
+    // Process each term
+    for (const term of terms) {
+      // Get fee structures for this term
+      const feeStructures = await this.feeStructureRepository.find({
+        where: {
+          termId: term.id,
+          isActive: true,
+          ...(schoolId && !superAdmin ? { schoolId } : {})
+        }
+      });
+
+      // Calculate expected fees for this term
+      const expectedMandatory = feeStructures
+        .filter(fs => !fs.isOptional && (!fs.classId || fs.classId === student.class?.id))
+        .reduce((sum, fs) => sum + Number(fs.amount), 0);
+      
+      const expectedOptional = feeStructures
+        .filter(fs => fs.isOptional && (!fs.classId || fs.classId === student.class?.id))
+        .reduce((sum, fs) => sum + Number(fs.amount), 0);
+
+      // Get payments for this term
+      const termPayments = allTransactions.filter(payment => payment.termId === term.id);
+      const totalPaid = termPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+      
+      const outstanding = Math.max(0, expectedMandatory - totalPaid);
+      const isCurrentTerm = term.id === (await this.settingsService.getCurrentTerm(schoolId))?.id;
+      const isPastTerm = new Date() > new Date(term.endDate);
+
+      termFinancialData.push({
+        termId: term.id,
+        termNumber: term.termNumber,
+        academicYear: term.academic_year,
+        startDate: term.startDate,
+        endDate: term.endDate,
+        expectedMandatory,
+        expectedOptional,
+        totalExpected: expectedMandatory + expectedOptional,
+        totalPaid,
+        outstanding,
+        status: outstanding === 0 ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid',
+        isCurrentTerm,
+        isPastTerm,
+        paymentCount: termPayments.length,
+        lastPaymentDate: termPayments[0]?.paymentDate,
+        feeStructures: feeStructures.map(fs => ({
+          feeType: fs.feeType,
+          amount: Number(fs.amount),
+          isOptional: fs.isOptional,
+          frequency: fs.frequency
+        }))
+      });
+
+      totalExpectedAllTerms += expectedMandatory + expectedOptional;
+      totalPaidAllTerms += totalPaid;
+    }
+
+    // Get credit balance
+    const creditBalance = await this.creditRepository
+      .createQueryBuilder('credit')
+      .select('SUM(credit.remainingAmount)', 'balance')
+      .where('credit.studentId = :studentId', { studentId })
+      .andWhere('credit.status = :status', { status: 'active' })
+      .andWhere(!superAdmin && schoolId ? 'credit.schoolId = :schoolId' : '1=1', { schoolId })
+      .getRawOne();
+
+    // Get historical data if available
+    const historicalQuery = `
+      SELECT 
+        sah.term_id,
+        sah.total_expected,
+        sah.total_paid,
+        sah.outstanding_amount,
+        sah.status,
+        t."termNumber",
+        ac.term as academic_year
+      FROM student_academic_history sah
+      LEFT JOIN term t ON sah.term_id::uuid = t.id
+      LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
+      WHERE sah.student_id::uuid = $1
+      ${!superAdmin && schoolId ? 'AND sah.school_id = $2' : ''}
+      ORDER BY t."termNumber" ASC
+    `;
+
+    const historyParams = [studentId];
+    if (!superAdmin && schoolId) historyParams.push(schoolId);
+    
+    const historicalData = await this.studentRepository.query(historicalQuery, historyParams);
+
+    return {
+      student: {
+        id: student.id,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        studentId: student.studentId,
+        email: student.user?.email,
+        className: student.class?.name || 'No Class'
+      },
+      summary: {
+        totalExpectedAllTerms,
+        totalPaidAllTerms,
+        totalOutstandingAllTerms: Math.max(0, totalExpectedAllTerms - totalPaidAllTerms),
+        creditBalance: Number(creditBalance?.balance || 0),
+        paymentPercentage: totalExpectedAllTerms > 0 ? Math.round((totalPaidAllTerms / totalExpectedAllTerms) * 100) : 0
+      },
+      termBreakdown: termFinancialData,
+      transactionHistory: allTransactions.map(payment => ({
+        id: payment.id,
+        amount: Number(payment.amount),
+        paymentDate: payment.paymentDate,
+        paymentType: payment.paymentType,
+        paymentMethod: payment.paymentMethod,
+        receiptNumber: payment.receiptNumber,
+        termId: payment.termId,
+        termNumber: payment.term?.termNumber,
+        academicYear: payment.term?.academicCalendar?.term,
+        status: payment.status,
+        processedBy: payment.processedByName || 'System'
+      })),
+      historicalData: historicalData.map((row: any) => ({
+        termId: row.term_id,
+        termNumber: row.termNumber,
+        academicYear: row.academic_year,
+        totalExpected: Number(row.total_expected || 0),
+        totalPaid: Number(row.total_paid || 0),
+        outstandingAmount: Number(row.outstanding_amount || 0),
+        status: row.status
+      })),
+      metadata: {
+        lastUpdated: new Date().toISOString(),
+        academicCalendarId,
+        schoolId: superAdmin ? schoolId : student.schoolId
+      }
+    };
   }
 }

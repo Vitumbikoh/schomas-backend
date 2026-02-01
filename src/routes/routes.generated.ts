@@ -594,6 +594,16 @@ export const ROUTES_GENERATED: GeneratedRouteMeta[] = [
   },
   {
     "method": "GET",
+    "path": "/api/v1/finance/student-financial-details/:studentId",
+    "controller": "FinanceController",
+    "handler": "getStudentFinancialDetails",
+    "roles": [
+      "ADMIN",
+      "FINANCE"
+    ]
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/finance/fee-structure",
     "controller": "FinanceController",
     "handler": "getFeeStructure",
