@@ -112,8 +112,8 @@ export class StudentFeeExpectationService {
     let totalStudents: number = 0;
     let isHistoricalTerm = false;
 
-    // If term is not from current academic calendar, use historical data
-    if (currentAcademicCalendar && term.academicCalendar?.id !== currentAcademicCalendar.id) {
+    // If term is completed or not from current academic calendar, use historical data
+    if ((term.isCompleted === true) || (currentAcademicCalendar && term.academicCalendar?.id !== currentAcademicCalendar.id)) {
       isHistoricalTerm = true;
       
       // Query historical students from student_academic_history
@@ -185,11 +185,61 @@ export class StudentFeeExpectationService {
   }
 
   async getStudentFeeStatus(studentId: string, termId: string, schoolId?: string, superAdmin = false) {
-    const { totalExpected, breakdown } = await this.computeExpectedFeesForStudent(studentId, termId, schoolId, superAdmin);
+    // Determine if this is a historical term (completed or outside current calendar)
+    const currentAcademicCalendar = await this.academicCalendarRepo.findOne({
+      where: { isActive: true, ...(schoolId && !superAdmin ? { schoolId } : {}) }
+    });
+    const term = await this.termRepo.findOne({ where: { id: termId }, relations: ['academicCalendar'] });
+    if (!term) throw new NotFoundException('Term not found');
+
     const payments = await this.paymentRepo.find({ where: { student: { id: studentId }, termId, status: 'completed', ...(schoolId ? { schoolId } : {}) } });
-    const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
-    const outstanding = Math.max(0, totalExpected - totalPaid);
-    return { studentId, termId, totalExpected, totalPaid, outstanding, paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0, payments: payments.map(p => ({ id: p.id, amount: Number(p.amount), date: p.paymentDate, method: p.paymentMethod, receiptNumber: p.receiptNumber })), feeBreakdown: breakdown };
+    const totalPaidFromPayments = payments.reduce((s, p) => s + Number(p.amount), 0);
+
+    const isHistoricalTerm = (term.isCompleted === true) || (currentAcademicCalendar && term.academicCalendar?.id !== currentAcademicCalendar.id);
+    if (isHistoricalTerm) {
+      const historicalQuery = `
+        SELECT 
+          COALESCE(sah.total_expected, 0) AS total_expected,
+          COALESCE(sah.total_paid, 0) AS total_paid,
+          COALESCE(sah.outstanding_amount, 0) AS outstanding_amount
+        FROM student_academic_history sah
+        WHERE sah.term_id::uuid = $1 AND sah.student_id::uuid = $2
+        ${schoolId && !superAdmin ? 'AND sah.school_id = $3' : ''}
+        LIMIT 1
+      `;
+      const params: any[] = [termId, studentId];
+      if (schoolId && !superAdmin) params.push(schoolId);
+      const hist = await this.studentRepo.query(historicalQuery, params);
+      const histRow = hist[0] || {};
+      const totalExpected = Number(histRow.total_expected ?? 0);
+      // Prefer historical total_paid when present, else fall back to payments aggregation
+      const totalPaid = Number(histRow.total_paid ?? totalPaidFromPayments);
+      const outstanding = Number(histRow.outstanding_amount ?? Math.max(0, totalExpected - totalPaid));
+      return {
+        studentId,
+        termId,
+        totalExpected,
+        totalPaid,
+        outstanding,
+        paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0,
+        payments: payments.map(p => ({ id: p.id, amount: Number(p.amount), date: p.paymentDate, method: p.paymentMethod, receiptNumber: p.receiptNumber })),
+        feeBreakdown: []
+      };
+    } else {
+      const { totalExpected, breakdown } = await this.computeExpectedFeesForStudent(studentId, termId, schoolId, superAdmin);
+      const totalPaid = totalPaidFromPayments;
+      const outstanding = Math.max(0, totalExpected - totalPaid);
+      return {
+        studentId,
+        termId,
+        totalExpected,
+        totalPaid,
+        outstanding,
+        paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0,
+        payments: payments.map(p => ({ id: p.id, amount: Number(p.amount), date: p.paymentDate, method: p.paymentMethod, receiptNumber: p.receiptNumber })),
+        feeBreakdown: breakdown
+      };
+    }
   }
 
   async listStudentFeeStatuses(termId: string, schoolId?: string, superAdmin = false) {
@@ -211,8 +261,8 @@ export class StudentFeeExpectationService {
       throw new NotFoundException('Term not found');
     }
 
-    // If term is not from current academic calendar, use historical data
-    if (currentAcademicCalendar && term.academicCalendar?.id !== currentAcademicCalendar.id) {
+    // Treat as historical if term is completed OR not from current academic calendar
+    if ((term.isCompleted === true) || (currentAcademicCalendar && term.academicCalendar?.id !== currentAcademicCalendar.id)) {
       isHistoricalTerm = true;
       
       // Query historical students from student_academic_history
@@ -223,7 +273,10 @@ export class StudentFeeExpectationService {
           s."lastName", 
           s."studentId" as "humanId",
           sah.term_id,
-          sah.status as history_status
+          sah.status as history_status,
+          COALESCE(sah.total_expected, 0) AS total_expected,
+          COALESCE(sah.total_paid, 0) AS total_paid,
+          COALESCE(sah.outstanding_amount, 0) AS outstanding_amount
         FROM student_academic_history sah
         LEFT JOIN student s ON sah.student_id = s.id
         WHERE sah.term_id::uuid = $1
@@ -243,7 +296,10 @@ export class StudentFeeExpectationService {
         studentId: row.humanId,
         termId: row.term_id,
         isHistorical: true,
-        historyStatus: row.history_status
+        historyStatus: row.history_status,
+        histTotalExpected: Number(row.total_expected || 0),
+        histTotalPaid: Number(row.total_paid || 0),
+        histOutstanding: Number(row.outstanding_amount || 0)
       }));
 
       console.log(`📚 Historical term ${term.termNumber} from ${term.academicCalendar?.term}: Found ${students.length} historical students`);
@@ -267,26 +323,47 @@ export class StudentFeeExpectationService {
     payments.forEach(p => { if (p.student?.id) paidMap[p.student.id] = (paidMap[p.student.id] || 0) + Number(p.amount); });
     
     const statuses = students.map(student => {
-      const totalExpected = perStudentMandatoryTotal;
-      const totalPaid = paidMap[student.id] || 0;
-      const outstanding = Math.max(0, totalExpected - totalPaid);
-      const isOverdue = pastEnd && outstanding > 0;
-      
-      return { 
-        studentId: student.id, 
-        humanId: student.studentId || student.humanId, 
-        studentName: `${student.firstName} ${student.lastName}`, 
-        termId, 
-        totalExpected, 
-        totalPaid, 
-        outstanding, 
-        paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0, 
-        status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'), 
-        isOverdue, 
-        overdueAmount: isOverdue ? outstanding : 0,
-        isHistorical: isHistoricalTerm,
-        historyStatus: student.historyStatus || null
-      };
+      const isOverdueHist = pastEnd && (student.histOutstanding ?? 0) > 0;
+      if (isHistoricalTerm) {
+        const totalExpected = Number(student.histTotalExpected ?? 0);
+        const totalPaid = Number(student.histTotalPaid ?? 0);
+        const outstanding = Number(student.histOutstanding ?? Math.max(0, totalExpected - totalPaid));
+        return {
+          studentId: student.id,
+          humanId: student.studentId || student.humanId,
+          studentName: `${student.firstName} ${student.lastName}`,
+          termId,
+          totalExpected,
+          totalPaid,
+          outstanding,
+          paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0,
+          status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'),
+          isOverdue: isOverdueHist,
+          overdueAmount: isOverdueHist ? outstanding : 0,
+          isHistorical: true,
+          historyStatus: student.historyStatus || null
+        };
+      } else {
+        const totalExpected = perStudentMandatoryTotal;
+        const totalPaid = paidMap[student.id] || 0;
+        const outstanding = Math.max(0, totalExpected - totalPaid);
+        const isOverdue = pastEnd && outstanding > 0;
+        return {
+          studentId: student.id,
+          humanId: student.studentId || student.humanId,
+          studentName: `${student.firstName} ${student.lastName}`,
+          termId,
+          totalExpected,
+          totalPaid,
+          outstanding,
+          paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0,
+          status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'),
+          isOverdue,
+          overdueAmount: isOverdue ? outstanding : 0,
+          isHistorical: false,
+          historyStatus: student.historyStatus || null
+        };
+      }
     });
     
     return statuses.sort((a, b) => b.outstanding - a.outstanding);
