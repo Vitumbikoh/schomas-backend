@@ -59,6 +59,7 @@ export class ClassService {
       numericalName: savedClass.numericalName,
       description: savedClass.description || null,
       isActive: savedClass.isActive,
+      schoolId: savedClass.schoolId,
       createdAt: savedClass.createdAt,
       updatedAt: savedClass.updatedAt,
     };
@@ -90,6 +91,7 @@ export class ClassService {
       numericalName: classItem.numericalName,
       description: classItem.description || null,
       isActive: classItem.isActive,
+      schoolId: classItem.schoolId,
       createdAt: classItem.createdAt,
       updatedAt: classItem.updatedAt
     }));
@@ -139,6 +141,7 @@ export class ClassService {
       numericalName: savedClass.numericalName,
       description: savedClass.description || null,
       isActive: savedClass.isActive,
+      schoolId: savedClass.schoolId,
       createdAt: savedClass.createdAt,
       updatedAt: savedClass.updatedAt
     };
@@ -159,6 +162,7 @@ export class ClassService {
       numericalName: savedClass.numericalName,
       description: savedClass.description || null,
       isActive: savedClass.isActive,
+      schoolId: savedClass.schoolId,
       createdAt: savedClass.createdAt,
       updatedAt: savedClass.updatedAt
     };

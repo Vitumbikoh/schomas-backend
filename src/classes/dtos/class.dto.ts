@@ -12,6 +12,10 @@ export class CreateClassDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsString()
+  schoolId?: string;
 }
 
 export class UpdateClassDto {
@@ -31,6 +35,10 @@ export class UpdateClassDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsString()
+  schoolId?: string;
 }
 
 export class ClassResponseDto {
@@ -39,6 +47,7 @@ export class ClassResponseDto {
   numericalName: number;
   description: string | null;
   isActive: boolean;
+  schoolId?: string;
   createdAt: Date;
   updatedAt: Date;
 }

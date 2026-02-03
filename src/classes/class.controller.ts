@@ -31,8 +31,9 @@ export class ClassController {
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(JwtAuthGuard)
   @UsePipes(new ValidationPipe({ transform: true })) // Add this decorator
-  async createClass(@Body() createClassDto: CreateClassDto, @Request() req) {
-    const schoolId = req.user?.schoolId;
+  async createClass(@Body() createClassDto: CreateClassDto, @Request() req, @Query('schoolId') schoolIdQuery?: string) {
+    // Priority: DTO schoolId > query param > X-Tenant-ID header > user's schoolId
+    const schoolId = createClassDto.schoolId || schoolIdQuery || req.headers['x-tenant-id'] || req.user?.schoolId;
     const created = await this.classService.createClass(createClassDto, schoolId);
     await this.systemLoggingService.logAction({
       action: 'CLASS_CREATED',
@@ -61,8 +62,9 @@ export class ClassController {
   @Put(':id')
   @UseGuards(JwtAuthGuard)
   @UsePipes(new ValidationPipe({ transform: true }))
-  async updateClass(@Param('id') id: string, @Body() updateClassDto: UpdateClassDto, @Request() req) {
-    const schoolId = req.user?.schoolId;
+  async updateClass(@Param('id') id: string, @Body() updateClassDto: UpdateClassDto, @Request() req, @Query('schoolId') schoolIdQuery?: string) {
+    // Priority: DTO schoolId > query param > X-Tenant-ID header > user's schoolId
+    const schoolId = updateClassDto.schoolId || schoolIdQuery || req.headers['x-tenant-id'] || req.user?.schoolId;
     const updated = await this.classService.updateClass(id, updateClassDto, schoolId);
     await this.systemLoggingService.logAction({
       action: 'CLASS_UPDATED',
