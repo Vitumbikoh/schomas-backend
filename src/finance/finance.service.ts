@@ -27,6 +27,7 @@ import { CreditLedger } from './entities/credit-ledger.entity';
 import { StudentFeeExpectationService } from './student-fee-expectation.service';
 import { Term } from '../settings/entities/term.entity';
 import { AcademicCalendar } from '../settings/entities/academic-calendar.entity';
+import { PaymentAllocation } from './entities/payment-allocation.entity';
 
 @Injectable()
 export class FinanceService {
@@ -56,7 +57,129 @@ export class FinanceService {
     private readonly termRepository: Repository<Term>,
     @InjectRepository(AcademicCalendar)
     private readonly academicCalendarRepository: Repository<AcademicCalendar>,
+    @InjectRepository(PaymentAllocation)
+    private readonly paymentAllocationRepository: Repository<PaymentAllocation>,
   ) {}
+
+  /**
+   * Auto-allocate a payment to fee structures
+   * This ensures all payments are properly allocated to fee types for accurate reporting
+   */
+  private async autoAllocatePayment(
+    paymentId: string,
+    studentId: string,
+    termId: string,
+    schoolId: string,
+    paymentAmount: number
+  ): Promise<void> {
+    try {
+      // Get term and academic calendar
+      const term = await this.termRepository.findOne({
+        where: { id: termId },
+        relations: ['academicCalendar']
+      });
+
+      if (!term) {
+        console.warn(`Term ${termId} not found for auto-allocation`);
+        return;
+      }
+
+      // Get fee structures for this term
+      const feeStructures = await this.feeStructureRepository.find({
+        where: {
+          termId,
+          isActive: true,
+          isOptional: false,
+          ...(schoolId ? { schoolId } : {})
+        },
+        order: { amount: 'DESC' } // Allocate to larger fees first
+      });
+
+      if (feeStructures.length === 0) {
+        console.warn(`No fee structures found for term ${termId}`);
+        // Create a single allocation for the full amount as "Unallocated"
+        await this.paymentAllocationRepository.save({
+          paymentId,
+          schoolId,
+          termId,
+          academicCalendarId: term.academicCalendar?.id,
+          allocatedAmount: paymentAmount,
+          feeType: 'Unallocated',
+          allocationReason: 'term_fees' as any,
+          isAutoAllocation: true,
+          allocatedAt: new Date()
+        });
+        return;
+      }
+
+      // Get existing allocations for this student in this term
+      const existingAllocations = await this.paymentAllocationRepository
+        .createQueryBuilder('pa')
+        .innerJoin('pa.payment', 'fp')
+        .where('fp.studentId = :studentId', { studentId })
+        .andWhere('pa.termId = :termId', { termId })
+        .select('pa.feeType', 'feeType')
+        .addSelect('SUM(pa.allocatedAmount)', 'total')
+        .groupBy('pa.feeType')
+        .getRawMany();
+
+      const allocatedByType: Record<string, number> = {};
+      existingAllocations.forEach(row => {
+        allocatedByType[row.feeType] = parseFloat(row.total || '0');
+      });
+
+      // Allocate the payment amount
+      let remainingAmount = paymentAmount;
+      const allocations: any[] = [];
+
+      // First, allocate to fee structures that haven't been fully paid
+      for (const fs of feeStructures) {
+        const feeAmount = Number(fs.amount);
+        const alreadyAllocated = allocatedByType[fs.feeType] || 0;
+        const stillOwed = feeAmount - alreadyAllocated;
+
+        if (stillOwed > 0 && remainingAmount > 0) {
+          const toAllocate = Math.min(stillOwed, remainingAmount);
+          allocations.push({
+            paymentId,
+            schoolId,
+            termId,
+            academicCalendarId: term.academicCalendar?.id,
+            allocatedAmount: toAllocate,
+            feeType: fs.feeType,
+            allocationReason: 'term_fees' as any,
+            isAutoAllocation: true,
+            allocatedAt: new Date()
+          });
+          remainingAmount -= toAllocate;
+        }
+      }
+
+      // If there's remaining amount, it's an overpayment/credit balance
+      if (remainingAmount > 0) {
+        allocations.push({
+          paymentId,
+          schoolId,
+          termId,
+          academicCalendarId: term.academicCalendar?.id,
+          allocatedAmount: remainingAmount,
+          feeType: 'Credit Balance',
+          allocationReason: 'advance_payment' as any,
+          isAutoAllocation: true,
+          allocatedAt: new Date()
+        });
+      }
+
+      // Save all allocations
+      if (allocations.length > 0) {
+        await this.paymentAllocationRepository.save(allocations);
+        console.log(`Auto-allocated payment ${paymentId}: ${allocations.length} allocations created`);
+      }
+    } catch (error) {
+      console.error(`Failed to auto-allocate payment ${paymentId}:`, error.message);
+      // Don't throw - allocation failure shouldn't block payment creation
+    }
+  }
 
   // Aggregated financial report: fees by type and approved expenses
   async getFinancialReportSummary(params: {
@@ -572,17 +695,18 @@ export class FinanceService {
         // If any remainder after allocation, create a credit
         let creditCreated = false;
         let creditAmount = 0;
-        if (remaining > 0) {
+        if (remaining > 0.009) {
           creditAmount = Number(remaining.toFixed(2));
+          const referencePayment = savedPayments[savedPayments.length - 1];
           const credit = this.creditRepository.create({
             student: { id: student.id } as any,
             termId: currentTerm.id,
             schoolId: user.schoolId || null,
-            sourcePayment: undefined,
+            sourcePayment: referencePayment ? ({ id: referencePayment.id } as any) : undefined,
             amount: creditAmount as any,
             remainingAmount: creditAmount as any,
             status: 'active',
-            notes: 'Surplus from full payment allocation',
+            notes: referencePayment ? `Surplus from payment ${referencePayment.id}` : 'Surplus from full payment allocation',
           });
           await this.creditRepository.save(credit);
           creditCreated = true;
@@ -638,6 +762,15 @@ export class FinanceService {
       });
       console.log('Payment object created with schoolId:', payment.schoolId);
       savedPayment = await this.paymentRepository.save(payment);
+
+      // Auto-allocate the payment to fee structures
+      await this.autoAllocatePayment(
+        savedPayment.id,
+        student.id,
+        currentTerm.id,
+        user.schoolId || savedPayment.schoolId,
+        Number(processPaymentDto.amount)
+      );
 
       // Overpayment handling: compute outstanding for the student and term
       let creditCreated = false;
@@ -1917,6 +2050,7 @@ async getParentPayments(
       .where('payment.studentId = :studentId', { studentId })
       .andWhere('payment.status = :status', { status: 'completed' })
       .andWhere(!superAdmin && schoolId ? 'payment.schoolId = :schoolId' : '1=1', { schoolId })
+      .andWhere(academicCalendarId ? 'academicCalendar.id = :acadId' : '1=1', { acadId: academicCalendarId })
       .orderBy('payment.paymentDate', 'DESC')
       .getMany();
 
@@ -1942,7 +2076,23 @@ async getParentPayments(
 
       // Get payments for this term
       const termPayments = allTransactions.filter(payment => payment.termId === term.id);
-      const totalPaid = termPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+      let totalPaid = termPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+
+      // Include legacy/orphan active credits (credits without a source payment) for this term
+      // so that Paid reflects the whole amount the school received even if credit rows were created
+      // without a corresponding FeePayment record historically.
+      try {
+        const orphanCredits = await this.creditRepository.createQueryBuilder('credit')
+          .select('SUM(credit.remainingAmount)', 'sum')
+          .where('credit.studentId = :studentId', { studentId })
+          .andWhere('credit.termId = :termId', { termId: term.id })
+          .andWhere('credit.status = :status', { status: 'active' })
+          .andWhere('credit.sourcePaymentId IS NULL')
+          .andWhere(!superAdmin && schoolId ? 'credit.schoolId = :schoolId' : '1=1', { schoolId })
+          .getRawOne();
+        const orphanSum = Number(orphanCredits?.sum || 0);
+        if (orphanSum > 0) totalPaid += orphanSum;
+      } catch {}
       
       const outstanding = Math.max(0, expectedMandatory - totalPaid);
       const isCurrentTerm = term.id === (await this.settingsService.getCurrentTerm(schoolId))?.id;
@@ -1985,6 +2135,21 @@ async getParentPayments(
       .andWhere(!superAdmin && schoolId ? 'credit.schoolId = :schoolId' : '1=1', { schoolId })
       .getRawOne();
 
+    // Also account for legacy orphan credits (no source payment across any term) in totalPaidAllTerms
+    try {
+      const orphanAll = await this.creditRepository.createQueryBuilder('credit')
+        .select('SUM(credit.remainingAmount)', 'sum')
+        .where('credit.studentId = :studentId', { studentId })
+        .andWhere('credit.status = :status', { status: 'active' })
+        .andWhere('credit.sourcePaymentId IS NULL')
+        .andWhere(!superAdmin && schoolId ? 'credit.schoolId = :schoolId' : '1=1', { schoolId })
+        .getRawOne();
+      const orphanSumAll = Number(orphanAll?.sum || 0);
+      if (orphanSumAll > 0) {
+        totalPaidAllTerms += orphanSumAll;
+      }
+    } catch {}
+
     // Get historical data if available
     const historicalQuery = `
       SELECT 
@@ -2008,10 +2173,74 @@ async getParentPayments(
     
     const historicalData = await this.studentRepository.query(historicalQuery, historyParams);
 
+    // Fetch active credits to append as distinct transaction rows (Credit Balance)
+    const activeCredits = await this.creditRepository.find({
+      where: {
+        student: { id: studentId } as any,
+        status: 'active',
+        ...(schoolId && !superAdmin ? { schoolId } : {}),
+      },
+      relations: [
+        'sourcePayment',
+        'sourcePayment.processedBy',
+        'sourcePayment.processedByAdmin',
+        'sourcePayment.term',
+        'sourcePayment.term.academicCalendar',
+        'term',
+        'term.academicCalendar'
+      ],
+      order: { createdAt: 'DESC' as any },
+    });
+
+    const creditEntries = activeCredits.map((c: any) => {
+      let source = c.sourcePayment;
+      if (!source) {
+        // Fallback to closest payment by timestamp from already-fetched allTransactions
+        let best = null as any;
+        let bestDiff = Number.POSITIVE_INFINITY;
+        for (const p of allTransactions) {
+          const diff = Math.abs(new Date(p.paymentDate).getTime() - new Date(c.createdAt).getTime());
+          if (diff < bestDiff) {
+            best = p;
+            bestDiff = diff;
+          }
+        }
+        // Use best match only if within same day (to avoid mismatches)
+        if (best) {
+          const sameDay = new Date(best.paymentDate).toDateString() === new Date(c.createdAt).toDateString();
+          if (sameDay) source = best;
+        }
+      }
+
+      return {
+        id: `credit-${c.id}`,
+        paymentId: source?.id || null,
+        amount: Number((c.remainingAmount ?? c.amount) as any),
+        paymentDate: source?.paymentDate || c.createdAt,
+        paymentType: 'Credit Balance',
+        paymentMethod: source?.paymentMethod || '-',
+        receiptNumber: source?.receiptNumber || null,
+        termId: c.termId || source?.termId || null,
+        termNumber: c.term?.termNumber || source?.term?.termNumber || null,
+        academicYear: c.term?.academicCalendar?.term || source?.term?.academicCalendar?.term || null,
+        status: 'completed',
+        processedBy:
+          source?.processedBy?.user?.username ||
+          source?.processedByAdmin?.username ||
+          (source?.processedBy
+            ? `${source.processedBy.firstName} ${source.processedBy.lastName}`
+            : '-'),
+        isAllocationDetail: false,
+        isCreditEntry: true,
+      };
+    });
+
     // Calculate actual debit/credit balance
     const balanceDifference = totalPaidAllTerms - totalExpectedAllTerms;
     const debitBalance = balanceDifference < 0 ? Math.abs(balanceDifference) : 0; // Student owes school
     const creditBalanceCalculated = balanceDifference > 0 ? balanceDifference : 0; // Student overpaid
+    const creditBalanceFromLedger = Number(creditBalance?.balance || 0);
+    const summaryCreditBalance = Math.max(creditBalanceCalculated, creditBalanceFromLedger);
 
     return {
       student: {
@@ -2027,48 +2256,69 @@ async getParentPayments(
         totalPaidAllTerms,
         totalOutstandingAllTerms: Math.max(0, totalExpectedAllTerms - totalPaidAllTerms),
         debitBalance: debitBalance, // Amount student owes
-        creditBalance: creditBalanceCalculated, // Amount student overpaid
+        creditBalance: summaryCreditBalance, // Prefer ledger when present, fallback to calculated
         paymentPercentage: totalExpectedAllTerms > 0 ? Math.round((totalPaidAllTerms / totalExpectedAllTerms) * 100) : 0
       },
       termBreakdown: termFinancialData,
-      transactionHistory: allTransactions.flatMap(payment => {
-        // If payment has allocations with fee types, expand into separate entries
-        if (payment.allocations && payment.allocations.length > 0 && payment.allocations.some(a => a.feeType)) {
-          return payment.allocations.map(allocation => ({
-            id: `${payment.id}-${allocation.id}`,
+      transactionHistory: (() => {
+        const paymentRows = allTransactions.flatMap(payment => {
+        // If payment has allocations, expand into separate entries
+          if (payment.allocations && payment.allocations.length > 0) {
+            return payment.allocations.map(allocation => ({
+              id: `${payment.id}-${allocation.id}`,
+              paymentId: payment.id,
+              amount: Number(allocation.allocatedAmount),
+              paymentDate: payment.paymentDate,
+              paymentType: allocation.feeType || payment.paymentType,
+              paymentMethod: payment.paymentMethod,
+              receiptNumber: payment.receiptNumber,
+              termId: allocation.termId,
+              termNumber: allocation.term?.termNumber,
+              academicYear: allocation.term?.academicCalendar?.term,
+              status: payment.status,
+              processedBy:
+                payment.processedBy?.user?.username ||
+                payment.processedByAdmin?.username ||
+                (payment.processedBy
+                  ? `${payment.processedBy.firstName} ${payment.processedBy.lastName}`
+                  : '-'),
+              allocationReason: allocation.allocationReason,
+              isAllocationDetail: true,
+            }));
+          }
+          // Otherwise show the payment as-is
+          return [{
+            id: payment.id,
             paymentId: payment.id,
-            amount: Number(allocation.allocatedAmount),
+            amount: Number(payment.amount),
             paymentDate: payment.paymentDate,
-            paymentType: allocation.feeType || payment.paymentType,
+            paymentType: payment.paymentType,
             paymentMethod: payment.paymentMethod,
             receiptNumber: payment.receiptNumber,
-            termId: allocation.termId,
-            termNumber: allocation.term?.termNumber,
-            academicYear: allocation.term?.academicCalendar?.term,
+            termId: payment.termId,
+            termNumber: payment.term?.termNumber,
+            academicYear: payment.term?.academicCalendar?.term,
             status: payment.status,
-            processedBy: payment.processedByAdmin?.username || (payment.processedBy ? 'Finance' : 'System'),
-            allocationReason: allocation.allocationReason,
-            isAllocationDetail: true
-          }));
-        }
-        
-        // Otherwise show the payment as-is
-        return [{
-          id: payment.id,
-          paymentId: payment.id,
-          amount: Number(payment.amount),
-          paymentDate: payment.paymentDate,
-          paymentType: payment.paymentType,
-          paymentMethod: payment.paymentMethod,
-          receiptNumber: payment.receiptNumber,
-          termId: payment.termId,
-          termNumber: payment.term?.termNumber,
-          academicYear: payment.term?.academicCalendar?.term,
-          status: payment.status,
-          processedBy: payment.processedByAdmin?.username || (payment.processedBy ? 'Finance' : 'System'),
-          isAllocationDetail: false
-        }];
-      }),
+            processedBy:
+              payment.processedBy?.user?.username ||
+              payment.processedByAdmin?.username ||
+              (payment.processedBy
+                ? `${payment.processedBy.firstName} ${payment.processedBy.lastName}`
+                : '-'),
+            isAllocationDetail: false,
+          }];
+        });
+
+        const combined = [...paymentRows, ...creditEntries].sort((a, b) => {
+          // Put credit entries first
+          if (!!a.isCreditEntry !== !!b.isCreditEntry) {
+            return a.isCreditEntry ? -1 : 1;
+          }
+          // Then sort by date desc
+          return new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime();
+        });
+        return combined;
+      })(),
       historicalData: historicalData.map((row: any) => ({
         termId: row.term_id,
         termNumber: row.termNumber,

@@ -193,7 +193,18 @@ export class StudentFeeExpectationService {
     if (!term) throw new NotFoundException('Term not found');
 
     const payments = await this.paymentRepo.find({ where: { student: { id: studentId }, termId, status: 'completed', ...(schoolId ? { schoolId } : {}) } });
-    const totalPaidFromPayments = payments.reduce((s, p) => s + Number(p.amount), 0);
+    let totalPaidFromPayments = payments.reduce((s, p) => s + Number(p.amount), 0);
+    // Include legacy/orphan credits (no sourcePayment) as part of Paid for the term
+    try {
+      const orphanCredit = await this.studentRepo.query(
+        `SELECT COALESCE(SUM(remaining_amount), 0) AS sum
+         FROM credit_ledger
+         WHERE "studentId" = $1 AND "termId" = $2 AND status = 'active'
+           AND ("sourcePaymentId" IS NULL)` + (schoolId && !superAdmin ? ` AND "schoolId" = $3` : ``),
+        schoolId && !superAdmin ? [studentId, termId, schoolId] : [studentId, termId]
+      );
+      totalPaidFromPayments += Number(orphanCredit?.[0]?.sum || 0);
+    } catch {}
 
     const isHistoricalTerm = (term.isCompleted === true) || (currentAcademicCalendar && term.academicCalendar?.id !== currentAcademicCalendar.id);
     if (isHistoricalTerm) {
@@ -317,10 +328,28 @@ export class StudentFeeExpectationService {
       this.feeStructureRepo.find({ where: { termId, isActive: true, ...(schoolId ? { schoolId } : {}) } })
     ]);
 
+    // Aggregate orphan credits (no sourcePayment) by student for this term
+    let orphanCreditsByStudent: Record<string, number> = {};
+    try {
+      const orphanRows = await this.studentRepo.query(
+        `SELECT "studentId" as sid, COALESCE(SUM(remaining_amount),0) as sum
+         FROM credit_ledger
+         WHERE "termId" = $1 AND status = 'active' AND ("sourcePaymentId" IS NULL)
+         ${schoolId && !superAdmin ? 'AND "schoolId" = $2' : ''}
+         GROUP BY "studentId"`,
+        schoolId && !superAdmin ? [termId, schoolId] : [termId]
+      );
+      orphanRows.forEach((r: any) => { orphanCreditsByStudent[r.sid] = Number(r.sum || 0); });
+    } catch {}
+
     const pastEnd = term ? new Date() > new Date(term.endDate) : false;
     const perStudentMandatoryTotal = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
     const paidMap: Record<string, number> = {};
     payments.forEach(p => { if (p.student?.id) paidMap[p.student.id] = (paidMap[p.student.id] || 0) + Number(p.amount); });
+    // Add orphan credits to paid map
+    Object.entries(orphanCreditsByStudent).forEach(([sid, sum]) => {
+      paidMap[sid] = (paidMap[sid] || 0) + Number(sum || 0);
+    });
     
     const statuses = students.map(student => {
       const isOverdueHist = pastEnd && (student.histOutstanding ?? 0) > 0;
