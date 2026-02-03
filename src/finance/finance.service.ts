@@ -1911,6 +1911,9 @@ async getParentPayments(
       .leftJoinAndSelect('term.academicCalendar', 'academicCalendar')
       .leftJoinAndSelect('payment.processedByAdmin', 'processedByAdmin')
       .leftJoinAndSelect('payment.processedBy', 'processedBy')
+      .leftJoinAndSelect('payment.allocations', 'allocations')
+      .leftJoinAndSelect('allocations.term', 'allocationTerm')
+      .leftJoinAndSelect('allocationTerm.academicCalendar', 'allocationAcademicCalendar')
       .where('payment.studentId = :studentId', { studentId })
       .andWhere('payment.status = :status', { status: 'completed' })
       .andWhere(!superAdmin && schoolId ? 'payment.schoolId = :schoolId' : '1=1', { schoolId })
@@ -2005,6 +2008,11 @@ async getParentPayments(
     
     const historicalData = await this.studentRepository.query(historicalQuery, historyParams);
 
+    // Calculate actual debit/credit balance
+    const balanceDifference = totalPaidAllTerms - totalExpectedAllTerms;
+    const debitBalance = balanceDifference < 0 ? Math.abs(balanceDifference) : 0; // Student owes school
+    const creditBalanceCalculated = balanceDifference > 0 ? balanceDifference : 0; // Student overpaid
+
     return {
       student: {
         id: student.id,
@@ -2018,23 +2026,49 @@ async getParentPayments(
         totalExpectedAllTerms,
         totalPaidAllTerms,
         totalOutstandingAllTerms: Math.max(0, totalExpectedAllTerms - totalPaidAllTerms),
-        creditBalance: Number(creditBalance?.balance || 0),
+        debitBalance: debitBalance, // Amount student owes
+        creditBalance: creditBalanceCalculated, // Amount student overpaid
         paymentPercentage: totalExpectedAllTerms > 0 ? Math.round((totalPaidAllTerms / totalExpectedAllTerms) * 100) : 0
       },
       termBreakdown: termFinancialData,
-      transactionHistory: allTransactions.map(payment => ({
-        id: payment.id,
-        amount: Number(payment.amount),
-        paymentDate: payment.paymentDate,
-        paymentType: payment.paymentType,
-        paymentMethod: payment.paymentMethod,
-        receiptNumber: payment.receiptNumber,
-        termId: payment.termId,
-        termNumber: payment.term?.termNumber,
-        academicYear: payment.term?.academicCalendar?.term,
-        status: payment.status,
-        processedBy: payment.processedByAdmin?.username || (payment.processedBy ? 'Finance' : 'System')
-      })),
+      transactionHistory: allTransactions.flatMap(payment => {
+        // If payment has allocations with fee types, expand into separate entries
+        if (payment.allocations && payment.allocations.length > 0 && payment.allocations.some(a => a.feeType)) {
+          return payment.allocations.map(allocation => ({
+            id: `${payment.id}-${allocation.id}`,
+            paymentId: payment.id,
+            amount: Number(allocation.allocatedAmount),
+            paymentDate: payment.paymentDate,
+            paymentType: allocation.feeType || payment.paymentType,
+            paymentMethod: payment.paymentMethod,
+            receiptNumber: payment.receiptNumber,
+            termId: allocation.termId,
+            termNumber: allocation.term?.termNumber,
+            academicYear: allocation.term?.academicCalendar?.term,
+            status: payment.status,
+            processedBy: payment.processedByAdmin?.username || (payment.processedBy ? 'Finance' : 'System'),
+            allocationReason: allocation.allocationReason,
+            isAllocationDetail: true
+          }));
+        }
+        
+        // Otherwise show the payment as-is
+        return [{
+          id: payment.id,
+          paymentId: payment.id,
+          amount: Number(payment.amount),
+          paymentDate: payment.paymentDate,
+          paymentType: payment.paymentType,
+          paymentMethod: payment.paymentMethod,
+          receiptNumber: payment.receiptNumber,
+          termId: payment.termId,
+          termNumber: payment.term?.termNumber,
+          academicYear: payment.term?.academicCalendar?.term,
+          status: payment.status,
+          processedBy: payment.processedByAdmin?.username || (payment.processedBy ? 'Finance' : 'System'),
+          isAllocationDetail: false
+        }];
+      }),
       historicalData: historicalData.map((row: any) => ({
         termId: row.term_id,
         termNumber: row.termNumber,

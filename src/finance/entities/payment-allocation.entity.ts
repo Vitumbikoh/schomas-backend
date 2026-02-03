@@ -59,6 +59,9 @@ export class PaymentAllocation {
   @Column({ type: 'decimal', precision: 12, scale: 2 })
   allocatedAmount: number;
 
+  @Column({ type: 'varchar', nullable: true })
+  feeType: string | null; // e.g., 'Tuition', 'Boarding', 'Transport', etc.
+
   @Column({
     type: 'enum',
     enum: AllocationReason,
