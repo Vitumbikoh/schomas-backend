@@ -70,7 +70,8 @@ export class FinanceService {
     studentId: string,
     termId: string,
     schoolId: string,
-    paymentAmount: number
+    paymentAmount: number,
+    paymentType?: string
   ): Promise<void> {
     try {
       // Get term and academic calendar
@@ -111,6 +112,50 @@ export class FinanceService {
         });
         return;
       }
+
+      // Check if this is a specific fee type payment (not "full" allocation)
+      const isSpecificFeeType = paymentType && paymentType.toLowerCase() !== 'full';
+      
+      if (isSpecificFeeType) {
+        // Allocate ONLY to the specific fee type selected
+        const matchingFeeStructure = feeStructures.find(
+          fs => fs.feeType.toLowerCase() === paymentType.toLowerCase()
+        );
+        
+        if (matchingFeeStructure) {
+          // Create allocation for this specific fee type only
+          await this.paymentAllocationRepository.save({
+            paymentId,
+            schoolId,
+            termId,
+            academicCalendarId: term.academicCalendar?.id,
+            allocatedAmount: paymentAmount,
+            feeType: matchingFeeStructure.feeType,
+            allocationReason: 'specific_fee' as any,
+            isAutoAllocation: false,
+            allocatedAt: new Date()
+          });
+          console.log(`Allocated ${paymentAmount} to specific fee type: ${matchingFeeStructure.feeType}`);
+          return;
+        } else {
+          // Fee type doesn't match any structure, create as specified type
+          await this.paymentAllocationRepository.save({
+            paymentId,
+            schoolId,
+            termId,
+            academicCalendarId: term.academicCalendar?.id,
+            allocatedAmount: paymentAmount,
+            feeType: paymentType,
+            allocationReason: 'specific_fee' as any,
+            isAutoAllocation: false,
+            allocatedAt: new Date()
+          });
+          console.log(`Allocated ${paymentAmount} to payment type: ${paymentType} (no matching fee structure)`);
+          return;
+        }
+      }
+
+      // If payment type is "full" or not specified, do auto-allocation across fee structures
 
       // Get existing allocations for this student in this term
       const existingAllocations = await this.paymentAllocationRepository
@@ -769,7 +814,8 @@ export class FinanceService {
         student.id,
         currentTerm.id,
         user.schoolId || savedPayment.schoolId,
-        Number(processPaymentDto.amount)
+        Number(processPaymentDto.amount),
+        processPaymentDto.paymentType
       );
 
       // Overpayment handling: compute outstanding for the student and term
@@ -2284,6 +2330,7 @@ async getParentPayments(
                   : '-'),
               allocationReason: allocation.allocationReason,
               isAllocationDetail: true,
+              isCreditEntry: false,
             }));
           }
           // Otherwise show the payment as-is
@@ -2306,6 +2353,7 @@ async getParentPayments(
                 ? `${payment.processedBy.firstName} ${payment.processedBy.lastName}`
                 : '-'),
             isAllocationDetail: false,
+            isCreditEntry: false,
           }];
         });
 
