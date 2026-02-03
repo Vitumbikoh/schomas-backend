@@ -103,14 +103,66 @@ export class EnhancedFinanceService {
       throw new Error(`Term ${termId} not found`);
     }
 
-    // Get all students who had academic records in this term
-    const academicRecords = await this.academicRecordRepo.find({
-      where: { 
-        termId,
-        ...(schoolId && { schoolId })
-      },
-      relations: ['student', 'class']
+    // Check if this is a historical term
+    const currentTerm = await this.termRepo.findOne({
+      where: { isCurrent: true, ...(schoolId && { schoolId }) }
     });
+
+    const isHistoricalTerm = (term.isCompleted === true) || (currentTerm && term.id !== currentTerm.id);
+
+    let academicRecords: StudentAcademicRecord[] = [];
+
+    if (isHistoricalTerm) {
+      // For historical terms, query from student_academic_history
+      this.logger.log(`Term ${termId} is historical, fetching from academic history`);
+      
+      const historicalQuery = `
+        SELECT DISTINCT 
+          sah.student_id as "studentId",
+          sah.class_id as "classId",
+          s.first_name || ' ' || s.last_name as "studentName",
+          s.human_id as "humanId",
+          c.name as "className"
+        FROM student_academic_history sah
+        LEFT JOIN student s ON s.id = sah.student_id
+        LEFT JOIN class c ON c.id = sah.class_id
+        WHERE sah.term_id::uuid = $1
+        ${schoolId ? 'AND sah.school_id::uuid = $2' : ''}
+      `;
+
+      const queryParams = [termId];
+      if (schoolId) queryParams.push(schoolId);
+
+      const historicalStudents = await this.studentRepo.query(historicalQuery, queryParams);
+      
+      // Convert to academic record-like structure for processing
+      academicRecords = historicalStudents.map(row => ({
+        studentId: row.studentId,
+        termId: termId,
+        schoolId: schoolId,
+        classId: row.classId,
+        student: {
+          id: row.studentId,
+          firstName: row.studentName ? row.studentName.split(' ')[0] : '',
+          lastName: row.studentName ? row.studentName.split(' ').slice(1).join(' ') : '',
+          humanId: row.humanId
+        },
+        class: row.className ? { id: row.classId, name: row.className } : null
+      })) as any[];
+
+      this.logger.log(`Found ${academicRecords.length} students in historical records`);
+    } else {
+      // Get all students who have academic records in this current term
+      academicRecords = await this.academicRecordRepo.find({
+        where: { 
+          termId,
+          ...(schoolId && { schoolId })
+        },
+        relations: ['student', 'class']
+      });
+
+      this.logger.log(`Found ${academicRecords.length} students in current term records`);
+    }
 
     if (academicRecords.length === 0) {
       return this.createEmptyTermSummary(termId, term);

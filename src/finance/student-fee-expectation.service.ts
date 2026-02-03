@@ -197,7 +197,7 @@ export class StudentFeeExpectationService {
     // Include legacy/orphan credits (no sourcePayment) as part of Paid for the term
     try {
       const orphanCredit = await this.studentRepo.query(
-        `SELECT COALESCE(SUM(remaining_amount), 0) AS sum
+        `SELECT COALESCE(SUM("remainingAmount"), 0) AS sum
          FROM credit_ledger
          WHERE "studentId" = $1 AND "termId" = $2 AND status = 'active'
            AND ("sourcePaymentId" IS NULL)` + (schoolId && !superAdmin ? ` AND "schoolId" = $3` : ``),
@@ -272,8 +272,20 @@ export class StudentFeeExpectationService {
       throw new NotFoundException('Term not found');
     }
 
-    // Treat as historical if term is completed OR not from current academic calendar
-    if ((term.isCompleted === true) || (currentAcademicCalendar && term.academicCalendar?.id !== currentAcademicCalendar.id)) {
+    // Get the actual current term (the one marked as isCurrent = true)
+    const currentTerm = await this.termRepo.findOne({
+      where: { isCurrent: true, ...(schoolId && !superAdmin ? { schoolId } : {}) }
+    });
+
+    // Treat as historical if:
+    // 1. Term is explicitly marked as completed, OR
+    // 2. Term is from a different academic calendar, OR
+    // 3. Term is not the current term (even if in same calendar)
+    if (
+      (term.isCompleted === true) || 
+      (currentAcademicCalendar && term.academicCalendar?.id !== currentAcademicCalendar.id) ||
+      (currentTerm && term.id !== currentTerm.id)
+    ) {
       isHistoricalTerm = true;
       
       // Query historical students from student_academic_history
@@ -332,7 +344,7 @@ export class StudentFeeExpectationService {
     let orphanCreditsByStudent: Record<string, number> = {};
     try {
       const orphanRows = await this.studentRepo.query(
-        `SELECT "studentId" as sid, COALESCE(SUM(remaining_amount),0) as sum
+        `SELECT "studentId" as sid, COALESCE(SUM("remainingAmount"),0) as sum
          FROM credit_ledger
          WHERE "termId" = $1 AND status = 'active' AND ("sourcePaymentId" IS NULL)
          ${schoolId && !superAdmin ? 'AND "schoolId" = $2' : ''}
