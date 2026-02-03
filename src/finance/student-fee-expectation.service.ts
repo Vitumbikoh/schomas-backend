@@ -199,9 +199,9 @@ export class StudentFeeExpectationService {
     if (isHistoricalTerm) {
       const historicalQuery = `
         SELECT 
-          COALESCE(sah.total_expected, 0) AS total_expected,
-          COALESCE(sah.total_paid, 0) AS total_paid,
-          COALESCE(sah.outstanding_amount, 0) AS outstanding_amount
+          COALESCE(sah.total_expected_fees, 0) AS total_expected,
+          COALESCE(sah.total_paid_fees, 0) AS total_paid,
+          COALESCE(sah.outstanding_fees, 0) AS outstanding_amount
         FROM student_academic_history sah
         WHERE sah.term_id::uuid = $1 AND sah.student_id::uuid = $2
         ${schoolId && !superAdmin ? 'AND sah.school_id = $3' : ''}
@@ -274,9 +274,9 @@ export class StudentFeeExpectationService {
           s."studentId" as "humanId",
           sah.term_id,
           sah.status as history_status,
-          COALESCE(sah.total_expected, 0) AS total_expected,
-          COALESCE(sah.total_paid, 0) AS total_paid,
-          COALESCE(sah.outstanding_amount, 0) AS outstanding_amount
+          COALESCE(sah.total_expected_fees, 0) AS total_expected,
+          COALESCE(sah.total_paid_fees, 0) AS total_paid,
+          COALESCE(sah.outstanding_fees, 0) AS outstanding_amount
         FROM student_academic_history sah
         LEFT JOIN student s ON sah.student_id = s.id
         WHERE sah.term_id::uuid = $1

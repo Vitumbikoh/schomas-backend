@@ -51,7 +51,7 @@ export class EnhancedFinanceController {
   // =====================================================
 
   @Get('summary')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get comprehensive finance summary for a term' })
   @ApiQuery({ name: 'termId', required: true, description: 'Term ID' })
   @ApiQuery({ name: 'academicCalendarId', required: false, description: 'Academic Calendar ID (optional for filtering)' })
@@ -60,13 +60,13 @@ export class EnhancedFinanceController {
     @Query('academicCalendarId') academicCalendarId?: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.SCHOOL_ADMIN ? req.user.schoolId : undefined;
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     return this.financeService.getTermFinanceSummary(termId, schoolId);
   }
 
   @Get('fee-statuses')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get fee statuses for all students in a term' })
   @ApiQuery({ name: 'termId', required: true, description: 'Term ID' })
   @ApiQuery({ name: 'academicCalendarId', required: false, description: 'Academic Calendar ID (optional for filtering)' })
@@ -75,13 +75,13 @@ export class EnhancedFinanceController {
     @Query('academicCalendarId') academicCalendarId?: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.SCHOOL_ADMIN ? req.user.schoolId : undefined;
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     return this.financeService.getTermStudentFeeStatuses(termId, schoolId);
   }
 
   @Get('student/:studentId/status')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN, Role.STUDENT)
+  @Roles(Role.FINANCE, Role.ADMIN, Role.STUDENT)
   @ApiOperation({ summary: 'Get detailed fee status for a specific student in a term' })
   @ApiQuery({ name: 'termId', required: true, description: 'Term ID' })
   async getStudentFeeStatus(
@@ -89,7 +89,7 @@ export class EnhancedFinanceController {
     @Query('termId', ParseUUIDPipe) termId: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.SCHOOL_ADMIN ? req.user.schoolId : undefined;
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     // Additional authorization for students
     if (req?.user?.role === Role.STUDENT && req.user.id !== studentId) {
@@ -100,10 +100,10 @@ export class EnhancedFinanceController {
   }
 
   @Get('overdue-analysis')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get analysis of overdue amounts across all terms' })
   async getOverdueAnalysis(@Request() req?: any) {
-    const schoolId = req?.user?.role === Role.SCHOOL_ADMIN ? req.user.schoolId : undefined;
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     return this.financeService.getOverdueAnalysis(schoolId);
   }
@@ -113,14 +113,14 @@ export class EnhancedFinanceController {
   // =====================================================
 
   @Post('payments')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Create a new payment with automatic allocation' })
   @ApiBody({ type: CreatePaymentDto })
   async createPayment(
     @Body(ValidationPipe) createPaymentDto: CreatePaymentDto,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.SCHOOL_ADMIN ? req.user.schoolId : undefined;
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     // Implementation would create payment and auto-allocate
     // This is a placeholder for the actual payment creation logic
@@ -128,7 +128,7 @@ export class EnhancedFinanceController {
   }
 
   @Get('payments/:paymentId/allocations')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get all allocations for a payment' })
   async getPaymentAllocations(
     @Param('paymentId', ParseUUIDPipe) paymentId: string
@@ -137,7 +137,7 @@ export class EnhancedFinanceController {
   }
 
   @Get('payments/:paymentId/allocation-suggestions')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get intelligent allocation suggestions for a payment' })
   async getAllocationSuggestions(
     @Param('paymentId', ParseUUIDPipe) paymentId: string
@@ -146,7 +146,7 @@ export class EnhancedFinanceController {
   }
 
   @Post('payments/:paymentId/auto-allocate')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Auto-allocate a payment using intelligent suggestions' })
   async autoAllocatePayment(
     @Param('paymentId', ParseUUIDPipe) paymentId: string
@@ -155,7 +155,7 @@ export class EnhancedFinanceController {
   }
 
   @Post('allocations')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Create manual payment allocations' })
   @ApiBody({ type: [CreatePaymentAllocationDto] })
   async createAllocations(
@@ -175,7 +175,7 @@ export class EnhancedFinanceController {
   }
 
   @Delete('allocations/:allocationId')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Remove a payment allocation' })
   async removeAllocation(
     @Param('allocationId', ParseUUIDPipe) allocationId: string
@@ -184,13 +184,13 @@ export class EnhancedFinanceController {
   }
 
   @Get('terms/:termId/allocations')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get all payment allocations for a term' })
   async getTermAllocations(
     @Param('termId', ParseUUIDPipe) termId: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.SCHOOL_ADMIN ? req.user.schoolId : undefined;
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     return this.allocationService.getTermAllocations(termId, schoolId);
   }
@@ -200,26 +200,26 @@ export class EnhancedFinanceController {
   // =====================================================
 
   @Get('terms/:termId/outstanding-balances')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Calculate outstanding balances for a completed term' })
   async getOutstandingBalances(
     @Param('termId', ParseUUIDPipe) termId: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.SCHOOL_ADMIN ? req.user.schoolId : undefined;
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     return this.carryForwardService.calculateOutstandingBalances(termId, schoolId);
   }
 
   @Post('carry-forward')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Carry forward outstanding balances from one term to another' })
   @ApiBody({ type: CarryForwardDto })
   async carryForwardBalances(
     @Body(ValidationPipe) carryForwardDto: CarryForwardDto,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.SCHOOL_ADMIN ? req.user.schoolId : undefined;
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     return this.carryForwardService.carryForwardBalances(
       carryForwardDto.fromTermId,
@@ -229,13 +229,13 @@ export class EnhancedFinanceController {
   }
 
   @Get('students/:studentId/carry-forward-history')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN, Role.STUDENT)
+  @Roles(Role.FINANCE, Role.ADMIN, Role.STUDENT)
   @ApiOperation({ summary: 'Get carry-forward history for a student' })
   async getStudentCarryForwardHistory(
     @Param('studentId', ParseUUIDPipe) studentId: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.SCHOOL_ADMIN ? req.user.schoolId : undefined;
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     // Additional authorization for students
     if (req?.user?.role === Role.STUDENT && req.user.id !== studentId) {
@@ -246,7 +246,7 @@ export class EnhancedFinanceController {
   }
 
   @Delete('carry-forward/reverse')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Reverse carry-forward operations (for corrections)' })
   @ApiQuery({ name: 'termId', required: true, description: 'Term ID to reverse carry-forward for' })
   @ApiQuery({ name: 'studentId', required: false, description: 'Student ID (optional, for specific student)' })
@@ -255,7 +255,7 @@ export class EnhancedFinanceController {
     @Query('studentId', new ParseUUIDPipe({ optional: true })) studentId?: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.SCHOOL_ADMIN ? req.user.schoolId : undefined;
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     return this.carryForwardService.reverseCarryForward(termId, studentId, schoolId);
   }
@@ -265,7 +265,7 @@ export class EnhancedFinanceController {
   // =====================================================
 
   @Get('transactions')
-  @Roles(Role.FINANCE, Role.ADMIN, Role.SCHOOL_ADMIN)
+  @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get transaction history with allocation details' })
   @ApiQuery({ name: 'page', required: false, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, description: 'Items per page (default: 20)' })
@@ -280,7 +280,7 @@ export class EnhancedFinanceController {
     @Query('academicCalendarId', new ParseUUIDPipe({ optional: true })) academicCalendarId?: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.SCHOOL_ADMIN ? req.user.schoolId : undefined;
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     // This would integrate with enhanced transaction service
     // For now, return placeholder

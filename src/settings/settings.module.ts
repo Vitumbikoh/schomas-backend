@@ -21,7 +21,7 @@ import { AcademicHistoryService } from './services/academic-history.service';
 import { AcademicHistoryController } from './academic-history.controller';
 import { TermHoliday } from './entities/term-holiday.entity';
 import { StudentsModule } from '../student/student.module';
-import { Enrollment } from '../academic/entities/enrollment.entity';
+import { Enrollment } from '../enrollment/entities/enrollment.entity';
 import { FeePayment } from '../finance/entities/fee-payment.entity';
 import { FeeStructure } from '../finance/entities/fee-structure.entity';
 

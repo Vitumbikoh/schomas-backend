@@ -103,7 +103,7 @@ export class PaymentAllocationService {
         const allocation = queryRunner!.manager.create(PaymentAllocation, {
           schoolId: payment.schoolId,
           paymentId: request.paymentId,
-          academicCalendarId: term.academicCalendarId,
+          academicCalendarId: term.academicCalendar?.id,
           termId: request.termId,
           allocatedAmount: request.amount,
           allocationReason: request.reason,

@@ -4,7 +4,7 @@ import { Repository, DataSource } from 'typeorm';
 import { Term } from '../entities/term.entity';
 import { AcademicCalendar } from '../entities/academic-calendar.entity';
 import { Student } from '../../user/entities/student.entity';
-import { Enrollment } from '../../academic/entities/enrollment.entity';
+import { Enrollment } from '../../enrollment/entities/enrollment.entity';
 import { FeePayment } from '../../finance/entities/fee-payment.entity';
 import { FeeStructure } from '../../finance/entities/fee-structure.entity';
 
@@ -71,7 +71,7 @@ export class AcademicHistoryService {
         throw new NotFoundException('Term not found or access denied');
       }
 
-      if (term.status === 'completed') {
+      if (term.isCompleted) {
         throw new BadRequestException('Term is already closed');
       }
 
@@ -83,7 +83,7 @@ export class AcademicHistoryService {
           termId: termId,
           ...(schoolId && !superAdmin ? { schoolId } : {})
         },
-        relations: ['class']
+        relations: ['class','user']
       });
 
       this.logger.log(`Found ${enrolledStudents.length} students to preserve`);
@@ -101,7 +101,7 @@ export class AcademicHistoryService {
           }),
           this.enrollmentRepository.find({
             where: { studentId: student.id, termId: termId },
-            relations: ['course', 'teacher']
+            relations: ['course']
           })
         ]);
 
@@ -164,15 +164,15 @@ export class AcademicHistoryService {
           student.studentId,
           student.firstName,
           student.lastName,
-          student.email || null,
+          student.user?.email || null,
           student.phoneNumber || null,
           student.dateOfBirth || null,
           student.gender || null,
           student.address || null,
-          student.guardianName || null,
-          student.guardianPhone || null,
-          student.guardianEmail || null,
-          student.admissionDate || student.createdAt,
+          null,
+          null,
+          null,
+          student.createdAt,
           'completed', // final_status
           `Term ${term.termNumber} completed on ${new Date().toISOString().split('T')[0]}`, // completion_reason
           totalExpectedFees,

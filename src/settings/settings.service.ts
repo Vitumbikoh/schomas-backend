@@ -79,6 +79,20 @@ export class SettingsService {
     await this.initializeDefaultPeriods();
   }
 
+  private async syncStudentsToTerm(schoolId: string, termId: string, queryRunner: import('typeorm').QueryRunner) {
+    try {
+      await queryRunner.manager
+        .createQueryBuilder()
+        .update(Student)
+        .set({ termId })
+        .where('schoolId = :schoolId', { schoolId })
+        .execute();
+      this.logger.log(`Synchronized students to current term ${termId} for school ${schoolId}`);
+    } catch (err) {
+      this.logger.error(`Failed to sync students to term ${termId} for school ${schoolId}: ${err?.message}`);
+    }
+  }
+
   // User Settings Methods
   async getSettings(userId: string): Promise<SettingsResponseDto> {
     if (!userId) {
@@ -559,6 +573,18 @@ export class SettingsService {
         );
       }
 
+      // If there's a current term under the now-active calendar, sync students to it
+      try {
+        const currentTerm = await queryRunner.manager.findOne(Term, {
+          where: { schoolId, academicCalendar: { id: updatedCalendar.id }, isCurrent: true },
+        });
+        if (currentTerm) {
+          await this.syncStudentsToTerm(schoolId, currentTerm.id, queryRunner);
+        }
+      } catch (e) {
+        this.logger.warn(`Could not sync students to current term after calendar activation: ${e?.message}`);
+      }
+
       await queryRunner.commitTransaction();
 
       // Prepare the response data before releasing the query runner
@@ -791,6 +817,8 @@ export class SettingsService {
         Term,
         termToActivate,
       );
+      // Sync students in this school to the newly activated term
+      await this.syncStudentsToTerm(adminUser.schoolId, updatedTerm.id, queryRunner);
       await queryRunner.commitTransaction();
 
       return {
@@ -992,6 +1020,9 @@ export class SettingsService {
       }
 
       const savedPeriod = await queryRunner.manager.save(TermPeriod);
+      if (savedPeriod.isCurrent) {
+        await this.syncStudentsToTerm(adminUser.schoolId, savedPeriod.id, queryRunner);
+      }
       await queryRunner.commitTransaction();
 
       return {
@@ -1086,6 +1117,9 @@ export class SettingsService {
       }
 
       const updatedPeriod = await queryRunner.manager.save(termToUpdate);
+      if (updatedPeriod.isCurrent) {
+        await this.syncStudentsToTerm(adminUser.schoolId, updatedPeriod.id, queryRunner);
+      }
       await queryRunner.commitTransaction();
 
       return {
@@ -1141,6 +1175,10 @@ export class SettingsService {
         Term,
         termToActivate,
       );
+      // Sync students to newly activated period's term
+      if (updatedTerm.schoolId) {
+        await this.syncStudentsToTerm(updatedTerm.schoolId, updatedTerm.id, queryRunner);
+      }
       await queryRunner.commitTransaction();
 
       return {

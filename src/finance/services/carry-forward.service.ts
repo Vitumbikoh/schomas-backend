@@ -165,7 +165,7 @@ export class CarryForwardService {
         // Create carry-forward fee record in target term
         const carryForwardFee = this.expectedFeeRepo.create({
           schoolId: schoolId || balance.studentId, // Fallback, should be properly set
-          academicCalendarId: targetTerm.academicCalendarId,
+          academicCalendarId: targetTerm.academicCalendar?.id,
           termId: toTermId,
           classId: null, // Carry-forward fees apply to student regardless of class
           feeCategory: FeeCategory.CARRY_FORWARD,

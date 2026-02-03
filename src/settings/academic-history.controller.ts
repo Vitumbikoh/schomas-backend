@@ -1,9 +1,9 @@
 import { Controller, Post, Param, Query, Request, UseGuards, Body } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
-import { Role } from '../auth/enums/role.enum';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { Role } from '../user/enums/role.enum';
 import { AcademicHistoryService, TermHistoricalData, AcademicCalendarHistoricalData } from './services/academic-history.service';
 
 export class CloseTermDto {

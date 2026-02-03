@@ -1909,6 +1909,8 @@ async getParentPayments(
       .createQueryBuilder('payment')
       .leftJoinAndSelect('payment.term', 'term')
       .leftJoinAndSelect('term.academicCalendar', 'academicCalendar')
+      .leftJoinAndSelect('payment.processedByAdmin', 'processedByAdmin')
+      .leftJoinAndSelect('payment.processedBy', 'processedBy')
       .where('payment.studentId = :studentId', { studentId })
       .andWhere('payment.status = :status', { status: 'completed' })
       .andWhere(!superAdmin && schoolId ? 'payment.schoolId = :schoolId' : '1=1', { schoolId })
@@ -1984,9 +1986,9 @@ async getParentPayments(
     const historicalQuery = `
       SELECT 
         sah.term_id,
-        sah.total_expected,
-        sah.total_paid,
-        sah.outstanding_amount,
+        sah.total_expected_fees AS total_expected,
+        sah.total_paid_fees AS total_paid,
+        sah.outstanding_fees AS outstanding_amount,
         sah.status,
         t."termNumber",
         ac.term as academic_year
@@ -2031,7 +2033,7 @@ async getParentPayments(
         termNumber: payment.term?.termNumber,
         academicYear: payment.term?.academicCalendar?.term,
         status: payment.status,
-        processedBy: payment.processedByName || 'System'
+        processedBy: payment.processedByAdmin?.username || (payment.processedBy ? 'Finance' : 'System')
       })),
       historicalData: historicalData.map((row: any) => ({
         termId: row.term_id,
