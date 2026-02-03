@@ -9,13 +9,15 @@ import { Term } from '../settings/entities/term.entity';
 import { AcademicCalendar } from '../settings/entities/academic-calendar.entity';
 import { Enrollment } from '../enrollment/entities/enrollment.entity';
 import { School } from '../school/entities/school.entity';
+import { Student } from '../user/entities/student.entity';
+import { Class } from '../classes/entity/class.entity';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
 import { NotificationModule } from '../notifications/notification.module';
 
 @Module({
   imports: [
-  TypeOrmModule.forFeature([SchoolBillingPlan, BillingInvoice, BillingPayment, Term, AcademicCalendar, Enrollment, School]),
+  TypeOrmModule.forFeature([SchoolBillingPlan, BillingInvoice, BillingPayment, Term, AcademicCalendar, Enrollment, School, Student, Class]),
   AuthModule,
   ConfigModule,
   NotificationModule,

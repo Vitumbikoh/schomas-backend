@@ -10,6 +10,8 @@ import { Term } from '../settings/entities/term.entity';
 import { AcademicCalendar } from '../settings/entities/academic-calendar.entity';
 import { Enrollment } from '../enrollment/entities/enrollment.entity';
 import { School } from '../school/entities/school.entity';
+import { Student } from '../user/entities/student.entity';
+import { Class } from '../classes/entity/class.entity';
 import { NotificationService } from '../notifications/notification.service';
 import { NotificationType, NotificationPriority } from '../notifications/entities/notification.entity';
 import PDFDocument = require('pdfkit');
@@ -23,8 +25,10 @@ export class BillingService {
     @InjectRepository(BillingPayment) private paymentRepo: Repository<BillingPayment>,
     @InjectRepository(Term) private termRepo: Repository<Term>,
     @InjectRepository(AcademicCalendar) private calendarRepo: Repository<AcademicCalendar>,
-  @InjectRepository(Enrollment) private enrollmentRepo: Repository<Enrollment>,
-  @InjectRepository(School) private schoolRepo: Repository<School>,
+    @InjectRepository(Enrollment) private enrollmentRepo: Repository<Enrollment>,
+    @InjectRepository(School) private schoolRepo: Repository<School>,
+    @InjectRepository(Student) private studentRepo: Repository<Student>,
+    @InjectRepository(Class) private classRepo: Repository<Class>,
     private notificationService: NotificationService,
   ) {}
 
@@ -67,29 +71,42 @@ export class BillingService {
     return plan;
   }
 
-  private async countActiveStudentsForTerm(termId: string) {
-    // Count enrollments for the given term with active status.
-    // We avoid filtering by schoolId because some historical enrollments may have null schoolId;
-    // termId is sufficient to scope to a school via Term->School relation.
-    const count = await this.enrollmentRepo.count({ where: { termId, status: 'active' as any } });
+  private async countActiveStudentsForTerm(termId: string, schoolId: string) {
+    // Count actual students enrolled in classes for this school (excluding graduated)
+    // Get the Graduated class ID first
+    const graduatedClass = await this.classRepo.findOne({ 
+      where: { schoolId, numericalName: 999 } 
+    });
+    
+    const qb = this.studentRepo.createQueryBuilder('student')
+      .where('student.schoolId = :schoolId', { schoolId });
+    
+    // Exclude graduated students
+    if (graduatedClass) {
+      qb.andWhere('student.classId != :graduatedClassId', { graduatedClassId: graduatedClass.id });
+    }
+    
+    const count = await qb.getCount();
     return count;
   }
 
   private async countActiveStudentsForAcademicCalendar(academicCalendarId: string, schoolId: string) {
-    const terms = await this.termRepo.find({ where: { schoolId, academicCalendar: { id: academicCalendarId } as any } });
-    if (!terms.length) return 0;
-    const termIds = terms.map(t => t.id);
-    const qb = this.enrollmentRepo.createQueryBuilder('en')
-      .where('en.status = :status', { status: 'active' })
-      .andWhere('en.termId IN (:...termIds)', { termIds });
-    const total = await qb.getCount();
-    // Unique students across terms: approximate by counting distinct studentId
-    const distinct = await this.enrollmentRepo.createQueryBuilder('en')
-      .select('COUNT(DISTINCT en.studentId)', 'cnt')
-      .where('en.status = :status', { status: 'active' })
-      .andWhere('en.termId IN (:...termIds)', { termIds })
-      .getRawOne();
-    return Number(distinct?.cnt || total || 0);
+    // Count actual students enrolled in classes for this school (excluding graduated)
+    // Get the Graduated class ID first
+    const graduatedClass = await this.classRepo.findOne({ 
+      where: { schoolId, numericalName: 999 } 
+    });
+    
+    const qb = this.studentRepo.createQueryBuilder('student')
+      .where('student.schoolId = :schoolId', { schoolId });
+    
+    // Exclude graduated students
+    if (graduatedClass) {
+      qb.andWhere('student.classId != :graduatedClassId', { graduatedClassId: graduatedClass.id });
+    }
+    
+    const count = await qb.getCount();
+    return count;
   }
 
   private generateInvoiceNumber(prefix: string) {
@@ -136,7 +153,7 @@ export class BillingService {
       if (!term) throw new NotFoundException('Term not found for school');
       const existing = await this.invoiceRepo.findOne({ where: { schoolId, termId: term.id } });
       if (existing) return existing;
-      activeStudents = await this.countActiveStudentsForTerm(term.id);
+      activeStudents = await this.countActiveStudentsForTerm(term.id, schoolId);
       termId = term.id;
       invoiceNumberPrefix += `-T${term.termNumber}`;
     } else if (dto.academicCalendarId) {
