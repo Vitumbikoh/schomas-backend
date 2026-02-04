@@ -60,6 +60,68 @@ export class FinanceService {
     @InjectRepository(PaymentAllocation)
     private readonly paymentAllocationRepository: Repository<PaymentAllocation>,
   ) {}
+  /**
+   * Monthly revenue trends for the last N months (defaults to 6)
+   */
+  async getRevenueTrends(schoolId?: string, superAdmin: boolean = false, months: number = 6): Promise<Array<{ month: string; total: number }>> {
+    const qb = this.paymentRepository.createQueryBuilder('p')
+      .select("to_char(date_trunc('month', p.paymentDate), 'YYYY-MM')", 'month')
+      .addSelect('SUM(p.amount)', 'total')
+      .where('p.status = :status', { status: 'completed' })
+      .andWhere("p.paymentDate >= NOW() - INTERVAL :months", { months: `${months} months` })
+      .groupBy("date_trunc('month', p.paymentDate)")
+      .orderBy("date_trunc('month', p.paymentDate)", 'ASC');
+
+    if (schoolId && !superAdmin) {
+      qb.andWhere('p.schoolId = :schoolId', { schoolId });
+    }
+
+    const rows = await qb.getRawMany();
+    return rows.map(r => ({ month: r.month, total: Number(r.total || 0) }));
+  }
+
+  /**
+   * Monthly expense trends for the last N months (defaults to 6)
+   */
+  async getExpenseTrends(schoolId?: string, superAdmin: boolean = false, months: number = 6): Promise<Array<{ month: string; total: number }>> {
+    const qb = this.expenseRepository.createQueryBuilder('e')
+      .select("to_char(date_trunc('month', COALESCE(e.paidDate, e.approvedDate, e.requestDate)), 'YYYY-MM')", 'month')
+      .addSelect('SUM(e.amount)', 'total')
+      .where('e.status = :status', { status: 'Paid' })
+      .andWhere("COALESCE(e.paidDate, e.approvedDate, e.requestDate) >= NOW() - INTERVAL :months", { months: `${months} months` })
+      .groupBy("date_trunc('month', COALESCE(e.paidDate, e.approvedDate, e.requestDate))")
+      .orderBy("date_trunc('month', COALESCE(e.paidDate, e.approvedDate, e.requestDate))", 'ASC');
+
+    if (schoolId && !superAdmin) {
+      qb.andWhere('e.schoolId = :schoolId', { schoolId });
+    }
+
+    const rows = await qb.getRawMany();
+    return rows.map(r => ({ month: r.month, total: Number(r.total || 0) }));
+  }
+
+  /**
+   * Total expenses within a term date range (Paid expenses)
+   */
+  async getTermExpensesTotal(termId: string, schoolId?: string, superAdmin: boolean = false): Promise<{ termId: string; total: number }> {
+    const term = await this.termRepository.findOne({ where: { id: termId } });
+    if (!term) throw new NotFoundException('Term not found');
+
+    const qb = this.expenseRepository.createQueryBuilder('e')
+      .select('COALESCE(SUM(e.amount), 0)', 'total')
+      .where('e.status = :paid', { paid: 'Paid' })
+      .andWhere('COALESCE(e.paidDate, e.approvedDate, e.requestDate) BETWEEN :start AND :end', {
+        start: term.startDate,
+        end: term.endDate,
+      });
+
+    if (schoolId && !superAdmin) {
+      qb.andWhere('e.schoolId = :schoolId', { schoolId });
+    }
+
+    const row = await qb.getRawOne();
+    return { termId, total: Number(row?.total || 0) };
+  }
 
   /**
    * Auto-allocate a payment to fee structures
@@ -386,64 +448,26 @@ export class FinanceService {
       throw new BadRequestException('School ID is required');
     }
 
-    // Get all completed terms for the school, ordered by end date
-    const terms = await this.financeRepository.manager
-      .createQueryBuilder(Term, 'term')
-      .leftJoinAndSelect('term.academicCalendar', 'calendar')
-      .leftJoinAndSelect('term.period', 'period')
-      .where('term.schoolId = :schoolId', { schoolId })
-      .andWhere('term.isCompleted = :isCompleted', { isCompleted: true })
-      .orderBy('term.endDate', 'ASC')
-      .getMany();
-
-    if (terms.length === 0) {
-      return {
-        currentTerm: null,
-        previousTerms: [],
-        cumulative: {
-          totalRevenue: 0,
-          totalExpenses: 0,
-          totalProfit: 0,
-          totalProfitMargin: 0,
-          broughtForward: 0,
-        },
-        carryForwardBalance: 0,
-      };
-    }
-
-    // Get current term (latest incomplete term or latest completed term)
-    const currentTerm = await this.financeRepository.manager
-      .createQueryBuilder(Term, 'term')
-      .leftJoinAndSelect('term.academicCalendar', 'calendar')
-      .leftJoinAndSelect('term.period', 'period')
-      .where('term.schoolId = :schoolId', { schoolId })
-      .orderBy('term.endDate', 'DESC')
-      .getOne();
-
-    const previousTerms = terms.slice(0, -1); // All except the last one
-    const lastCompletedTerm = terms[terms.length - 1];
-
-    // Calculate financial data for each term
+    // Helper function to calculate financial data for a term
     const calculateTermFinancials = async (term: Term) => {
-      // Revenue: completed payments within term dates
+      // Revenue: completed payments FOR THIS TERM (by termId, not date range)
+      // This matches what the Finance page shows
       const revenueResult = await this.paymentRepository
         .createQueryBuilder('payment')
         .select('COALESCE(SUM(payment.amount), 0)', 'revenue')
         .where('payment.schoolId = :schoolId', { schoolId })
         .andWhere('payment.status = :status', { status: 'completed' })
-        .andWhere('payment.paymentDate BETWEEN :start AND :end', {
-          start: term.startDate,
-          end: term.endDate,
-        })
+        .andWhere('payment.termId = :termId', { termId: term.id })
         .getRawOne();
 
-      // Expenses: approved expenses within term dates
+      // Expenses: approved/paid expenses FOR THIS TERM
+      // Try to match by date range for expenses since they might not have termId
       const expenseResult = await this.expenseRepository
         .createQueryBuilder('expense')
         .select('COALESCE(SUM(COALESCE(expense.approvedAmount, expense.amount)), 0)', 'expenses')
         .where('expense.schoolId = :schoolId', { schoolId })
-        .andWhere('expense.status = :status', { status: 'Approved' })
-        .andWhere('expense.approvedDate BETWEEN :start AND :end', {
+        .andWhere('expense.status IN (:...statuses)', { statuses: ['Approved', 'Paid'] })
+        .andWhere('(expense.approvedDate BETWEEN :start AND :end OR expense.paidDate BETWEEN :start AND :end)', {
           start: term.startDate,
           end: term.endDate,
         })
@@ -466,20 +490,56 @@ export class FinanceService {
       };
     };
 
-    // Calculate financials for all terms
-    const previousTermsData = await Promise.all(
-      previousTerms.map(calculateTermFinancials)
-    );
+    // Get current term (isCurrent = true)
+    const currentTerm = await this.financeRepository.manager
+      .createQueryBuilder(Term, 'term')
+      .leftJoinAndSelect('term.academicCalendar', 'calendar')
+      .leftJoinAndSelect('term.period', 'period')
+      .where('term.schoolId = :schoolId', { schoolId })
+      .andWhere('term.isCurrent = :isCurrent', { isCurrent: true })
+      .getOne();
 
+    // Get all completed terms for the school, ordered by end date
+    const completedTerms = await this.financeRepository.manager
+      .createQueryBuilder(Term, 'term')
+      .leftJoinAndSelect('term.academicCalendar', 'calendar')
+      .leftJoinAndSelect('term.period', 'period')
+      .where('term.schoolId = :schoolId', { schoolId })
+      .andWhere('term.isCompleted = :isCompleted', { isCompleted: true })
+      .orderBy('term.endDate', 'ASC')
+      .getMany();
+
+    // Calculate current term data if it exists
     let currentTermData = null;
     if (currentTerm) {
       currentTermData = await calculateTermFinancials(currentTerm);
     }
 
+    // Get the last 2 completed terms as "previous terms"
+    const previousTerms = completedTerms.slice(-2);
+    const previousTermsData = await Promise.all(
+      previousTerms.map(calculateTermFinancials)
+    );
+
     // Calculate cumulative data
     const allTermsData = [...previousTermsData];
     if (currentTermData) {
       allTermsData.push(currentTermData);
+    }
+
+    if (allTermsData.length === 0) {
+      return {
+        currentTerm: null,
+        previousTerms: [],
+        cumulative: {
+          totalRevenue: 0,
+          totalExpenses: 0,
+          totalProfit: 0,
+          totalProfitMargin: 0,
+          broughtForward: 0,
+        },
+        carryForwardBalance: 0,
+      };
     }
 
     const totalRevenue = allTermsData.reduce((sum, term) => sum + term.revenue, 0);
@@ -1961,45 +2021,6 @@ async getParentPayments(
       .getRawOne();
 
     return parseFloat(lastMonthOutstandingResult?.sum || '0');
-  }
-
-  async getRevenueTrends(schoolId?: string, superAdmin = false) {
-    const trends: Array<{
-      month: string;
-      revenue: number;
-      target: number;
-      date: string;
-    }> = [];
-
-    // Generate last 6 months
-    for (let i = 5; i >= 0; i--) {
-      const date = new Date();
-      date.setMonth(date.getMonth() - i);
-      date.setDate(1);
-
-      const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
-      const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
-
-      const revenueResult = await this.paymentRepository
-        .createQueryBuilder('payment')
-        .select('SUM(payment.amount)', 'sum')
-        .where('payment.status = :status', { status: 'completed' })
-        .andWhere('payment.paymentDate >= :startDate', { startDate: monthStart })
-        .andWhere('payment.paymentDate <= :endDate', { endDate: monthEnd })
-        .andWhere(!superAdmin && schoolId ? 'payment.schoolId = :schoolId' : '1=1', { schoolId })
-        .getRawOne();
-
-      const revenue = parseFloat(revenueResult?.sum || '0');
-
-      trends.push({
-        month: monthStart.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-        revenue: revenue,
-        target: revenue * 0.9, // Simple target calculation - 90% of actual revenue
-        date: monthStart.toISOString().split('T')[0] // YYYY-MM-DD format
-      });
-    }
-
-    return trends;
   }
 
   async getStudentsWithOutstandingFees(schoolId?: string, superAdmin = false): Promise<number> {

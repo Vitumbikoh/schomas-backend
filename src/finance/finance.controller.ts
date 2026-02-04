@@ -170,9 +170,46 @@ export class FinanceController {
   async getRevenueTrends(@Request() req) {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
+    const months = req.query.months ? parseInt(req.query.months) : 6;
     return this.financeService.getRevenueTrends(
       superAdmin ? req.query.schoolId : user.schoolId,
       superAdmin,
+      months,
+    );
+  }
+
+  @Get('expense-trends')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Get monthly expense trends for the last 6 months' })
+  @ApiResponse({
+    status: 200,
+    description: 'Expense trends data retrieved successfully',
+  })
+  async getExpenseTrends(@Request() req) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    const months = req.query.months ? parseInt(req.query.months) : 6;
+    return this.financeService.getExpenseTrends(
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin,
+      months,
+    );
+  }
+
+  @Get('term-expenses')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Get total expenses within a term date range' })
+  @ApiQuery({ name: 'termId', required: true, description: 'Term ID' })
+  async getTermExpenses(
+    @Query('termId', ParseUUIDPipe) termId: string,
+    @Request() req
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    return this.financeService.getTermExpensesTotal(
+      termId,
+      superAdmin ? req.query.schoolId : user.schoolId,
+      superAdmin
     );
   }
 
