@@ -755,6 +755,19 @@ export class FinanceService {
           });
           await this.creditRepository.save(credit);
           creditCreated = true;
+
+          // Automatically apply credit to outstanding fees across all terms
+          try {
+            const autoApplyResult = await this.autoApplyCreditAcrossAllTerms(
+              student.id,
+              user.schoolId,
+              superAdmin
+            );
+            console.log(`🔄 Auto-applied credit for student ${student.id}:`, autoApplyResult.message);
+          } catch (error) {
+            console.error('Error auto-applying credit after creation:', error);
+            // Don't fail the payment if auto-apply fails
+          }
         }
 
         // Log each allocated payment
@@ -840,6 +853,19 @@ export class FinanceService {
             });
             await this.creditRepository.save(credit);
             creditCreated = true;
+
+            // Automatically apply credit to outstanding fees across all terms
+            try {
+              const autoApplyResult = await this.autoApplyCreditAcrossAllTerms(
+                student.id,
+                user.schoolId,
+                superAdmin
+              );
+              console.log(`🔄 Auto-applied credit for student ${student.id}:`, autoApplyResult.message);
+            } catch (error) {
+              console.error('Error auto-applying credit after creation:', error);
+              // Don't fail the payment if auto-apply fails
+            }
           }
         }
       } catch (e) {
@@ -2382,5 +2408,507 @@ async getParentPayments(
         schoolId: superAdmin ? schoolId : student.schoolId
       }
     };
+  }
+
+  /**
+   * Auto-apply credit balance across all terms with outstanding fees
+   * Applies to past overdue terms first, then current term
+   */
+  async autoApplyCreditAcrossAllTerms(
+    studentId: string,
+    schoolId?: string,
+    superAdmin = false
+  ): Promise<{
+    success: boolean;
+    totalCreditApplied: number;
+    termsProcessed: number;
+    applications: Array<{
+      termId: string;
+      termName: string;
+      creditApplied: number;
+      outstandingBefore: number;
+      outstandingAfter: number;
+    }>;
+    remainingCredit: number;
+    message: string;
+  }> {
+    console.log('\n\n========================================');
+    console.log('🚀 AUTO-APPLY CREDIT CALLED - NEW CODE VERSION');
+    console.log(`Student ID: ${studentId}`);
+    console.log(`School ID: ${schoolId}`);
+    console.log(`Super Admin: ${superAdmin}`);
+    console.log('========================================\n');
+    
+    try {
+      // Get all active credits for the student
+      const activeCredits = await this.creditRepository.find({
+        where: {
+          student: { id: studentId } as any,
+          status: 'active',
+          ...(schoolId && !superAdmin ? { schoolId } : {})
+        },
+        order: { createdAt: 'ASC' }
+      });
+
+      const totalCreditAvailable = activeCredits.reduce(
+        (sum, credit) => sum + Number(credit.remainingAmount),
+        0
+      );
+
+      if (totalCreditAvailable <= 0) {
+        return {
+          success: false,
+          totalCreditApplied: 0,
+          termsProcessed: 0,
+          applications: [],
+          remainingCredit: 0,
+          message: 'No credit balance available'
+        };
+      }
+
+      // Get student information first to determine their school
+      const student = await this.studentRepository.findOne({
+        where: { id: studentId },
+        relations: ['class', 'school']
+      });
+
+      if (!student) {
+        throw new Error('Student not found');
+      }
+
+      // Always use the student's school for term queries
+      const studentSchoolId = superAdmin && schoolId ? schoolId : student.schoolId;
+
+      // Get ALL terms for the student's school (including current and past)
+      const terms = await this.termRepository.find({
+        where: { schoolId: studentSchoolId },
+        relations: ['academicCalendar'],
+        order: { startDate: 'ASC' }
+      });
+
+      console.log(`🔍 [DEBUG] Auto-apply credit for student ${studentId}:`);
+      console.log(`   Student School ID: ${studentSchoolId}`);
+      console.log(`   Total terms fetched: ${terms.length}`);
+      console.log(`   Terms: ${terms.map(t => `Term ${t.termNumber} (${t.id.substring(0, 8)}..., isCurrent: ${t.isCurrent})`).join(', ')}`);
+
+      // Get current term
+      const currentTerm = await this.termRepository.findOne({
+        where: { 
+          isCurrent: true,
+          schoolId: studentSchoolId
+        }
+      });
+
+      console.log(`   Current term: ${currentTerm?.termNumber || 'None'} (${currentTerm?.id?.substring(0, 8) || 'N/A'}...)`);
+
+      // Check each term for outstanding fees and apply credit
+      const applications: Array<{
+        termId: string;
+        termName: string;
+        creditApplied: number;
+        outstandingBefore: number;
+        outstandingAfter: number;
+      }> = [];
+
+      let totalCreditApplied = 0;
+      let remainingCredit = totalCreditAvailable;
+
+      // Separate past terms from current term
+      // Past terms = ALL terms that are not the current term
+      const pastTerms = terms.filter(t => {
+        const isNotCurrent = t.id !== currentTerm?.id && !t.isCurrent;
+        console.log(`   [FILTER] Term ${t.termNumber} (${t.id.substring(0, 8)}...): isCurrent=${t.isCurrent}, matches currentTerm=${t.id === currentTerm?.id}, include=${isNotCurrent}`);
+        return isNotCurrent;
+      });
+      
+      // Sort past terms by start date (oldest first) to prioritize older debts
+      pastTerms.sort((a, b) => 
+        new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
+      );
+
+      console.log(`🔍 Auto-apply credit for student ${studentId}:`);
+      console.log(`   Credit available: MK ${totalCreditAvailable}`);
+      console.log(`   Total terms: ${terms.length}`);
+      console.log(`   Past terms to check: ${pastTerms.length} (${pastTerms.map(t => `Term ${t.termNumber}`).join(', ')})`);
+      console.log(`   Current term: ${currentTerm?.termNumber || 'None'}`);
+
+      if (!student) {
+        throw new Error('Student not found');
+      }
+
+      for (const term of pastTerms) {
+        if (remainingCredit <= 0) break;
+
+        try {
+          console.log(`   Checking Term ${term.termNumber}...`);
+          
+          // Calculate outstanding by directly querying fee structures and payments
+          const feeStructures = await this.feeStructureRepository.find({
+            where: {
+              termId: term.id,
+              isActive: true,
+              schoolId: studentSchoolId
+            }
+          });
+
+          const expectedMandatory = feeStructures
+            .filter(fs => !fs.isOptional && (!fs.classId || fs.classId === student.class?.id))
+            .reduce((sum, fs) => sum + Number(fs.amount), 0);
+
+          // Get payments for this term
+          const termPayments = await this.paymentRepository.find({
+            where: {
+              studentId: studentId,
+              termId: term.id,
+              status: 'completed',
+              schoolId: studentSchoolId
+            }
+          });
+
+          const totalPaid = termPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+          const outstanding = Math.max(0, expectedMandatory - totalPaid);
+
+          console.log(`     Expected: MK ${expectedMandatory}, Paid: MK ${totalPaid}`);
+          console.log(`     Outstanding: MK ${outstanding}`);
+          
+          if (outstanding > 0) {
+            console.log(`     ✓ Applying credit to Term ${term.termNumber}...`);
+            
+            const result = await this.autoApplyCreditToOutstandingFees(
+              studentId,
+              term.id,
+              schoolId,
+              superAdmin
+            );
+
+            if (result.success && result.creditApplied > 0) {
+              console.log(`     ✓ Applied MK ${result.creditApplied} to Term ${term.termNumber}`);
+              
+              applications.push({
+                termId: term.id,
+                termName: `Term ${term.termNumber} - ${term.academicCalendar?.term}`,
+                creditApplied: result.creditApplied,
+                outstandingBefore: outstanding,
+                outstandingAfter: result.outstandingAfterCredit
+              });
+
+              totalCreditApplied += result.creditApplied;
+              remainingCredit = result.remainingCredit;
+            }
+          } else {
+            console.log(`     ⊘ No outstanding fees`);
+          }
+        } catch (error) {
+          console.error(`     ✗ Error applying credit to term ${term.id}:`, error.message);
+        }
+      }
+
+      // Then apply to current term if there's still credit remaining
+      if (currentTerm && remainingCredit > 0) {
+        try {
+          console.log(`   Checking Current Term ${currentTerm.termNumber}...`);
+          
+          // Calculate outstanding by directly querying fee structures and payments
+          const feeStructures = await this.feeStructureRepository.find({
+            where: {
+              termId: currentTerm.id,
+              isActive: true,
+              schoolId: studentSchoolId
+            }
+          });
+
+          const expectedMandatory = feeStructures
+            .filter(fs => !fs.isOptional && (!fs.classId || fs.classId === student.class?.id))
+            .reduce((sum, fs) => sum + Number(fs.amount), 0);
+
+          // Get payments for this term
+          const termPayments = await this.paymentRepository.find({
+            where: {
+              studentId: studentId,
+              termId: currentTerm.id,
+              status: 'completed',
+              schoolId: studentSchoolId
+            }
+          });
+
+          const totalPaid = termPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+          const outstanding = Math.max(0, expectedMandatory - totalPaid);
+
+          console.log(`     Expected: MK ${expectedMandatory}, Paid: MK ${totalPaid}`);
+          console.log(`     Outstanding: MK ${outstanding}`);
+          
+          if (outstanding > 0) {
+            console.log(`     ✓ Applying credit to Current Term ${currentTerm.termNumber}...`);
+            
+            const result = await this.autoApplyCreditToOutstandingFees(
+              studentId,
+              currentTerm.id,
+              schoolId,
+              superAdmin
+            );
+
+            if (result.success && result.creditApplied > 0) {
+              console.log(`     ✓ Applied MK ${result.creditApplied} to Current Term`);
+              
+              applications.push({
+                termId: currentTerm.id,
+                termName: `Term ${currentTerm.termNumber} - ${currentTerm.academicCalendar?.term} (Current)`,
+                creditApplied: result.creditApplied,
+                outstandingBefore: outstanding,
+                outstandingAfter: result.outstandingAfterCredit
+              });
+
+              totalCreditApplied += result.creditApplied;
+              remainingCredit = result.remainingCredit;
+            }
+          } else {
+            console.log(`     ⊘ No outstanding fees in current term`);
+          }
+        } catch (error) {
+          console.error(`     ✗ Error applying credit to current term:`, error.message);
+        }
+      }
+
+      console.log(`   📊 Summary: Applied MK ${totalCreditApplied} to ${applications.length} term(s)`);
+      console.log(`   💰 Remaining credit: MK ${remainingCredit}`);
+
+      return {
+        success: applications.length > 0,
+        totalCreditApplied,
+        termsProcessed: applications.length,
+        applications,
+        remainingCredit,
+        message: applications.length > 0
+          ? `Applied MK ${totalCreditApplied.toLocaleString()} credit to ${applications.length} term(s). Remaining credit: MK ${remainingCredit.toLocaleString()}`
+          : 'No outstanding fees found to apply credit to'
+      };
+
+    } catch (error) {
+      console.error('Error auto-applying credit across terms:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Auto-apply credit balance to outstanding fees for a student in a specific term
+   */
+  async autoApplyCreditToOutstandingFees(
+    studentId: string,
+    termId: string,
+    schoolId?: string,
+    superAdmin = false
+  ): Promise<{
+    success: boolean;
+    creditApplied: number;
+    paymentCreated: boolean;
+    remainingCredit: number;
+    outstandingAfterCredit: number;
+    message: string;
+  }> {
+    try {
+      const activeCredits = await this.creditRepository.find({
+        where: {
+          student: { id: studentId } as any,
+          status: 'active',
+          ...(schoolId && !superAdmin ? { schoolId } : {})
+        },
+        order: { createdAt: 'ASC' }
+      });
+
+      const totalCreditAvailable = activeCredits.reduce(
+        (sum, credit) => sum + Number(credit.remainingAmount),
+        0
+      );
+
+      if (totalCreditAvailable <= 0) {
+        return {
+          success: false,
+          creditApplied: 0,
+          paymentCreated: false,
+          remainingCredit: 0,
+          outstandingAfterCredit: 0,
+          message: 'No credit balance available'
+        };
+      }
+
+      const feeStatus = await this.studentFeeExpectationService.getStudentFeeStatus(
+        studentId,
+        termId,
+        schoolId,
+        superAdmin
+      );
+
+      const outstandingAmount = Number(feeStatus.outstanding || 0);
+
+      if (outstandingAmount <= 0) {
+        return {
+          success: false,
+          creditApplied: 0,
+          paymentCreated: false,
+          remainingCredit: totalCreditAvailable,
+          outstandingAfterCredit: 0,
+          message: 'No outstanding fees to apply credit to'
+        };
+      }
+
+      const creditToApply = Math.min(totalCreditAvailable, outstandingAmount);
+
+      const student = await this.studentRepository.findOne({
+        where: { id: studentId },
+        relations: ['class']
+      });
+
+      const term = await this.termRepository.findOne({
+        where: { id: termId }
+      });
+
+      if (!student || !term) {
+        throw new Error('Student or term not found');
+      }
+
+      const creditPayment = this.paymentRepository.create({
+        studentId: studentId,
+        amount: creditToApply,
+        paymentDate: new Date(),
+        paymentType: 'credit_application',
+        paymentMethod: 'bank_transfer',
+        status: 'completed',
+        termId: termId,
+        schoolId: schoolId || student.schoolId,
+        receiptNumber: `CREDIT-${Date.now()}-${studentId.substring(0, 8)}`,
+        notes: `Auto-applied credit balance of MK ${creditToApply.toLocaleString()} to outstanding fees`
+      });
+
+      await this.paymentRepository.save(creditPayment);
+
+      await this.autoAllocatePayment(
+        creditPayment.id,
+        studentId,
+        termId,
+        schoolId || student.schoolId,
+        creditToApply,
+        'full'
+      );
+
+      let remainingToDeduct = creditToApply;
+      for (const credit of activeCredits) {
+        if (remainingToDeduct <= 0) break;
+
+        const creditRemaining = Number(credit.remainingAmount);
+        const deductAmount = Math.min(remainingToDeduct, creditRemaining);
+
+        credit.remainingAmount = creditRemaining - deductAmount;
+        
+        if (credit.remainingAmount <= 0) {
+          credit.status = 'applied';
+          credit.notes = (credit.notes || '') + ` | Fully applied to Term ${term.termNumber} on ${new Date().toISOString()}`;
+        } else {
+          credit.notes = (credit.notes || '') + ` | Partially applied MK ${deductAmount} to Term ${term.termNumber} on ${new Date().toISOString()}`;
+        }
+
+        await this.creditRepository.save(credit);
+        remainingToDeduct -= deductAmount;
+      }
+
+      const remainingCredit = totalCreditAvailable - creditToApply;
+      const outstandingAfterCredit = outstandingAmount - creditToApply;
+
+      return {
+        success: true,
+        creditApplied: creditToApply,
+        paymentCreated: true,
+        remainingCredit,
+        outstandingAfterCredit,
+        message: `Successfully applied MK ${creditToApply.toLocaleString()} credit to outstanding fees. Remaining credit: MK ${remainingCredit.toLocaleString()}, Remaining outstanding: MK ${outstandingAfterCredit.toLocaleString()}`
+      };
+
+    } catch (error) {
+      console.error('Error auto-applying credit:', error);
+      throw error;
+    }
+  }
+
+  async autoApplyCreditsForTerm(
+    termId: string,
+    schoolId?: string,
+    superAdmin = false
+  ): Promise<{
+    success: boolean;
+    studentsProcessed: number;
+    totalCreditApplied: number;
+    results: Array<{
+      studentId: string;
+      studentName: string;
+      creditApplied: number;
+      success: boolean;
+      message: string;
+    }>;
+  }> {
+    try {
+      const studentsWithCredits = await this.creditRepository
+        .createQueryBuilder('credit')
+        .select('DISTINCT credit.studentId', 'studentId')
+        .where('credit.status = :status', { status: 'active' })
+        .andWhere('credit.remainingAmount > 0')
+        .andWhere(schoolId && !superAdmin ? 'credit.schoolId = :schoolId' : '1=1', { schoolId })
+        .getRawMany();
+
+      const results: Array<{
+        studentId: string;
+        studentName: string;
+        creditApplied: number;
+        success: boolean;
+        message: string;
+      }> = [];
+
+      let totalCreditApplied = 0;
+
+      for (const { studentId } of studentsWithCredits) {
+        try {
+          const student = await this.studentRepository.findOne({
+            where: { id: studentId }
+          });
+
+          const result = await this.autoApplyCreditToOutstandingFees(
+            studentId,
+            termId,
+            schoolId,
+            superAdmin
+          );
+
+          if (result.success) {
+            totalCreditApplied += result.creditApplied;
+          }
+
+          results.push({
+            studentId,
+            studentName: student ? `${student.firstName} ${student.lastName}` : 'Unknown',
+            creditApplied: result.creditApplied,
+            success: result.success,
+            message: result.message
+          });
+
+        } catch (error) {
+          results.push({
+            studentId,
+            studentName: 'Unknown',
+            creditApplied: 0,
+            success: false,
+            message: `Error: ${error.message}`
+          });
+        }
+      }
+
+      return {
+        success: true,
+        studentsProcessed: studentsWithCredits.length,
+        totalCreditApplied,
+        results
+      };
+
+    } catch (error) {
+      console.error('Error auto-applying credits for term:', error);
+      throw error;
+    }
   }
 }

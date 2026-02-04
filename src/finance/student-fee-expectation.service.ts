@@ -327,12 +327,12 @@ export class StudentFeeExpectationService {
 
       console.log(`📚 Historical term ${term.termNumber} from ${term.academicCalendar?.term}: Found ${students.length} historical students`);
     } else {
-      // Use current student assignments for current terms
+      // Use current student assignments for current terms - exclude inactive students (graduated, transferred, etc.)
       students = await this.studentRepo.find({ 
-        where: { termId, ...(schoolId && !superAdmin ? { schoolId } : {}) } 
+        where: { termId, isActive: true, ...(schoolId && !superAdmin ? { schoolId } : {}) } 
       });
       
-      console.log(`📖 Current term ${term.termNumber}: Found ${students.length} current students`);
+      console.log(`📖 Current term ${term.termNumber}: Found ${students.length} active students`);
     }
 
     const [payments, feeStructures] = await Promise.all([

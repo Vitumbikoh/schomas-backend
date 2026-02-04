@@ -28,11 +28,16 @@ import { CreditLedger } from './entities/credit-ledger.entity';
 import { StudentAcademicRecord } from './entities/student-academic-record.entity';
 import { PaymentAllocation } from './entities/payment-allocation.entity';
 import { ExpectedFee } from './entities/expected-fee.entity';
+import { GraduateOutstandingBalance } from './entities/graduate-outstanding-balance.entity';
 
 // Enhanced services
 import { EnhancedFinanceService } from './services/enhanced-finance.service';
 import { PaymentAllocationService } from './services/payment-allocation.service';
 import { CarryForwardService } from './services/carry-forward.service';
+import { GraduateFeesService } from './services/graduate-fees.service';
+
+// Controllers
+import { GraduateFeesController } from './controllers/graduate-fees.controller';
 
 @Module({
   imports: [
@@ -55,6 +60,7 @@ import { CarryForwardService } from './services/carry-forward.service';
       StudentAcademicRecord,
       PaymentAllocation,
       ExpectedFee,
+      GraduateOutstandingBalance,
     ]),
     SettingsModule,
     LogsModule,
@@ -64,7 +70,8 @@ import { CarryForwardService } from './services/carry-forward.service';
   controllers: [
     FinanceController, 
     EnhancedFinanceController,
-    ReceiptController
+    ReceiptController,
+    GraduateFeesController,
   ],
   providers: [
     // Existing services
@@ -75,6 +82,7 @@ import { CarryForwardService } from './services/carry-forward.service';
     EnhancedFinanceService,
     PaymentAllocationService,
     CarryForwardService,
+    GraduateFeesService,
   ],
   exports: [
     FinanceService,

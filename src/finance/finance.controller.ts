@@ -1154,4 +1154,137 @@ export class FinanceController {
       ...result,
     };
   }
+
+  @Post('credits/auto-apply/:studentId')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Auto-apply credit balance to outstanding fees for a specific student' })
+  @ApiQuery({ name: 'termId', required: true, description: 'Term ID to apply credits to' })
+  @ApiResponse({ status: 200, description: 'Credit applied successfully' })
+  async autoApplyCreditForStudent(
+    @Param('studentId', new ParseUUIDPipe({ version: '4' })) studentId: string,
+    @Query('termId') termId: string,
+    @Request() req,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    const schoolId = superAdmin ? req.query.schoolId : user.schoolId;
+
+    const result = await this.financeService.autoApplyCreditToOutstandingFees(
+      studentId,
+      termId,
+      schoolId,
+      superAdmin
+    );
+
+    await this.systemLoggingService.logAction({
+      action: 'auto_apply_credit',
+      module: 'finance',
+      level: 'info',
+      performedBy: {
+        id: user.id || user.sub,
+        email: user.email,
+        role: user.role,
+        name: user.name
+      },
+      metadata: {
+        creditApplied: result.creditApplied,
+        studentId,
+        termId,
+        message: `Auto-applied MK ${result.creditApplied.toLocaleString()} credit for student ${studentId} in term ${termId}`
+      },
+    });
+
+    return {
+      success: true,
+      ...result,
+    };
+  }
+
+  @Post('credits/auto-apply-term')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Auto-apply credits for all students with credit balance in a term' })
+  @ApiQuery({ name: 'termId', required: true, description: 'Term ID to apply credits to' })
+  @ApiResponse({ status: 200, description: 'Credits applied successfully for all eligible students' })
+  async autoApplyCreditsForTerm(
+    @Query('termId') termId: string,
+    @Request() req,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    const schoolId = superAdmin ? req.query.schoolId : user.schoolId;
+
+    const result = await this.financeService.autoApplyCreditsForTerm(
+      termId,
+      schoolId,
+      superAdmin
+    );
+
+    await this.systemLoggingService.logAction({
+      action: 'auto_apply_credits_term',
+      module: 'finance',
+      level: 'info',
+      performedBy: {
+        id: user.id || user.sub,
+        email: user.email,
+        role: user.role,
+        name: user.name
+      },
+      metadata: {
+        totalCreditApplied: result.totalCreditApplied,
+        studentsProcessed: result.studentsProcessed,
+        termId,
+        message: `Auto-applied MK ${result.totalCreditApplied.toLocaleString()} credit for ${result.studentsProcessed} students in term ${termId}`
+      },
+    });
+
+    return {
+      success: true,
+      ...result,
+    };
+  }
+
+  @Post('credits/auto-apply-all-terms/:studentId')
+  @Roles(Role.ADMIN, Role.FINANCE)
+  @ApiOperation({ summary: 'Auto-apply credit balance to outstanding fees across all terms for a student' })
+  @ApiResponse({ status: 200, description: 'Credit applied successfully across all terms with outstanding fees' })
+  async autoApplyCreditAcrossAllTerms(
+    @Param('studentId', new ParseUUIDPipe({ version: '4' })) studentId: string,
+    @Request() req,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === 'SUPER_ADMIN';
+    const schoolId = superAdmin ? req.query.schoolId : user.schoolId;
+
+    const result = await this.financeService.autoApplyCreditAcrossAllTerms(
+      studentId,
+      schoolId,
+      superAdmin
+    );
+
+    if (result.success) {
+      await this.systemLoggingService.logAction({
+        action: 'auto_apply_credit_all_terms',
+        module: 'finance',
+        level: 'info',
+        performedBy: {
+          id: user.id || user.sub,
+          email: user.email,
+          role: user.role,
+          name: user.name
+        },
+        metadata: {
+          totalCreditApplied: result.totalCreditApplied,
+          termsProcessed: result.termsProcessed,
+          studentId,
+          applications: result.applications,
+          message: result.message
+        },
+      });
+    }
+
+    return {
+      success: true,
+      ...result,
+    };
+  }
 }

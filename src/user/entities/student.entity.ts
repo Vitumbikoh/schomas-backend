@@ -92,6 +92,19 @@ export class Student extends BaseEntity {
    @Column({ nullable: true })
   termId: string;
 
+  // Student status management
+  @Column({ type: 'boolean', default: true })
+  isActive: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  inactivatedAt: Date;
+
+  @Column({ type: 'uuid', nullable: true })
+  inactivatedBy: string;
+
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  inactivationReason: string; // 'graduated', 'transferred', 'expelled', 'dropped_out'
+
   // Multi-tenant scope
   @Column({ type: 'uuid', nullable: true })
   schoolId: string;

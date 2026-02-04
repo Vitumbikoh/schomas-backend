@@ -5,7 +5,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../user/decorators/roles.decorator';
 import { Role } from '../user/enums/role.enum';
 import { FinanceService } from './finance.service';
-import * as PDFDocument from 'pdfkit';
+import PDFDocument = require('pdfkit');
 
 @Controller('receipts')
 @UseGuards(AuthGuard('jwt'), RolesGuard)

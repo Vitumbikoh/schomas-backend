@@ -28,8 +28,14 @@ import {
             : exceptionResponse;
         error = exception.name;
       } else if (exception instanceof Error) {
-        message = exception.message;
-        error = exception.name;
+          message = exception.message;
+          error = exception.name;
+
+          // Map common authentication errors that may not be HttpException instances
+          if (/unauthorized/i.test(message) || /unauthorized/i.test(error)) {
+            status = HttpStatus.UNAUTHORIZED;
+            error = 'Unauthorized';
+          }
       }
   
       Logger.error(

@@ -51,8 +51,15 @@ import {
       const now = Date.now();
       return next.handle().pipe(
         tap((response) => {
+          let respString: string;
+          try {
+            respString = JSON.stringify(response);
+          } catch (err) {
+            respString = '[Unserializable response]';
+          }
+
           Logger.debug(
-            `Response: ${method} ${url} ${Date.now() - now}ms \nResponse: ${JSON.stringify(response)}`,
+            `Response: ${method} ${url} ${Date.now() - now}ms \nResponse: ${respString}`,
             'LoggingInterceptor',
           );
         }),

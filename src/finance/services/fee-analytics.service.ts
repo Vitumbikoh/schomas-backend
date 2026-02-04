@@ -403,7 +403,10 @@ export class FeeAnalyticsService {
       student: {
         id: student.id,
         name: `${student.firstName} ${student.lastName}`,
-        className: student.class?.name || 'No Class'
+        className: student.class?.name || 'No Class',
+        isActive: student.isActive,
+        inactivationReason: student.inactivationReason || null,
+        inactivatedAt: student.inactivatedAt || null
       },
       feeStructure: feeStructures.map(fs => ({
         type: fs.feeType,
