@@ -20,7 +20,13 @@ export class AuthController {
   @UseGuards(LocalAuthGuard)
   @Post('login')
   async login(@Body() loginDto: LoginDto, @Request() req) {
-    return this.authService.login(req.user);
+    try {
+      return await this.authService.login(req.user);
+    } catch (err) {
+      console.error('[AUTH] Error during login:', err);
+      // Re-throw so HttpExceptionFilter handles it in a standard way
+      throw err;
+    }
   }
 
   @UseGuards(JwtAuthGuard)

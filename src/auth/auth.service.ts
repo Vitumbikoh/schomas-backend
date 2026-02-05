@@ -20,96 +20,114 @@ export class AuthService {
   private refreshTokens = new Map<string, { userId: string; expiresAt: number }>();
 
   async validateUser(identifier: string, password: string): Promise<any> {
-    // identifier is expected to be username, but we fallback to email for backward compatibility
-    const trimmed = (identifier || '').trim();
-    if (!trimmed) {
-      console.log('[AUTH] Empty identifier provided');
-      return null;
-    }
-
-    console.log('[AUTH] Login attempt:', { identifier: trimmed });
-
-    let user = await this.usersService.findByUsername(trimmed);
-
-    if (!user) {
-      // Backward compatibility: allow using email if username not found
-      user = await this.usersService.findByEmail(trimmed);
-      if (user) {
-        console.log('[AUTH] Matched by email fallback');
-      }
-    }
-
-    if (!user) {
-      console.log('[AUTH] User not found for identifier');
-      return null; // Passport expects null for failure
-    }
-
-    // Password verification
-    const storedPassword = user.password || '';
-    let isPasswordValid = false;
     try {
-      // If stored password looks like a bcrypt hash, compare; else direct compare (legacy plain-text) then rehash path could be added later
-      const looksHashed = storedPassword.startsWith('$2a$') || storedPassword.startsWith('$2b$') || storedPassword.startsWith('$2y$');
-      if (looksHashed) {
-        isPasswordValid = await bcrypt.compare(password, storedPassword);
-      } else {
-        isPasswordValid = password === storedPassword;
-      }
-    } catch (e) {
-      console.log('[AUTH] Password compare error', e);
-      return null;
-    }
-
-    if (!isPasswordValid) {
-      console.log('[AUTH] Invalid password');
-      return null;
-    }
-
-    // Treat null/undefined isActive as true (legacy rows) but block explicit false
-    if (user.isActive === false) {
-      console.log('[AUTH] User inactive');
-      return null;
-    }
-
-    // Check if user's school is active (only for non-super-admin users)
-    if (user.schoolId && user.role !== 'SUPER_ADMIN') {
-      try {
-        const school = await this.schoolRepository.findOne({ 
-          where: { id: user.schoolId } 
-        });
-        
-        if (!school) {
-          console.log('[AUTH] User school not found:', { userId: user.id, schoolId: user.schoolId });
-          return null;
-        }
-        
-        if (school.status !== 'ACTIVE') {
-          console.log('[AUTH] School is suspended:', { 
-            userId: user.id, 
-            schoolId: user.schoolId, 
-            schoolName: school.name,
-            schoolStatus: school.status 
-          });
-          throw new UnauthorizedException('Your school account has been suspended. Please contact support for assistance.');
-        }
-        
-        console.log('[AUTH] School status verified:', { 
-          schoolId: user.schoolId, 
-          schoolName: school.name, 
-          status: school.status 
-        });
-      } catch (error) {
-        if (error instanceof UnauthorizedException) {
-          throw error; // Re-throw custom messages
-        }
-        console.log('[AUTH] Error checking school status:', error);
+      // identifier is expected to be username, but we fallback to email for backward compatibility
+      const trimmed = (identifier || '').trim();
+      if (!trimmed) {
+        console.log('[AUTH] Empty identifier provided');
         return null;
       }
-    }
 
-    const { password: _pw, ...result } = user;
-    console.log('[AUTH] Login success:', { id: user.id, username: user.username, role: user.role });
-    return result;
+      console.log('[AUTH] Login attempt:', { identifier: trimmed });
+
+      let user = null;
+      try {
+        user = await this.usersService.findByUsername(trimmed);
+      } catch (err) {
+        console.error('[AUTH] Error during findByUsername', err);
+        // Return null so Passport treats it as auth failure rather than crashing
+        return null;
+      }
+
+      if (!user) {
+        // Backward compatibility: allow using email if username not found
+        try {
+          user = await this.usersService.findByEmail(trimmed);
+          if (user) {
+            console.log('[AUTH] Matched by email fallback');
+          }
+        } catch (err) {
+          console.error('[AUTH] Error during findByEmail', err);
+          return null;
+        }
+      }
+
+      if (!user) {
+        console.log('[AUTH] User not found for identifier');
+        return null; // Passport expects null for failure
+      }
+
+      // Password verification
+      const storedPassword = user.password || '';
+      let isPasswordValid = false;
+      try {
+        // If stored password looks like a bcrypt hash, compare; else direct compare (legacy plain-text) then rehash path could be added later
+        const looksHashed = storedPassword.startsWith('$2a$') || storedPassword.startsWith('$2b$') || storedPassword.startsWith('$2y$');
+        if (looksHashed) {
+          isPasswordValid = await bcrypt.compare(password, storedPassword);
+        } else {
+          isPasswordValid = password === storedPassword;
+        }
+      } catch (e) {
+        console.log('[AUTH] Password compare error', e);
+        return null;
+      }
+
+      if (!isPasswordValid) {
+        console.log('[AUTH] Invalid password');
+        return null;
+      }
+
+      // Treat null/undefined isActive as true (legacy rows) but block explicit false
+      if (user.isActive === false) {
+        console.log('[AUTH] User inactive');
+        return null;
+      }
+
+      // Check if user's school is active (only for non-super-admin users)
+      if (user.schoolId && user.role !== 'SUPER_ADMIN') {
+        try {
+          const school = await this.schoolRepository.findOne({ 
+            where: { id: user.schoolId } 
+          });
+          
+          if (!school) {
+            console.log('[AUTH] User school not found:', { userId: user.id, schoolId: user.schoolId });
+            return null;
+          }
+          
+          if (school.status !== 'ACTIVE') {
+            console.log('[AUTH] School is suspended:', { 
+              userId: user.id, 
+              schoolId: user.schoolId, 
+              schoolName: school.name,
+              schoolStatus: school.status 
+            });
+            throw new UnauthorizedException('Your school account has been suspended. Please contact support for assistance.');
+          }
+          
+          console.log('[AUTH] School status verified:', { 
+            schoolId: user.schoolId, 
+            schoolName: school.name, 
+            status: school.status 
+          });
+        } catch (error) {
+          if (error instanceof UnauthorizedException) {
+            throw error; // Re-throw custom messages
+          }
+          console.error('[AUTH] Error checking school status:', error);
+          return null;
+        }
+      }
+
+      const { password: _pw, ...result } = user;
+      console.log('[AUTH] Login success:', { id: user.id, username: user.username, role: user.role });
+      return result;
+    } catch (err) {
+      // Catch-all to avoid unhandled exceptions causing 500 without logs
+      console.error('[AUTH] Unexpected error in validateUser:', err);
+      return null;
+    }
   }
   
 

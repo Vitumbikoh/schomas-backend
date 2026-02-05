@@ -18,10 +18,25 @@ async function bootstrap() {
   // API prefix
   app.setGlobalPrefix('api/v1');
 
-  // CORS configuration
+  // CORS configuration: allow list via CORS_ORIGIN env (comma-separated)
+  let corsEnv: string | undefined;
+  try {
+    corsEnv = configService.get('CORS_ORIGIN');
+  } catch (e) {
+    corsEnv = undefined;
+  }
+
+  const allowedOrigins = corsEnv ? corsEnv.split(',').map(s => s.trim()) : ['http://localhost:8080'];
+
   app.enableCors({
-    origin: configService.get('CORS_ORIGIN') || '*',
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    origin: (origin, callback) => {
+      // allow non-browser requests (like curl, server-to-server) without origin
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      // otherwise reject to avoid silently allowing unexpected origins
+      return callback(new Error('Not allowed by CORS'));
+    },
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
 
