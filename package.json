@@ -12,7 +12,7 @@
     "start:dev": "nest start --watch",
     "start:dev:win": "set NODE_ENV=development&& set ALLOW_EARLY_TERM_COMPLETION=true&& nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
+    "start:prod": "node -r module-alias/register dist/main",
     "lint": "eslint '{src,apps,libs,test}/**/*.ts' --fix",
     "test": "jest",
     "typeorm": "ts-node ./node_modules/typeorm/cli",
@@ -49,6 +49,7 @@
     "html-pdf-node": "^1.0.8",
     "jspdf": "^3.0.3",
     "jspdf-autotable": "^5.0.2",
+    "module-alias": "^2.3.4",
     "mysql": "^2.18.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
@@ -61,6 +62,9 @@
     "swagger-ui-express": "^5.0.1",
     "typeorm": "^0.3.21",
     "xlsx": "^0.18.5"
+  },
+  "_moduleAliases": {
+    "src": "dist/src"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
