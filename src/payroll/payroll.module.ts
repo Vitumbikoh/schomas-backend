@@ -12,11 +12,14 @@ import { User } from '../user/entities/user.entity';
 import { School } from '../school/entities/school.entity';
 import { Log } from '../logs/logs.entity';
 import { LogsModule } from '../logs/logs.module';
+import { SettingsModule } from '../settings/settings.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([SalaryRun, SalaryItem, PayrollApprovalHistory, PayComponent, StaffPayAssignment, Expense, User, School, Log]),
     LogsModule,
+    // Need settings to resolve current term when posting payroll expenses
+    SettingsModule,
   ],
   controllers: [PayrollController],
   providers: [PayrollService],

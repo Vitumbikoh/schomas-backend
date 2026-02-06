@@ -288,7 +288,11 @@ export class BillingService {
   }
 
   async listAcademicCalendarsForSchool(schoolId: string) {
-    return this.calendarRepo.find({ where: { schoolId }, order: { createdAt: 'DESC' } });
+    // Include school-specific calendars and global/independent calendars (schoolId IS NULL)
+    const qb = this.calendarRepo.createQueryBuilder('c');
+    qb.where('c.schoolId = :schoolId', { schoolId }).orWhere('c.schoolId IS NULL');
+    qb.orderBy('c.createdAt', 'DESC');
+    return qb.getMany();
   }
 
   async listTermsForSchool(schoolId: string, academicCalendarId?: string) {

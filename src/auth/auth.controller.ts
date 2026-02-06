@@ -5,6 +5,7 @@ import {
   UseGuards,
   Request,
   Get,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { Public } from './auth.guard';
@@ -21,6 +22,11 @@ export class AuthController {
   @Post('login')
   async login(@Body() loginDto: LoginDto, @Request() req) {
     try {
+      // Defensive: ensure the guard provided a user object
+      if (!req.user) {
+        console.warn('[AUTH] Login attempted without authenticated user');
+        throw new UnauthorizedException('Invalid credentials');
+      }
       return await this.authService.login(req.user);
     } catch (err) {
       console.error('[AUTH] Error during login:', err);

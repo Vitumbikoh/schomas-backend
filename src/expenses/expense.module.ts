@@ -7,10 +7,11 @@ import { ExpenseApprovalHistory } from './entities/expense-approval-history.enti
 import { User } from 'src/user/entities/user.entity';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
+import { Term } from 'src/settings/entities/term.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Expense, ExpenseApprovalHistory, User]),
+    TypeOrmModule.forFeature([Expense, ExpenseApprovalHistory, User, Term]),
     forwardRef(() => AuthModule),
     ConfigModule,
   ],

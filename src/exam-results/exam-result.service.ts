@@ -213,14 +213,23 @@ export class ExamResultService {
     });
 
     // Additional debug: Check for any exam results with matching studentId values
-    const examResultsForStudentIds = await this.examResultRepository
-      .createQueryBuilder('er')
-      .leftJoinAndSelect('er.student', 'student')
-      .where('student.studentId IN (:...studentIds)', { 
-        studentIds: classEntity.students.map(s => s.studentId)
-      })
-      .andWhere('er.termId = :termId', { termId })
-      .getMany();
+    // Guard against empty student list and optional termId to avoid SQL errors
+    let examResultsForStudentIds: ExamResultAggregate[] = [];
+    const studentIdsForDebug = classEntity.students.map(s => s.studentId).filter(Boolean);
+    if (studentIdsForDebug.length > 0) {
+      let debugQuery = this.examResultRepository
+        .createQueryBuilder('er')
+        .leftJoinAndSelect('er.student', 'student')
+        .where('student.studentId IN (:...studentIds)', { 
+          studentIds: studentIdsForDebug
+        });
+
+      if (termId) {
+        debugQuery = debugQuery.andWhere('er.termId = :termId', { termId });
+      }
+
+      examResultsForStudentIds = await debugQuery.getMany();
+    }
 
     console.log('Direct studentId exam results check:', {
       searchingFor: classEntity.students.map(s => s.studentId),
@@ -546,10 +555,30 @@ export class ExamResultService {
    * Get GPA points from percentage using grading formats
    */
   private async getGpaFromPercentage(percentage: number, schoolId?: string | null): Promise<number> {
-    const formats = await this.resolveGradeFormats(schoolId);
-    
-    if (formats.length === 0) {
-      // Fallback to hardcoded GPA if no formats found
+    try {
+      const formats = await this.resolveGradeFormats(schoolId);
+      
+      if (formats.length === 0) {
+        // Fallback to hardcoded GPA if no formats found
+        if (percentage >= 90) return 4.0;
+        if (percentage >= 80) return 3.7;
+        if (percentage >= 75) return 3.3;
+        if (percentage >= 70) return 3.0;
+        if (percentage >= 65) return 2.7;
+        if (percentage >= 60) return 2.3;
+        if (percentage >= 55) return 2.0;
+        if (percentage >= 50) return 1.7;
+        return 0.0;
+      }
+      
+      const matchingFormat = formats.find(format => 
+        percentage >= format.minPercentage && percentage <= format.maxPercentage
+      );
+      
+      return matchingFormat ? Number(matchingFormat.gpa) : 0.0;
+    } catch (error) {
+      console.error('[ExamResults] Error getting GPA from percentage:', error);
+      // Fallback to hardcoded GPA
       if (percentage >= 90) return 4.0;
       if (percentage >= 80) return 3.7;
       if (percentage >= 75) return 3.3;
@@ -560,33 +589,37 @@ export class ExamResultService {
       if (percentage >= 50) return 1.7;
       return 0.0;
     }
-    
-    const matchingFormat = formats.find(format => 
-      percentage >= format.minPercentage && percentage <= format.maxPercentage
-    );
-    
-    return matchingFormat ? Number(matchingFormat.gpa) : 0.0;
   }
 
   /**
    * Get remarks from percentage using grading formats
    */
   private async getRemarksFromPercentage(percentage: number, schoolId?: string | null): Promise<string> {
-    const formats = await this.resolveGradeFormats(schoolId);
-    
-    if (formats.length === 0) {
-      // Fallback to hardcoded remarks if no formats found
+    try {
+      const formats = await this.resolveGradeFormats(schoolId);
+      
+      if (formats.length === 0) {
+        // Fallback to hardcoded remarks if no formats found
+        if (percentage >= 90) return 'Excellent';
+        if (percentage >= 80) return 'Very Good';
+        if (percentage >= 70) return 'Good';
+        if (percentage >= 60) return 'Satisfactory';
+        return 'Needs Improvement';
+      }
+      
+      const matchingFormat = formats.find(format => 
+        percentage >= format.minPercentage && percentage <= format.maxPercentage
+      );
+      
+      return matchingFormat ? matchingFormat.description : 'Needs Improvement';
+    } catch (error) {
+      console.error('[ExamResults] Error getting remarks from percentage:', error);
+      // Fallback to hardcoded remarks
       if (percentage >= 90) return 'Excellent';
       if (percentage >= 80) return 'Very Good';
       if (percentage >= 70) return 'Good';
       if (percentage >= 60) return 'Satisfactory';
       return 'Needs Improvement';
     }
-    
-    const matchingFormat = formats.find(format => 
-      percentage >= format.minPercentage && percentage <= format.maxPercentage
-    );
-    
-    return matchingFormat ? matchingFormat.description : 'Needs Improvement';
   }
 }

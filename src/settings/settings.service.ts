@@ -2045,6 +2045,27 @@ export class SettingsService {
   }
 
   /**
+   * Find a term that contains the given date via an active term holiday.
+   * Returns the Term entity when a holiday covering the date is found, else null.
+   */
+  async getTermForDate(schoolId: string, date: Date): Promise<Term | null> {
+    try {
+      const holiday = await this.termHolidayRepository.createQueryBuilder('h')
+        .leftJoinAndSelect('h.term', 'term')
+        .where('h.schoolId = :schoolId', { schoolId })
+        .andWhere('h.startDate <= :date', { date })
+        .andWhere('h.endDate >= :date', { date })
+        .getOne();
+
+      if (!holiday) return null;
+      return holiday.term || null;
+    } catch (error) {
+      this.logger.error(`Failed to find term for date ${date.toISOString()}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Get progression settings for a school
    */
   async getProgressionSettings(schoolId: string): Promise<{ progressionMode: 'automatic' | 'exam_based' }> {

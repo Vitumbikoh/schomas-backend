@@ -2,6 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 import { User } from 'src/user/entities/user.entity';
 import { School } from 'src/school/entities/school.entity';
 import { ExpenseApprovalHistory } from './expense-approval-history.entity';
+import { Term } from 'src/settings/entities/term.entity';
 
 export enum ExpenseCategory {
   PERSONNEL = 'Personnel',
@@ -90,6 +91,9 @@ export class Expense extends BaseEntity {
   @Column({ type: 'uuid', nullable: true })
   schoolId: string | null;
 
+  @Column({ type: 'uuid', nullable: true })
+  termId: string | null;
+
   @Column({ type: 'json', nullable: true })
   attachments: string[];
 
@@ -139,6 +143,10 @@ export class Expense extends BaseEntity {
   @ManyToOne(() => School, { nullable: true })
   @JoinColumn({ name: 'schoolId' })
   school: School;
+
+  @ManyToOne(() => Term, { nullable: true })
+  @JoinColumn({ name: 'termId' })
+  term: Term;
 
   @OneToMany(() => ExpenseApprovalHistory, history => history.expense, { cascade: true })
   approvalHistory: ExpenseApprovalHistory[];

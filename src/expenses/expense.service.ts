@@ -6,6 +6,7 @@ import { ExpenseApprovalHistory, ApprovalAction } from './entities/expense-appro
 import { CreateExpenseDto, UpdateExpenseDto, ApproveExpenseDto, RejectExpenseDto, ExpenseFiltersDto, ExpenseAnalyticsDto } from './dtos/expense.dto';
 import { User } from 'src/user/entities/user.entity';
 import { Role } from 'src/user/enums/role.enum';
+import { Term } from 'src/settings/entities/term.entity';
 
 @Injectable()
 export class ExpenseService {
@@ -16,6 +17,8 @@ export class ExpenseService {
     private approvalHistoryRepository: Repository<ExpenseApprovalHistory>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    @InjectRepository(Term)
+    private termRepository: Repository<Term>,
   ) {}
 
   private async generateExpenseNumber(): Promise<string> {
@@ -63,12 +66,27 @@ export class ExpenseService {
     // Generate unique expense number
     const expenseNumber = await this.generateExpenseNumber();
 
+    // Determine effective termId for this expense
+    const targetSchoolId = createExpenseDto.schoolId || financeUser.schoolId || user.schoolId || null;
+    let effectiveTermId = createExpenseDto.termId || null;
+    if (!effectiveTermId && targetSchoolId) {
+      // Prefer current active term for the school
+      const currentTerm = await this.termRepository.findOne({ where: { schoolId: targetSchoolId, isCurrent: true }, select: ['id'] });
+      effectiveTermId = currentTerm?.id || null;
+      if (!effectiveTermId) {
+        // Fallback: latest term by startDate desc
+        const latestTerm = await this.termRepository.findOne({ where: { schoolId: targetSchoolId }, order: { startDate: 'DESC' }, select: ['id'] });
+        effectiveTermId = latestTerm?.id || null;
+      }
+    }
+
     const expense = this.expenseRepository.create({
       ...createExpenseDto,
       expenseNumber,
       requestedBy: financeUser.username,
       requestedByUserId: financeUser.id,
-      schoolId: createExpenseDto.schoolId || financeUser.schoolId,
+      schoolId: targetSchoolId,
+      termId: effectiveTermId,
       status: ExpenseStatus.PENDING,
       requestDate: new Date(),
       createdAt: new Date(),

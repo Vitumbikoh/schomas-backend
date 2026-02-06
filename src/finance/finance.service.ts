@@ -461,13 +461,14 @@ export class FinanceService {
         .getRawOne();
 
       // Expenses: approved/paid expenses FOR THIS TERM
-      // Try to match by date range for expenses since they might not have termId
+      // Prefer direct termId match when available, otherwise include by date range within term
       const expenseResult = await this.expenseRepository
         .createQueryBuilder('expense')
         .select('COALESCE(SUM(COALESCE(expense.approvedAmount, expense.amount)), 0)', 'expenses')
         .where('expense.schoolId = :schoolId', { schoolId })
         .andWhere('expense.status IN (:...statuses)', { statuses: ['Approved', 'Paid'] })
-        .andWhere('(expense.approvedDate BETWEEN :start AND :end OR expense.paidDate BETWEEN :start AND :end)', {
+        .andWhere('(expense.termId = :termId OR (expense.approvedDate BETWEEN :start AND :end OR expense.paidDate BETWEEN :start AND :end))', {
+          termId: term.id,
           start: term.startDate,
           end: term.endDate,
         })
@@ -709,11 +710,19 @@ export class FinanceService {
         }
       }
 
-      // Get current term scoped by school and validate payment type dynamically
-      const currentTerm = await this.settingsService.getCurrentTerm(user.schoolId);
-      if (!currentTerm) {
+      // Determine term for the payment date: prefer a term that has a holiday covering the payment date
+      const paymentDate = new Date(processPaymentDto.paymentDate);
+      let termForPayment = await this.settingsService.getTermForDate(user.schoolId, paymentDate);
+      if (!termForPayment) {
+        termForPayment = await this.settingsService.getCurrentTerm(user.schoolId);
+      }
+
+      if (!termForPayment) {
         throw new BadRequestException('No active term found. Please contact administration.');
       }
+
+      // Keep the variable name `currentTerm` for downstream logic compatibility
+      const currentTerm = termForPayment;
 
       const configuredFeeStructures = await this.feeStructureRepository.find({
         where: {

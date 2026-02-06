@@ -53,13 +53,21 @@ export class ExamResultController {
     @Query('academicCalendarId') academicCalendarId?: string,
     @Request() req?: any,
   ) {
-    return this.examResultService.getClassResults(
-      classId,
-      req.user?.userId || req.user?.sub || req.user?.id,
-      schoolId,
-      termId,
-      academicCalendarId,
-    );
+    try {
+      console.log('[ExamResults] Getting class results:', { classId, schoolId, termId, academicCalendarId });
+      const results = await this.examResultService.getClassResults(
+        classId,
+        req.user?.userId || req.user?.sub || req.user?.id,
+        schoolId,
+        termId,
+        academicCalendarId,
+      );
+      console.log('[ExamResults] Successfully retrieved class results');
+      return results;
+    } catch (error) {
+      console.error('[ExamResults] Error getting class results:', error);
+      throw error;
+    }
   }
 
   @Get('debug/class/:classId')

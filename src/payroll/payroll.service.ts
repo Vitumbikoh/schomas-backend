@@ -14,6 +14,8 @@ import { CreateStaffAssignmentDto, UpdateStaffAssignmentDto } from './dtos/staff
 import { SystemLoggingService } from '../logs/system-logging.service';
 import { Log } from '../logs/logs.entity';
 import { Expense, ExpenseCategory, ExpenseStatus, ExpensePriority } from '../expenses/entities/expense.entity';
+import { SettingsService } from '../settings/settings.service';
+import { Term } from '../settings/entities/term.entity';
 import { Role } from '../user/enums/role.enum';
 import * as PDFDocument from 'pdfkit';
 
@@ -31,6 +33,7 @@ export class PayrollService {
     @InjectRepository(Expense) private readonly expenseRepo: Repository<Expense>,
     private readonly dataSource: DataSource,
     private readonly logger: SystemLoggingService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   private formatDate(date: Date | null | string): string {
@@ -843,6 +846,72 @@ export class PayrollService {
 
       // Create an approved Personnel expense so it feeds into finance reports
       const totalExpenseAmount = Number(run.totalNet) + Number(run.employerCost);
+      // Try to associate the payroll expense with the current term so it deducts from current term revenue
+      let termId: string | null = null;
+      try {
+        const currentTerm = await this.settingsService.getCurrentTerm(user.schoolId);
+        if (currentTerm && currentTerm.id) {
+          termId = currentTerm.id;
+        }
+      } catch (e) {
+        // Don't fail payroll finalization just because current term lookup failed - log and continue
+        // Record the failure in system logs for visibility
+        try {
+          await this.logger.logAction({
+            action: 'CURRENT_TERM_LOOKUP_FAILED',
+            module: 'PAYROLL',
+            level: 'warn',
+            schoolId: user?.schoolId,
+            entityId: run.id,
+            metadata: { message: e?.message || e }
+          });
+        } catch (logErr) {
+          // If logging fails, fallback to console to avoid breaking finalization
+          console.warn('Failed to record system log for term lookup failure:', logErr);
+        }
+      }
+
+      // If we couldn't find an active current term, try some safe fallbacks so the payroll expense
+      // will still be included in term-based reports:
+      // 1) use an explicit term set on the run (run.termId)
+      // 2) try to find a term that contains the run.period (period is YYYY-MM)
+      // 3) fallback to the latest term by startDate for the school
+      if (!termId && user?.schoolId) {
+        if (run.termId) {
+          termId = run.termId;
+        } else {
+          try {
+            // Attempt to derive a representative date from the run period (YYYY-MM)
+            if (run.period && typeof run.period === 'string') {
+              const parts = run.period.split('-').map(p => Number(p));
+              if (parts.length >= 2 && !Number.isNaN(parts[0]) && !Number.isNaN(parts[1])) {
+                const periodDate = new Date(parts[0], parts[1] - 1, 15); // mid-month
+
+                const termContaining = await this.dataSource.manager
+                  .getRepository(Term)
+                  .createQueryBuilder('t')
+                  .where('t.schoolId = :schoolId', { schoolId: user.schoolId })
+                  .andWhere('t.startDate <= :periodDate', { periodDate })
+                  .andWhere('t.endDate >= :periodDate', { periodDate })
+                  .getOne();
+
+                if (termContaining) termId = termContaining.id;
+              }
+            }
+
+            // fallback: latest term for the school
+            if (!termId) {
+              const latestTerm = await this.dataSource.manager.getRepository(Term)
+                .findOne({ where: { schoolId: user.schoolId }, order: { startDate: 'DESC' }, select: ['id'] });
+              if (latestTerm && latestTerm.id) termId = latestTerm.id;
+            }
+          } catch (err) {
+            // Logging failure should not block payroll finalization
+            console.warn('Failed to determine fallback term for payroll expense:', err?.message || err);
+          }
+        }
+      }
+
       const expense = expenseRepo.create({
         expenseNumber: `PAY-${run.period}-${Date.now()}`,
         title: `Payroll ${run.period}`,
@@ -857,6 +926,7 @@ export class PayrollService {
         approvalLevel: 1,
         priority: ExpensePriority.MEDIUM,
         schoolId: user.schoolId,
+        termId: termId,
         approvedAmount: totalExpenseAmount,
         approvedDate: new Date(),
         approvedBy: 'System',
@@ -868,7 +938,7 @@ export class PayrollService {
       run.postedExpenseId = expense.id;
       await runRepo.save(run);
 
-      await this.logger.logAction({ action: 'PAYROLL_RUN_FINALIZED', module: 'PAYROLL', level: 'info', schoolId: user.schoolId, entityId: run.id, entityType: 'SalaryRun', metadata: { postedExpenseId: expense.id } });
+      await this.logger.logAction({ action: 'PAYROLL_RUN_FINALIZED', module: 'PAYROLL', level: 'info', schoolId: user.schoolId, entityId: run.id, entityType: 'SalaryRun', metadata: { postedExpenseId: expense.id, postedExpenseTermId: termId } });
       try {
         await this.historyRepo.save(this.historyRepo.create({
           runId: run.id,

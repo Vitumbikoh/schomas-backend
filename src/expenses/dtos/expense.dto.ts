@@ -50,6 +50,10 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsUUID()
   schoolId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  termId?: string;
 }
 
 export class UpdateExpenseDto {
