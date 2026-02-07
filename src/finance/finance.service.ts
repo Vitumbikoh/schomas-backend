@@ -2378,6 +2378,7 @@ async getParentPayments(
               termNumber: allocation.term?.termNumber,
               academicYear: allocation.term?.academicCalendar?.term,
               status: payment.status,
+              notes: payment.notes,
               processedBy:
                 payment.processedBy?.user?.username ||
                 payment.processedByAdmin?.username ||
@@ -2402,6 +2403,7 @@ async getParentPayments(
             termNumber: payment.term?.termNumber,
             academicYear: payment.term?.academicCalendar?.term,
             status: payment.status,
+            notes: payment.notes,
             processedBy:
               payment.processedBy?.user?.username ||
               payment.processedByAdmin?.username ||
@@ -2889,6 +2891,15 @@ async getParentPayments(
         throw new Error('Student or term not found');
       }
 
+      // Determine if this is a historical term
+      const currentAcademicCalendar = await this.termRepository.manager.getRepository('AcademicCalendar').findOne({
+        where: { isActive: true, ...(schoolId && !superAdmin ? { schoolId: schoolId || student.schoolId } : {}) }
+      });
+      const isHistoricalTerm = term.academicCalendar && currentAcademicCalendar && term.academicCalendar.id !== currentAcademicCalendar.id;
+      
+      const termLabel = `Term ${term.termNumber} (${term.academicCalendar?.term || 'Unknown Year'})`;
+      const historicalNote = isHistoricalTerm ? ' [HISTORICAL TERM - Previous Academic Year]' : '';
+      
       const creditPayment = this.paymentRepository.create({
         studentId: studentId,
         amount: creditToApply,
@@ -2899,7 +2910,7 @@ async getParentPayments(
         termId: termId,
         schoolId: schoolId || student.schoolId,
         receiptNumber: `CREDIT-${Date.now()}-${studentId.substring(0, 8)}`,
-        notes: `Auto-applied credit balance of MK ${creditToApply.toLocaleString()} to outstanding fees`
+        notes: `Auto-applied MK ${creditToApply.toLocaleString()} credit to ${termLabel} outstanding fees${historicalNote}. Outstanding before: MK ${outstandingAmount.toLocaleString()}, Outstanding after: MK ${(outstandingAmount - creditToApply).toLocaleString()}`
       });
 
       await this.paymentRepository.save(creditPayment);
@@ -2912,6 +2923,81 @@ async getParentPayments(
         creditToApply,
         'full'
       );
+
+      // If this was a historical term, update/create the student_academic_history record
+      if (isHistoricalTerm) {
+        try {
+          // Check if historical record exists
+          const historicalRecord = await this.studentRepository.query(
+            `SELECT * FROM student_academic_history 
+             WHERE student_id::uuid = $1 AND term_id::uuid = $2`,
+            [studentId, termId]
+          );
+
+          if (historicalRecord && historicalRecord.length > 0) {
+            // Update existing record
+            await this.studentRepository.query(
+              `UPDATE student_academic_history 
+               SET total_paid_fees = COALESCE(total_paid_fees, 0) + $1,
+                   outstanding_fees = GREATEST(0, COALESCE(total_expected_fees, 0) - (COALESCE(total_paid_fees, 0) + $1)),
+                   last_payment_date = $2,
+                   notes = COALESCE(notes, '') || $3
+               WHERE student_id::uuid = $4 AND term_id::uuid = $5`,
+              [
+                creditToApply,
+                new Date(),
+                `\nCredit applied: MK ${creditToApply.toLocaleString()} on ${new Date().toLocaleDateString()}`,
+                studentId,
+                termId
+              ]
+            );
+          } else {
+            // Create new historical record
+            const feeStatus = await this.studentFeeExpectationService.getStudentFeeStatus(
+              studentId,
+              termId,
+              schoolId,
+              superAdmin
+            );
+            
+            await this.studentRepository.query(
+              `INSERT INTO student_academic_history (
+                student_id, term_id, term_number, academic_calendar_id, academic_year,
+                school_id, class_id, class_name, student_number,
+                total_expected_fees, total_paid_fees, outstanding_fees,
+                status, last_payment_date, notes, created_at, updated_at
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+              ON CONFLICT (student_id, term_id) DO UPDATE SET
+                total_paid_fees = EXCLUDED.total_paid_fees,
+                outstanding_fees = EXCLUDED.outstanding_fees,
+                last_payment_date = EXCLUDED.last_payment_date,
+                notes = student_academic_history.notes || EXCLUDED.notes,
+                updated_at = NOW()`,
+              [
+                studentId,
+                termId,
+                term.termNumber,
+                term.academicCalendar?.id,
+                term.academicCalendar?.term || 'Unknown',
+                schoolId || student.schoolId,
+                student.class?.id,
+                student.class?.name || 'Unknown',
+                student.studentId,
+                feeStatus.totalExpected,
+                creditToApply,
+                Math.max(0, feeStatus.totalExpected - creditToApply),
+                creditToApply >= feeStatus.totalExpected ? 'completed' : 'in_progress',
+                new Date(),
+                `Credit applied: MK ${creditToApply.toLocaleString()} on ${new Date().toLocaleDateString()}`
+              ]
+            );
+          }
+          console.log(`✅ Updated historical record for ${termLabel}`);
+        } catch (error) {
+          console.error('Error updating historical record:', error);
+          // Don't fail the credit application if historical record update fails
+        }
+      }
 
       let remainingToDeduct = creditToApply;
       for (const credit of activeCredits) {
