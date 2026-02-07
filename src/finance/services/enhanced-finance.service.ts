@@ -282,7 +282,35 @@ export class EnhancedFinanceService {
       .orderBy('pa.allocatedAt', 'DESC')
       .getMany();
 
-    const paidAmount = allocations.reduce((sum, allocation) => sum + Number(allocation.allocatedAmount), 0);
+    // Get TOTAL payments RECEIVED in this term (including overpayments/unallocated amounts)
+    // For auditing purposes: Count payments by the term they were RECEIVED in (termId),
+    // not where they were later allocated.
+    // 
+    // EXCLUDE auto-applied credit payments which have BOTH:
+    //   - receiptNumber starting with 'CREDIT-' AND
+    //   - notes containing 'Auto-applied'
+    
+    const termPayments = await this.paymentRepo
+      .createQueryBuilder('p')
+      .where('p.studentId = :studentId', { studentId })
+      .andWhere('p.termId = :termId', { termId })
+      .andWhere('p.status = :status', { status: 'completed' })
+      // Exclude auto-applied credits: must have BOTH conditions to be excluded
+      // So include if EITHER condition is false (De Morgan's law)
+      .andWhere(`(
+        p.receiptNumber IS NULL 
+        OR p.receiptNumber NOT LIKE 'CREDIT-%'
+      )`)
+      .andWhere(`(
+        p.notes IS NULL
+        OR p.notes NOT LIKE '%Auto-applied%'
+      )`)
+      .andWhere(schoolId ? 'p.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+      .getMany();
+
+    // Use TOTAL payment amount received in this term (not just allocated amount)
+    // This includes overpayments that become credits and get allocated elsewhere
+    const paidAmount = termPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
     const outstandingAmount = Math.max(0, expectedAmount - paidAmount);
 
     // Determine overdue status
