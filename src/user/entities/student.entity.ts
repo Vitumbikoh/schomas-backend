@@ -20,6 +20,7 @@ import { Class } from 'src/classes/entity/class.entity';
 import { Course } from 'src/course/entities/course.entity';
 import { Grade } from 'src/grades/entity/grade.entity';
 import { School } from '../../school/entities/school.entity';
+import { Term } from '../../settings/entities/term.entity';
 import { Borrowing } from '../../library/entities/borrowing.entity';
 @Entity()
 export class Student extends BaseEntity {
@@ -91,6 +92,15 @@ export class Student extends BaseEntity {
 
    @Column({ nullable: true })
   termId: string;
+
+  // Enrollment tracking: The term when the student first enrolled
+  // Used to determine which terms to charge fees for (enrollment term onwards)
+  @Column({ type: 'uuid', nullable: true })
+  enrollmentTermId: string;
+
+  @ManyToOne(() => Term, { nullable: true })
+  @JoinColumn({ name: 'enrollmentTermId' })
+  enrollmentTerm: Term;
 
   // Student status management
   @Column({ type: 'boolean', default: true })

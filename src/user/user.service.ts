@@ -143,6 +143,9 @@ export class UsersService {
     const student = this.studentRepository.create({
       ...createStudentDto,
       user,
+      // Set enrollmentTermId to the term the student is being enrolled in
+      // This ensures they're only charged for fees from this term onwards
+      enrollmentTermId: createStudentDto.termId || null,
     });
     return this.studentRepository.save(student);
   }

@@ -2102,7 +2102,7 @@ async getParentPayments(
 
     const student = await this.studentRepository.findOne({
       where: studentQuery,
-      relations: ['class', 'user']
+      relations: ['class', 'user', 'enrollmentTerm', 'enrollmentTerm.academicCalendar']
     });
 
     if (!student) {
@@ -2111,7 +2111,8 @@ async getParentPayments(
 
     // Get all terms for the academic calendar or current academic calendar
     let termsQuery = `
-      SELECT t.id, t."termNumber", t."startDate", t."endDate", ac.term as academic_year
+      SELECT t.id, t."termNumber", t."startDate", t."endDate", ac.term as academic_year,
+             ac.id as academic_calendar_id
       FROM term t
       LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
     `;
@@ -2130,16 +2131,33 @@ async getParentPayments(
       queryParams.push(schoolId);
     }
 
-    termsQuery += ` ORDER BY t."termNumber" ASC`;
+    termsQuery += ` ORDER BY t."startDate" ASC, t."termNumber" ASC`;
     
-    const terms = await this.studentRepository.query(termsQuery, queryParams);
+    let terms = await this.studentRepository.query(termsQuery, queryParams);
+
+    // Filter terms to only include those from enrollment term onwards
+    if (student.enrollmentTermId && student.enrollmentTerm) {
+      const enrollmentTermStartDate = new Date(student.enrollmentTerm.startDate);
+      
+      terms = terms.filter((term: any) => {
+        const termStartDate = new Date(term.startDate);
+        // Include term if it starts on or after the enrollment term
+        return termStartDate >= enrollmentTermStartDate;
+      });
+      
+      console.log(`✅ Student ${student.firstName} ${student.lastName} enrolled in Term ${student.enrollmentTerm.termNumber} (${student.enrollmentTerm.academicCalendar?.term}). Charging fees for ${terms.length} terms from enrollment onwards.`);
+    } else {
+      console.log(`⚠️  Student ${student.firstName} ${student.lastName} has NO enrollment term set. Charging for all ${terms.length} terms (this may be incorrect).`);
+    }
 
     // Build comprehensive financial summary
     const termFinancialData = [];
     let totalExpectedAllTerms = 0;
     let totalPaidAllTerms = 0;
     
-    // Get all transactions for this student across all terms
+    // Get all transactions for this student across ALL academic calendars
+    // (Do NOT filter by academicCalendarId here - we want to show all payment history)
+    // Only filter TERMS by enrollment date, not transactions
     const allTransactions = await this.paymentRepository
       .createQueryBuilder('payment')
       .leftJoinAndSelect('payment.term', 'term')
@@ -2152,7 +2170,7 @@ async getParentPayments(
       .where('payment.studentId = :studentId', { studentId })
       .andWhere('payment.status = :status', { status: 'completed' })
       .andWhere(!superAdmin && schoolId ? 'payment.schoolId = :schoolId' : '1=1', { schoolId })
-      .andWhere(academicCalendarId ? 'academicCalendar.id = :acadId' : '1=1', { acadId: academicCalendarId })
+      // NOTE: Removed academicCalendarId filter here so ALL payment history shows
       .orderBy('payment.paymentDate', 'DESC')
       .getMany();
 
@@ -2506,7 +2524,7 @@ async getParentPayments(
       console.log('STEP 2: Fetching student information...');
       const student = await this.studentRepository.findOne({
         where: { id: studentId },
-        relations: ['class', 'school']
+        relations: ['class', 'school', 'enrollmentTerm', 'enrollmentTerm.academicCalendar']
       });
 
       if (!student) {
@@ -2516,35 +2534,60 @@ async getParentPayments(
       console.log(`   Student: ${student.firstName} ${student.lastName}`);
       console.log(`   Class: ${student.class?.name || 'N/A'} (${student.classId || 'N/A'})`);
       console.log(`   School: ${student.schoolId}`);
+      
+      if (student.enrollmentTermId && student.enrollmentTerm) {
+        console.log(`   📅 Enrollment Term: Term ${student.enrollmentTerm.termNumber} (${student.enrollmentTerm.academicCalendar?.term})`);
+        console.log(`   Enrollment Start: ${student.enrollmentTerm.startDate}`);
+      } else {
+        console.log(`   ⚠️  NO ENROLLMENT TERM SET - Will apply credits to ALL terms (may be incorrect)`);
+      }
 
       // Always use the student's school for term queries
       const studentSchoolId = superAdmin && schoolId ? schoolId : student.schoolId;
 
       console.log(`STEP 3: Fetching ALL terms for school ${studentSchoolId}...`);
       // Get ALL terms for the student's school (including current and past)
-      const terms = await this.termRepository.find({
+      let terms = await this.termRepository.find({
         where: { schoolId: studentSchoolId },
         relations: ['academicCalendar'],
         order: { startDate: 'ASC' }
       });
 
-      console.log(`   ✅ Fetched ${terms.length} terms`);
+      console.log(`   ✅ Fetched ${terms.length} terms before enrollment filter`);
+      
+      // Filter terms to only include those from enrollment term onwards
+      if (student.enrollmentTermId && student.enrollmentTerm) {
+        const enrollmentTermStartDate = new Date(student.enrollmentTerm.startDate);
+        const termsBeforeFilter = terms.length;
+        
+        terms = terms.filter((term: any) => {
+          const termStartDate = new Date(term.startDate);
+          return termStartDate >= enrollmentTermStartDate;
+        });
+        
+        console.log(`   🔍 Enrollment Filter Applied:`);
+        console.log(`      - Terms before filter: ${termsBeforeFilter}`);
+        console.log(`      - Terms after filter: ${terms.length}`);
+        console.log(`      - Filtered out: ${termsBeforeFilter - terms.length} terms (before enrollment)`);
+        console.log(`   ✅ Student will ONLY be charged/credited for fees from Term ${student.enrollmentTerm.termNumber} onwards`);
+      }
+      
       if (terms.length > 0) {
-        console.log(`   Terms list:`);
+        console.log(`   Terms list (after enrollment filter):`);
         terms.forEach(t => {
           console.log(`      - Term ${t.termNumber} (${t.academicCalendar?.term}): ID=${t.id.substring(0, 8)}..., isCurrent=${t.isCurrent}`);
         });
       }
 
       if (terms.length === 0) {
-        console.log(`   ❌ ERROR: No terms found for school ${studentSchoolId}`);
+        console.log(`   ❌ ERROR: No terms found for school ${studentSchoolId} after enrollment filter`);
         return {
           success: false,
           totalCreditApplied: 0,
           termsProcessed: 0,
           applications: [],
           remainingCredit: totalCreditAvailable,
-          message: 'No terms found for student school'
+          message: 'No terms found for student (after enrollment term filter)'
         };
       }
       // Get current term
