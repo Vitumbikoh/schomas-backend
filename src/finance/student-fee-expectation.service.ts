@@ -222,10 +222,30 @@ export class StudentFeeExpectationService {
       if (schoolId && !superAdmin) params.push(schoolId);
       const hist = await this.studentRepo.query(historicalQuery, params);
       const histRow = hist[0] || {};
-      const totalExpected = Number(histRow.total_expected ?? 0);
-      // Prefer historical total_paid when present, else fall back to payments aggregation
-      const totalPaid = Number(histRow.total_paid ?? totalPaidFromPayments);
-      const outstanding = Number(histRow.outstanding_amount ?? Math.max(0, totalExpected - totalPaid));
+      
+      // If there's a historical record with actual data, use it
+      if (histRow && histRow.total_expected != null && Number(histRow.total_expected) > 0) {
+        const totalExpected = Number(histRow.total_expected);
+        const totalPaid = Number(histRow.total_paid ?? totalPaidFromPayments);
+        const outstanding = Number(histRow.outstanding_amount ?? Math.max(0, totalExpected - totalPaid));
+        return {
+          studentId,
+          termId,
+          totalExpected,
+          totalPaid,
+          outstanding,
+          paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0,
+          payments: payments.map(p => ({ id: p.id, amount: Number(p.amount), date: p.paymentDate, method: p.paymentMethod, receiptNumber: p.receiptNumber })),
+          feeBreakdown: []
+        };
+      }
+      
+      // If no historical record exists or it's empty, compute from fee structures
+      // This ensures we can still calculate outstanding fees for historical terms
+      // that don't have academic history records yet
+      const { totalExpected, breakdown } = await this.computeExpectedFeesForStudent(studentId, termId, schoolId, superAdmin);
+      const totalPaid = totalPaidFromPayments;
+      const outstanding = Math.max(0, totalExpected - totalPaid);
       return {
         studentId,
         termId,
@@ -234,7 +254,7 @@ export class StudentFeeExpectationService {
         outstanding,
         paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0,
         payments: payments.map(p => ({ id: p.id, amount: Number(p.amount), date: p.paymentDate, method: p.paymentMethod, receiptNumber: p.receiptNumber })),
-        feeBreakdown: []
+        feeBreakdown: breakdown
       };
     } else {
       const { totalExpected, breakdown } = await this.computeExpectedFeesForStudent(studentId, termId, schoolId, superAdmin);
