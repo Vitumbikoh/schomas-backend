@@ -457,6 +457,72 @@ export class SettingsController {
       isCompleted: calendar.isCompleted,
     }));
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('academic-calendars/accessible')
+  @ApiOperation({ 
+    summary: 'Get accessible academic calendars for any authenticated user',
+    description: 'Returns academic calendars accessible to the authenticated user. For school users, returns their school calendars. For super admins, returns all calendars or filtered by schoolId.'
+  })
+  @ApiQuery({
+    name: 'schoolId',
+    required: false,
+    description: 'Optional school ID filter (super admins only)',
+    type: 'string',
+  })
+  async getAccessibleAcademicCalendars(
+    @Request() req,
+    @Query('schoolId') schoolIdParam?: string,
+  ): Promise<AcademicCalendarDto[]> {
+    let schoolId = req.user.schoolId;
+    
+    // Super admins can optionally filter by schoolId or see all
+    if (req.user.role === 'SUPER_ADMIN') {
+      if (schoolIdParam) {
+        schoolId = schoolIdParam;
+      } else {
+        // Return all calendars for super admin if no schoolId specified
+        const allCalendars = await this.academicCalendarRepository.find({
+          order: { createdAt: 'DESC' },
+        });
+        return allCalendars.map((calendar) => ({
+          id: calendar.id,
+          term: calendar.term,
+          startDate: calendar.startDate
+            ? new Date(calendar.startDate).toISOString()
+            : undefined,
+          endDate: calendar.endDate
+            ? new Date(calendar.endDate).toISOString()
+            : undefined,
+          isActive: calendar.isActive,
+          isCompleted: calendar.isCompleted,
+        }));
+      }
+    }
+
+    if (!schoolId) {
+      // If user has no schoolId, return empty array instead of error
+      return [];
+    }
+
+    const calendars = await this.academicCalendarRepository.find({
+      where: { schoolId },
+      order: { createdAt: 'DESC' },
+    });
+
+    return calendars.map((calendar) => ({
+      id: calendar.id,
+      term: calendar.term,
+      startDate: calendar.startDate
+        ? new Date(calendar.startDate).toISOString()
+        : undefined,
+      endDate: calendar.endDate
+        ? new Date(calendar.endDate).toISOString()
+        : undefined,
+      isActive: calendar.isActive,
+      isCompleted: calendar.isCompleted,
+    }));
+  }
   @UseGuards(JwtAuthGuard)
   @Patch('academic-calendar/:id/activate')
   async activateAcademicCalendar(
