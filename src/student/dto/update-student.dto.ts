@@ -48,4 +48,12 @@ export class UpdateStudentDto extends PartialType(CreateStudentDto) {
   @IsOptional()
   @IsUUID()
   parentId?: string;
+
+  // Optional inactivation control
+  @IsOptional()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsString()
+  inactivationReason?: string;
 }
