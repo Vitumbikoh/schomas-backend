@@ -32,7 +32,19 @@ async function bootstrap() {
     origin: (origin, callback) => {
       // allow non-browser requests (like curl, server-to-server) without origin
       if (!origin) return callback(null, true);
+      // direct match from configured allowed origins
       if (allowedOrigins.includes(origin)) return callback(null, true);
+      // also accept common local dev hosts on port 3000
+      try {
+        const parsed = new URL(origin);
+        const host = parsed.hostname;
+        const port = parsed.port;
+        if ((host === 'localhost' || host === '127.0.0.1') && port === '3000') {
+          return callback(null, true);
+        }
+      } catch (e) {
+        // if origin is not a valid URL, fall through to reject
+      }
       // otherwise reject to avoid silently allowing unexpected origins
       return callback(new Error('Not allowed by CORS'));
     },

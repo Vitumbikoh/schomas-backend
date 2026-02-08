@@ -3,7 +3,7 @@
  * Tests the automatic credit application when overpayment creates a credit
  */
 
-const BASE_URL = 'http://localhost:3000/api/v1';
+const BASE_URL = 'http://localhost:5000/api/v1';
 
 // Replace these with actual values from your system
 const AUTH_TOKEN = 'YOUR_AUTH_TOKEN_HERE';

@@ -15,7 +15,7 @@
 
 const axios = require('axios');
 
-const BASE_URL = 'http://localhost:3000/api/v1';
+const BASE_URL = 'http://localhost:5000/api/v1';
 const STUDENT_ID = 'dbdcd27f-f728-46cf-aa9d-7b1dcceb9ef2'; // Catherine Wambui
 const STUDENT_NUMBER = '260026';
 

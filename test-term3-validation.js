@@ -2,7 +2,7 @@ const axios = require('axios');
 
 // Test script to verify Term 3 holiday validation
 async function testTerm3HolidayValidation() {
-  const baseUrl = 'http://localhost:3000'; // Adjust if your backend runs on different port
+  const baseUrl = 'http://localhost:5000'; // Adjust if your backend runs on different port
 
   console.log('Testing Term 3 Holiday Validation...');
 

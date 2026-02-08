@@ -90,7 +90,7 @@ If the new logs don't appear, then either:
 
 1. **Check if backend is running:**
    ```bash
-   curl http://localhost:3000/api/v1/health
+   curl http://localhost:5000/api/v1/health
    ```
 
 2. **Check for compilation errors in terminal**

@@ -4,7 +4,7 @@
 # This script will call the endpoint and show the backend logs
 
 STUDENT_ID="dbdcd27f-f728-46cf-aa9d-7b1dcceb9ef2"
-API_URL="http://localhost:3000/api/v1/finance/credits/auto-apply-all-terms/${STUDENT_ID}"
+API_URL="http://localhost:5000/api/v1/finance/credits/auto-apply-all-terms/${STUDENT_ID}"
 
 echo "🧪 Testing Auto-Apply Credit Fix"
 echo "================================"

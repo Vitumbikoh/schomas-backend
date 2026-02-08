@@ -47,7 +47,7 @@ async function main() {
     const expectedOverpayments = sumCredits + sumAppliedToPrevious;
 
     // Fetch API metric
-    const baseUrl = process.env.API_BASE_URL || 'http://localhost:3000/api/v1';
+    const baseUrl = process.env.API_BASE_URL || 'http://localhost:5000/api/v1';
     const token = process.env.TEST_TOKEN || '';
     const res = await fetch(`${baseUrl}/finance/total-finances`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {}

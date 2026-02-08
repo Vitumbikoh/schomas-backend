@@ -7,7 +7,7 @@
  * 2. Outstanding fees in current term (Term 3)
  */
 
-const BASE_URL = 'http://localhost:3000/api/v1';
+const BASE_URL = 'http://localhost:5000/api/v1';
 const TOKEN = 'YOUR_AUTH_TOKEN'; // Replace with actual token
 
 async function testAutoApplyCredit() {

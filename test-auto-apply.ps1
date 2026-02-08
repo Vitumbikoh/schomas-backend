@@ -2,7 +2,7 @@
 # Run this script after starting the backend
 
 $STUDENT_ID = "dbdcd27f-f728-46cf-aa9d-7b1dcceb9ef2"
-$API_URL = "http://localhost:3000/api/v1/finance/credits/auto-apply-all-terms/$STUDENT_ID"
+$API_URL = "http://localhost:5000/api/v1/finance/credits/auto-apply-all-terms/$STUDENT_ID"
 
 Write-Host "🧪 Testing Auto-Apply Credit Fix" -ForegroundColor Green
 Write-Host "================================`n"
@@ -71,7 +71,7 @@ try {
 } catch {
     Write-Host "`n❌ Error calling API:" -ForegroundColor Red
     Write-Host $_.Exception.Message
-    Write-Host "`nMake sure the backend is running on http://localhost:3000" -ForegroundColor Yellow
+    Write-Host "`nMake sure the backend is running on http://localhost:5000" -ForegroundColor Yellow
 }
 
 Write-Host "`n📋 Check backend console logs for detailed processing:" -ForegroundColor Cyan
