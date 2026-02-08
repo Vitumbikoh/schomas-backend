@@ -72,7 +72,7 @@ export class BillingService {
   }
 
   private async countActiveStudentsForTerm(termId: string, schoolId: string) {
-    // Count actual students enrolled in classes for this school (excluding graduated)
+    // Count actual students enrolled in classes for this school (excluding graduated and inactive students)
     // Get the Graduated class ID first
     const graduatedClass = await this.classRepo.findOne({ 
       where: { schoolId, numericalName: 999 } 
@@ -80,6 +80,9 @@ export class BillingService {
     
     const qb = this.studentRepo.createQueryBuilder('student')
       .where('student.schoolId = :schoolId', { schoolId });
+
+    // Exclude inactive students explicitly
+    qb.andWhere('student.isActive = true');
     
     // Exclude graduated students
     if (graduatedClass) {
@@ -91,7 +94,7 @@ export class BillingService {
   }
 
   private async countActiveStudentsForAcademicCalendar(academicCalendarId: string, schoolId: string) {
-    // Count actual students enrolled in classes for this school (excluding graduated)
+    // Count actual students enrolled in classes for this school (excluding graduated and inactive students)
     // Get the Graduated class ID first
     const graduatedClass = await this.classRepo.findOne({ 
       where: { schoolId, numericalName: 999 } 
@@ -99,6 +102,9 @@ export class BillingService {
     
     const qb = this.studentRepo.createQueryBuilder('student')
       .where('student.schoolId = :schoolId', { schoolId });
+
+    // Exclude inactive students explicitly
+    qb.andWhere('student.isActive = true');
     
     // Exclude graduated students
     if (graduatedClass) {
