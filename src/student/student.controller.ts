@@ -679,6 +679,78 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
     }
   }
 
+  // --- Activate / Deactivate student endpoints ---
+  @Post('students/:id/deactivate')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Deactivate a student' })
+  async deactivateStudent(@Param('id') id: string, @Body() body: { reason?: string }, @Request() req) {
+    this.logger.log(`Deactivating student with id: ${id}`);
+    try {
+      // Check scope
+      const originalStudent = await this.studentService.findOne(id);
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      if (!isSuper && originalStudent.schoolId && originalStudent.schoolId !== req.user?.schoolId) {
+        throw new NotFoundException('Student not found');
+      }
+
+      const updated = await this.studentService.setActive(id, false, { id: req.user?.sub, email: req.user?.email }, body?.reason);
+
+      await this.systemLoggingService.logAction({
+        action: 'STUDENT_DEACTIVATED',
+        module: 'STUDENTS',
+        level: 'warn',
+        performedBy: { id: req.user?.sub, email: req.user?.email, role: req.user?.role, name: req.user?.username || req.user?.email },
+        entityId: id,
+        entityType: 'Student',
+        oldValues: { isActive: originalStudent.isActive },
+        newValues: { isActive: updated.isActive, inactivationReason: updated.inactivationReason },
+        metadata: { description: `Student deactivated: ${updated.firstName} ${updated.lastName}` },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+
+      return { success: true, student: updated, message: 'Student deactivated' };
+    } catch (error) {
+      this.logger.error(`Failed to deactivate student: ${error.message}`);
+      throw new Error('Failed to deactivate student: ' + error.message);
+    }
+  }
+
+  @Post('students/:id/activate')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Activate a student' })
+  async activateStudent(@Param('id') id: string, @Request() req) {
+    this.logger.log(`Activating student with id: ${id}`);
+    try {
+      const originalStudent = await this.studentService.findOne(id);
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      if (!isSuper && originalStudent.schoolId && originalStudent.schoolId !== req.user?.schoolId) {
+        throw new NotFoundException('Student not found');
+      }
+
+      const updated = await this.studentService.setActive(id, true, { id: req.user?.sub, email: req.user?.email });
+
+      await this.systemLoggingService.logAction({
+        action: 'STUDENT_ACTIVATED',
+        module: 'STUDENTS',
+        level: 'info',
+        performedBy: { id: req.user?.sub, email: req.user?.email, role: req.user?.role, name: req.user?.username || req.user?.email },
+        entityId: id,
+        entityType: 'Student',
+        oldValues: { isActive: originalStudent.isActive },
+        newValues: { isActive: updated.isActive },
+        metadata: { description: `Student activated: ${updated.firstName} ${updated.lastName}` },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+
+      return { success: true, student: updated, message: 'Student activated' };
+    } catch (error) {
+      this.logger.error(`Failed to activate student: ${error.message}`);
+      throw new Error('Failed to activate student: ' + error.message);
+    }
+  }
+
   @Delete('students/:id')
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Delete a student' })
