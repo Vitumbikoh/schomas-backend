@@ -685,10 +685,17 @@ export class FinanceService {
           // Ensure student belongs to same school as processing user (multi-tenant security)
           ...(user.schoolId ? { schoolId: user.schoolId } : {})
         },
+        relations: ['graduationTerm'], // Load graduation term to check if student is graduated
       });
 
       if (!student) {
         throw new NotFoundException('Student not found or not accessible in your school');
+      }
+
+      // Check if student is graduated
+      const isGraduated = !!student.graduationTermId;
+      if (isGraduated) {
+        console.log(`Processing payment for graduated student ${student.firstName} ${student.lastName} (ID: ${student.id}), graduated in term: ${student.graduationTermId}`);
       }
 
       // Attempt to load finance profile when role is FINANCE; fall back gracefully if missing
@@ -719,6 +726,23 @@ export class FinanceService {
 
       if (!termForPayment) {
         throw new BadRequestException('No active term found. Please contact administration.');
+      }
+
+      // For graduated students, use graduation term as the payment term, not current term
+      // This ensures payments don't get allocated to terms after graduation
+      if (isGraduated && student.graduationTermId) {
+        console.log(`Student graduated - using graduation term ${student.graduationTermId} instead of current term`);
+        const graduationTerm = await this.termRepository.findOne({
+          where: { id: student.graduationTermId },
+          relations: ['academicCalendar']
+        });
+        
+        if (graduationTerm) {
+          termForPayment = graduationTerm;
+          console.log(`Payment will be processed against graduation term: Term ${graduationTerm.termNumber} of ${graduationTerm.academicCalendar?.term} (${graduationTerm.id})`);
+        } else {
+          throw new BadRequestException('Graduation term not found for this student');
+        }
       }
 
       // Keep the variable name `currentTerm` for downstream logic compatibility
@@ -1190,17 +1214,31 @@ export class FinanceService {
       const collectionRate = totalPayments > 0 ? Math.round((completedPayments / totalPayments) * 100) : 0;
 
       // Calculate current term revenue (if current term available)
+      // Sum ALL payments received during the current term (by termId or paymentDate within term range)
+      // This includes payments for current term fees, overpayments, and payments applied to previous terms
       let currentTermRevenue = 0;
       try {
         if (currentTermForSchool && currentTermForSchool.id) {
-          const termRevenueRes = await this.paymentRepository
+          const termDetails = await this.termRepository.findOne({ where: { id: currentTermForSchool.id } });
+          
+          const termRevenueQb = this.paymentRepository
             .createQueryBuilder('payment')
             .select('SUM(payment.amount)', 'sum')
             .where('payment.status = :status', { status: 'completed' })
-            .andWhere('payment.termId = :termId', { termId: currentTermForSchool.id })
-            .andWhere(!superAdmin && schoolId ? 'payment.schoolId = :schoolId' : '1=1', { schoolId })
-            .getRawOne();
+            .andWhere(!superAdmin && schoolId ? 'payment.schoolId = :schoolId' : '1=1', { schoolId });
 
+          // Match payments by explicit termId or by paymentDate window inside the term
+          termRevenueQb.andWhere(new Brackets((qb) => {
+            qb.where('payment.termId = :termId', { termId: currentTermForSchool.id });
+            if (termDetails?.startDate && termDetails?.endDate) {
+              qb.orWhere('payment.paymentDate BETWEEN :start AND :end', {
+                start: termDetails.startDate,
+                end: termDetails.endDate,
+              });
+            }
+          }));
+
+          const termRevenueRes = await termRevenueQb.getRawOne();
           currentTermRevenue = parseFloat(termRevenueRes?.sum || '0');
         }
       } catch (err) {
@@ -2239,7 +2277,8 @@ async getParentPayments(
       throw new NotFoundException('Student not found');
     }
 
-    // Get all terms for the academic calendar or current academic calendar
+    // Get all terms - for proper historical tracking, we need ALL terms, not just active calendar
+    // We'll filter by enrollment date later for active students
     let termsQuery = `
       SELECT t.id, t."termNumber", t."startDate", t."endDate", ac.term as academic_year,
              ac.id as academic_calendar_id
@@ -2250,12 +2289,15 @@ async getParentPayments(
     const queryParams: any[] = [];
     let hasWhereClause = false;
     
+    // If specific academic calendar requested, filter to that
     if (academicCalendarId) {
       termsQuery += ` WHERE t."academicCalendarId"::uuid = $1`;
       queryParams.push(academicCalendarId);
       hasWhereClause = true;
     } else {
-      termsQuery += ` WHERE ac."isActive" = true`;
+      // Otherwise, get ALL terms across all calendars (we'll filter by enrollment later)
+      // This is important for students who enrolled in previous academic years
+      termsQuery += ` WHERE 1=1`;
       hasWhereClause = true;
     }
 
@@ -2273,30 +2315,12 @@ async getParentPayments(
     const isGraduated = student.class?.name && /graduated|alumni|leavers/i.test(student.class.name);
 
     if (isGraduated) {
-      // For graduated students, get ALL terms across ALL academic calendars (not just active)
-      // This ensures we capture their full financial history
-      let graduatedTermsQuery = `
-        SELECT t.id, t."termNumber", t."startDate", t."endDate", ac.term as academic_year,
-               ac.id as academic_calendar_id
-        FROM term t
-        LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
-        WHERE 1=1
-      `;
-      
-      const graduatedParams: any[] = [];
-      if (!superAdmin && schoolId) {
-        graduatedTermsQuery += ` AND t."schoolId" = $1`;
-        graduatedParams.push(schoolId);
-      }
-      
-      graduatedTermsQuery += ` ORDER BY t."startDate" ASC, t."termNumber" ASC`;
-      
-      let allTerms = await this.studentRepository.query(graduatedTermsQuery, graduatedParams);
+      // For graduated students, filter terms from enrollment to graduation
       
       // Filter to terms from enrollment onwards
       if (student.enrollmentTermId && student.enrollmentTerm) {
         const enrollmentStartDate = new Date(student.enrollmentTerm.startDate);
-        allTerms = allTerms.filter((term: any) => new Date(term.startDate) >= enrollmentStartDate);
+        terms = terms.filter((term: any) => new Date(term.startDate) >= enrollmentStartDate);
       }
       
       // Use graduationTermId if set (preferred method)
@@ -2304,7 +2328,7 @@ async getParentPayments(
         const graduationEndDate = new Date(student.graduationTerm.endDate);
         
         // Only include terms up to and including graduation term
-        terms = allTerms.filter((term: any) => new Date(term.endDate) <= graduationEndDate);
+        terms = terms.filter((term: any) => new Date(term.endDate) <= graduationEndDate);
         
         console.log(`🎓 Graduated student ${student.firstName} ${student.lastName}. Calculating fees for ${terms.length} terms (enrollment to graduation: ${student.graduationTerm.termNumber} of ${student.graduationTerm.academicCalendar?.term}).`);
       } else {
@@ -2324,12 +2348,11 @@ async getParentPayments(
         if (academicRecords.length > 0) {
           const lastRecord = academicRecords[0];
           const graduationEndDate = new Date(lastRecord.endDate);
-          terms = allTerms.filter((term: any) => new Date(term.endDate) <= graduationEndDate);
+          terms = terms.filter((term: any) => new Date(term.endDate) <= graduationEndDate);
           
           console.log(`   → Inferred graduation from last academic record. Calculating fees for ${terms.length} terms.`);
         } else {
           // No graduation term or academic records found, use all terms from enrollment
-          terms = allTerms;
           console.log(`   → WARNING: No academic records found. Using all ${terms.length} terms from enrollment (may be incorrect).`);
         }
       }
@@ -2344,7 +2367,7 @@ async getParentPayments(
           return termStartDate >= enrollmentTermStartDate;
         });
         
-        console.log(`✅ Student ${student.firstName} ${student.lastName} enrolled in Term ${student.enrollmentTerm.termNumber} (${student.enrollmentTerm.academicCalendar?.term}). Charging fees for ${terms.length} terms from enrollment onwards.`);
+        console.log(`✅ Student ${student.firstName} ${student.lastName} enrolled in Term ${student.enrollmentTerm.termNumber} (${student.enrollmentTerm.academicCalendar?.term}). Charging fees for ${terms.length} terms from enrollment onwards (across all academic years).`);
       } else {
         console.log(`⚠️  Student ${student.firstName} ${student.lastName} has NO enrollment term set. Charging for all ${terms.length} terms (this may be incorrect).`);
       }
@@ -2394,9 +2417,22 @@ async getParentPayments(
         .filter(fs => fs.isOptional && (!fs.classId || fs.classId === student.class?.id))
         .reduce((sum, fs) => sum + Number(fs.amount), 0);
 
-      // Get payments for this term
-      const termPayments = allTransactions.filter(payment => payment.termId === term.id);
-      let totalPaid = termPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+      // Calculate total paid for this term by summing allocations (not just payments)
+      // This ensures we count credits that were auto-applied to previous terms
+      let totalPaid = 0;
+      
+      for (const payment of allTransactions) {
+        if (payment.allocations && payment.allocations.length > 0) {
+          // Sum allocations for this specific term
+          const termAllocations = payment.allocations.filter(alloc => alloc.termId === term.id);
+          totalPaid += termAllocations.reduce((sum, alloc) => sum + Number(alloc.allocatedAmount), 0);
+        } else {
+          // No allocations - count payment if it belongs to this term
+          if (payment.termId === term.id) {
+            totalPaid += Number(payment.amount);
+          }
+        }
+      }
 
       // Include legacy/orphan active credits (credits without a source payment) for this term
       // so that Paid reflects the whole amount the school received even if credit rows were created
@@ -2418,6 +2454,22 @@ async getParentPayments(
       const isCurrentTerm = term.id === (await this.settingsService.getCurrentTerm(schoolId))?.id;
       const isPastTerm = new Date() > new Date(term.endDate);
 
+      // Count payments that have allocations to this term (for accurate payment count)
+      const paymentCount = allTransactions.filter(payment => {
+        if (payment.allocations && payment.allocations.length > 0) {
+          return payment.allocations.some(alloc => alloc.termId === term.id);
+        }
+        return payment.termId === term.id;
+      }).length;
+      
+      // Get last payment date from payments with allocations to this term
+      const relevantPayments = allTransactions.filter(payment => {
+        if (payment.allocations && payment.allocations.length > 0) {
+          return payment.allocations.some(alloc => alloc.termId === term.id);
+        }
+        return payment.termId === term.id;
+      });
+
       termFinancialData.push({
         termId: term.id,
         termNumber: term.termNumber,
@@ -2432,8 +2484,8 @@ async getParentPayments(
         status: outstanding === 0 ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid',
         isCurrentTerm,
         isPastTerm,
-        paymentCount: termPayments.length,
-        lastPaymentDate: termPayments[0]?.paymentDate,
+        paymentCount,
+        lastPaymentDate: relevantPayments[0]?.paymentDate,
         feeStructures: feeStructures.map(fs => ({
           feeType: fs.feeType,
           amount: Number(fs.amount),
@@ -2724,7 +2776,7 @@ async getParentPayments(
       console.log('STEP 2: Fetching student information...');
       const student = await this.studentRepository.findOne({
         where: { id: studentId },
-        relations: ['class', 'school', 'enrollmentTerm', 'enrollmentTerm.academicCalendar']
+        relations: ['class', 'school', 'enrollmentTerm', 'enrollmentTerm.academicCalendar', 'graduationTerm']
       });
 
       if (!student) {
@@ -2734,6 +2786,17 @@ async getParentPayments(
       console.log(`   Student: ${student.firstName} ${student.lastName}`);
       console.log(`   Class: ${student.class?.name || 'N/A'} (${student.classId || 'N/A'})`);
       console.log(`   School: ${student.schoolId}`);
+      
+      // Check if student is graduated
+      const isGraduated = !!student.graduationTermId;
+      if (isGraduated) {
+        console.log(`   🎓 GRADUATED STUDENT - Graduation Term: ${student.graduationTermId}`);
+        if (student.graduationTerm) {
+          console.log(`      Graduation Term: Term ${student.graduationTerm.termNumber} (${student.graduationTerm.academicCalendar?.term})`);
+          console.log(`      Graduation End Date: ${student.graduationTerm.endDate}`);
+        }
+        console.log(`   ⚠️  Credits will NOT be applied to terms after graduation!`);
+      }
       
       if (student.enrollmentTermId && student.enrollmentTerm) {
         console.log(`   📅 Enrollment Term: Term ${student.enrollmentTerm.termNumber} (${student.enrollmentTerm.academicCalendar?.term})`);
@@ -2772,8 +2835,25 @@ async getParentPayments(
         console.log(`   ✅ Student will ONLY be charged/credited for fees from Term ${student.enrollmentTerm.termNumber} onwards`);
       }
       
+      // For graduated students, also filter out terms after graduation
+      if (isGraduated && student.graduationTerm) {
+        const graduationTermEndDate = new Date(student.graduationTerm.endDate);
+        const termsBeforeGraduationFilter = terms.length;
+        
+        terms = terms.filter((term: any) => {
+          const termEndDate = new Date(term.endDate);
+          return termEndDate <= graduationTermEndDate;
+        });
+        
+        console.log(`   🎓 Graduation Filter Applied:`);
+        console.log(`      - Terms before graduation filter: ${termsBeforeGraduationFilter}`);
+        console.log(`      - Terms after graduation filter: ${terms.length}`);
+        console.log(`      - Filtered out: ${termsBeforeGraduationFilter - terms.length} terms (after graduation)`);
+        console.log(`   ✅ Credits will ONLY be applied to fees up to graduation term (Term ${student.graduationTerm.termNumber} of ${student.graduationTerm.academicCalendar?.term})`);
+      }
+      
       if (terms.length > 0) {
-        console.log(`   Terms list (after enrollment filter):`);
+        console.log(`   Terms list (after enrollment and graduation filters):`);
         terms.forEach(t => {
           console.log(`      - Term ${t.termNumber} (${t.academicCalendar?.term}): ID=${t.id.substring(0, 8)}..., isCurrent=${t.isCurrent}`);
         });
@@ -2943,7 +3023,37 @@ async getParentPayments(
 
       console.log(`\nSTEP 7: Checking current term (if credit remains)...`);
       // Then apply to current term if there's still credit remaining
+      // BUT: Skip current term if student is graduated and current term is after graduation
       if (currentTerm && remainingCredit > 0) {
+        // Check if current term is after graduation for graduated students
+        if (isGraduated && student.graduationTerm) {
+          const currentTermEndDate = new Date(currentTerm.endDate);
+          const graduationTermEndDate = new Date(student.graduationTerm.endDate);
+          
+          if (currentTermEndDate > graduationTermEndDate) {
+            console.log(`   ⊘ SKIPPING current term - student graduated in Term ${student.graduationTerm.termNumber} of ${student.graduationTerm.academicCalendar?.term}`);
+            console.log(`      Current term (Term ${currentTerm.termNumber} of ${currentTerm.academicCalendar?.term}) is after graduation term`);
+            console.log(`      Remaining credit: MK ${remainingCredit} will NOT be applied to current term`);
+            
+            // Return with remaining credit - do not apply to current term
+            console.log('\n========================================');
+            console.log(`✅ AUTO-APPLY CREDIT COMPLETE (Graduated Student)`);
+            console.log(`   Total Credit Applied: MK ${totalCreditApplied}`);
+            console.log(`   Terms Processed: ${applications.length}`);
+            console.log(`   Remaining Credit: MK ${remainingCredit} (not applied to current term - student graduated)`);
+            console.log('========================================\n\n');
+            
+            return {
+              success: true,
+              totalCreditApplied,
+              termsProcessed: applications.length,
+              applications,
+              remainingCredit,
+              message: `Applied MK ${totalCreditApplied} to ${applications.length} term(s) up to graduation. Remaining MK ${remainingCredit} not applied (student graduated).`
+            };
+          }
+        }
+        
         try {
           console.log(`   Processing Current Term ${currentTerm.termNumber}...`);
           console.log(`   Remaining credit: MK ${remainingCredit}`);
