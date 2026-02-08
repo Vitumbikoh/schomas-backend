@@ -102,6 +102,15 @@ export class Student extends BaseEntity {
   @JoinColumn({ name: 'enrollmentTermId' })
   enrollmentTerm: Term;
 
+  // Graduation tracking: The term when the student graduated
+  // Used to determine the cutoff for fee calculations (no fees charged after this term)
+  @Column({ type: 'uuid', nullable: true })
+  graduationTermId: string;
+
+  @ManyToOne(() => Term, { nullable: true })
+  @JoinColumn({ name: 'graduationTermId' })
+  graduationTerm: Term;
+
   // Student status management
   @Column({ type: 'boolean', default: true })
   isActive: boolean;

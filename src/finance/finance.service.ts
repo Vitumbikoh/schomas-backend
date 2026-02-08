@@ -2102,7 +2102,7 @@ async getParentPayments(
 
     const student = await this.studentRepository.findOne({
       where: studentQuery,
-      relations: ['class', 'user', 'enrollmentTerm', 'enrollmentTerm.academicCalendar']
+      relations: ['class', 'user', 'enrollmentTerm', 'enrollmentTerm.academicCalendar', 'graduationTerm', 'graduationTerm.academicCalendar']
     });
 
     if (!student) {
@@ -2118,15 +2118,19 @@ async getParentPayments(
     `;
     
     const queryParams: any[] = [];
+    let hasWhereClause = false;
+    
     if (academicCalendarId) {
       termsQuery += ` WHERE t."academicCalendarId"::uuid = $1`;
       queryParams.push(academicCalendarId);
+      hasWhereClause = true;
     } else {
       termsQuery += ` WHERE ac."isActive" = true`;
+      hasWhereClause = true;
     }
 
     if (!superAdmin && schoolId) {
-      termsQuery += queryParams.length > 0 ? ` AND ` : ` WHERE `;
+      termsQuery += hasWhereClause ? ` AND ` : ` WHERE `;
       termsQuery += `t."schoolId" = $${queryParams.length + 1}`;
       queryParams.push(schoolId);
     }
@@ -2135,19 +2139,85 @@ async getParentPayments(
     
     let terms = await this.studentRepository.query(termsQuery, queryParams);
 
-    // Filter terms to only include those from enrollment term onwards
-    if (student.enrollmentTermId && student.enrollmentTerm) {
-      const enrollmentTermStartDate = new Date(student.enrollmentTerm.startDate);
+    // Check if student is graduated based on class name
+    const isGraduated = student.class?.name && /graduated|alumni|leavers/i.test(student.class.name);
+
+    if (isGraduated) {
+      // For graduated students, get ALL terms across ALL academic calendars (not just active)
+      // This ensures we capture their full financial history
+      let graduatedTermsQuery = `
+        SELECT t.id, t."termNumber", t."startDate", t."endDate", ac.term as academic_year,
+               ac.id as academic_calendar_id
+        FROM term t
+        LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
+        WHERE 1=1
+      `;
       
-      terms = terms.filter((term: any) => {
-        const termStartDate = new Date(term.startDate);
-        // Include term if it starts on or after the enrollment term
-        return termStartDate >= enrollmentTermStartDate;
-      });
+      const graduatedParams: any[] = [];
+      if (!superAdmin && schoolId) {
+        graduatedTermsQuery += ` AND t."schoolId" = $1`;
+        graduatedParams.push(schoolId);
+      }
       
-      console.log(`✅ Student ${student.firstName} ${student.lastName} enrolled in Term ${student.enrollmentTerm.termNumber} (${student.enrollmentTerm.academicCalendar?.term}). Charging fees for ${terms.length} terms from enrollment onwards.`);
+      graduatedTermsQuery += ` ORDER BY t."startDate" ASC, t."termNumber" ASC`;
+      
+      let allTerms = await this.studentRepository.query(graduatedTermsQuery, graduatedParams);
+      
+      // Filter to terms from enrollment onwards
+      if (student.enrollmentTermId && student.enrollmentTerm) {
+        const enrollmentStartDate = new Date(student.enrollmentTerm.startDate);
+        allTerms = allTerms.filter((term: any) => new Date(term.startDate) >= enrollmentStartDate);
+      }
+      
+      // Use graduationTermId if set (preferred method)
+      if (student.graduationTermId && student.graduationTerm) {
+        const graduationEndDate = new Date(student.graduationTerm.endDate);
+        
+        // Only include terms up to and including graduation term
+        terms = allTerms.filter((term: any) => new Date(term.endDate) <= graduationEndDate);
+        
+        console.log(`🎓 Graduated student ${student.firstName} ${student.lastName}. Calculating fees for ${terms.length} terms (enrollment to graduation: ${student.graduationTerm.termNumber} of ${student.graduationTerm.academicCalendar?.term}).`);
+      } else {
+        // Fallback: Try to get academic records to determine graduation cutoff
+        console.log(`⚠️  No graduationTermId set for ${student.firstName} ${student.lastName}. Attempting to infer from academic records...`);
+        
+        const academicRecords = await this.studentRepository.query(
+          `SELECT sar."termId", sar.status, t."endDate"
+           FROM student_academic_records sar 
+           LEFT JOIN term t ON sar."termId" = t.id
+           WHERE sar."studentId"::uuid = $1 
+           ${!superAdmin && schoolId ? 'AND sar."schoolId"::uuid = $2' : ''}
+           ORDER BY t."endDate" DESC`,
+          !superAdmin && schoolId ? [studentId, schoolId] : [studentId]
+        );
+        
+        if (academicRecords.length > 0) {
+          const lastRecord = academicRecords[0];
+          const graduationEndDate = new Date(lastRecord.endDate);
+          terms = allTerms.filter((term: any) => new Date(term.endDate) <= graduationEndDate);
+          
+          console.log(`   → Inferred graduation from last academic record. Calculating fees for ${terms.length} terms.`);
+        } else {
+          // No graduation term or academic records found, use all terms from enrollment
+          terms = allTerms;
+          console.log(`   → WARNING: No academic records found. Using all ${terms.length} terms from enrollment (may be incorrect).`);
+        }
+      }
     } else {
-      console.log(`⚠️  Student ${student.firstName} ${student.lastName} has NO enrollment term set. Charging for all ${terms.length} terms (this may be incorrect).`);
+      // For active students, filter terms to only include those from enrollment term onwards
+      if (student.enrollmentTermId && student.enrollmentTerm) {
+        const enrollmentTermStartDate = new Date(student.enrollmentTerm.startDate);
+        
+        terms = terms.filter((term: any) => {
+          const termStartDate = new Date(term.startDate);
+          // Include term if it starts on or after the enrollment term
+          return termStartDate >= enrollmentTermStartDate;
+        });
+        
+        console.log(`✅ Student ${student.firstName} ${student.lastName} enrolled in Term ${student.enrollmentTerm.termNumber} (${student.enrollmentTerm.academicCalendar?.term}). Charging fees for ${terms.length} terms from enrollment onwards.`);
+      } else {
+        console.log(`⚠️  Student ${student.firstName} ${student.lastName} has NO enrollment term set. Charging for all ${terms.length} terms (this may be incorrect).`);
+      }
     }
 
     // Build comprehensive financial summary
