@@ -823,6 +823,23 @@ export class FinanceService {
             notes: referencePayment ? `Surplus from payment ${referencePayment.id}` : 'Surplus from full payment allocation',
           });
           await this.creditRepository.save(credit);
+          await this.systemLoggingService.logAction({
+            action: 'CREDIT_CAPTURED',
+            module: 'FINANCE',
+            level: 'debug',
+            schoolId: user.schoolId,
+            entityId: credit.id,
+            entityType: 'CreditLedger',
+            newValues: {
+              studentId: student.id,
+              termId: currentTerm.id,
+              amount: creditAmount,
+              sourcePaymentId: referencePayment?.id,
+            },
+            metadata: {
+              description: 'Credit captured from overpayment',
+            },
+          });
           creditCreated = true;
 
           // Automatically apply credit to outstanding fees across all terms
@@ -833,6 +850,19 @@ export class FinanceService {
               superAdmin
             );
             console.log(`🔄 Auto-applied credit for student ${student.id}:`, autoApplyResult.message);
+            await this.systemLoggingService.logAction({
+              action: 'CREDIT_AUTO_APPLY_TRIGGERED',
+              module: 'FINANCE',
+              level: 'debug',
+              schoolId: user.schoolId,
+              performedBy: { id: processingUser.id, email: processingUser.email, role: processingUser.role },
+              metadata: {
+                studentId: student.id,
+                termId: currentTerm.id,
+                amount: creditAmount,
+                message: autoApplyResult.message,
+              },
+            });
           } catch (error) {
             console.error('Error auto-applying credit after creation:', error);
             // Don't fail the payment if auto-apply fails
@@ -1073,6 +1103,8 @@ export class FinanceService {
     outstandingFeesLastMonth: number;
     paymentsToday: number;
     collectionRate: number;
+    currentTermRevenue: number;
+    currentTermOverpayments: number;
   }> {
     const now = new Date();
     const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -1087,6 +1119,14 @@ export class FinanceService {
     }
 
     try {
+      // Determine current term for the school (if available)
+      let currentTermForSchool: any = null;
+      try {
+        currentTermForSchool = await this.settingsService.getCurrentTerm(schoolId);
+      } catch (err) {
+        currentTermForSchool = null;
+      }
+
       // Calculate monthly revenue (current month)
       const currentMonthRevenue = await this.paymentRepository
         .createQueryBuilder('payment')
@@ -1149,6 +1189,92 @@ export class FinanceService {
 
       const collectionRate = totalPayments > 0 ? Math.round((completedPayments / totalPayments) * 100) : 0;
 
+      // Calculate current term revenue (if current term available)
+      let currentTermRevenue = 0;
+      try {
+        if (currentTermForSchool && currentTermForSchool.id) {
+          const termRevenueRes = await this.paymentRepository
+            .createQueryBuilder('payment')
+            .select('SUM(payment.amount)', 'sum')
+            .where('payment.status = :status', { status: 'completed' })
+            .andWhere('payment.termId = :termId', { termId: currentTermForSchool.id })
+            .andWhere(!superAdmin && schoolId ? 'payment.schoolId = :schoolId' : '1=1', { schoolId })
+            .getRawOne();
+
+          currentTermRevenue = parseFloat(termRevenueRes?.sum || '0');
+        }
+      } catch (err) {
+        currentTermRevenue = 0;
+      }
+
+      // Calculate current term overpayments (excess payments that became credits)
+      // Sum credits linked to the current term OR created within the term date range
+      let currentTermOverpayments = 0;
+      let sumCredits = 0;
+      let sumAppliedToPrevious = 0;
+      try {
+        if (currentTermForSchool && currentTermForSchool.id) {
+          const termDetails = await this.termRepository.findOne({ where: { id: currentTermForSchool.id } });
+
+          const overpaymentQb = this.creditRepository
+            .createQueryBuilder('credit')
+            .select('COALESCE(SUM(credit.amount), 0)', 'sum')
+            .where(!superAdmin && schoolId ? 'credit.schoolId = :schoolId' : '1=1', { schoolId });
+
+          // Match credits by explicit termId or by createdAt window inside the term
+          overpaymentQb.andWhere(new Brackets((qb) => {
+            qb.where('credit.termId = :termId', { termId: currentTermForSchool.id });
+            if (termDetails?.startDate && termDetails?.endDate) {
+              qb.orWhere('credit.createdAt BETWEEN :start AND :end', {
+                start: termDetails.startDate,
+                end: termDetails.endDate,
+              });
+            }
+          }));
+
+          const overpaymentRes = await overpaymentQb.getRawOne();
+          sumCredits = parseFloat(overpaymentRes?.sum || '0');
+
+          // Sum allocations from current-term payments applied to previous terms
+          if (termDetails?.startDate && termDetails?.endDate) {
+            const appliedPrevRes = await this.paymentAllocationRepository
+              .createQueryBuilder('alloc')
+              .innerJoin('alloc.payment', 'pay')
+              .select('COALESCE(SUM(alloc.allocatedAmount), 0)', 'sum')
+              .where('pay.status = :status', { status: 'completed' })
+              .andWhere(!superAdmin && schoolId ? 'pay.schoolId = :schoolId' : '1=1', { schoolId })
+              .andWhere(new Brackets(qb => {
+                qb.where('pay.termId = :termId', { termId: currentTermForSchool.id })
+                  .orWhere('pay.paymentDate BETWEEN :start AND :end', { start: termDetails.startDate, end: termDetails.endDate });
+              }))
+              .andWhere('alloc.termId != :termId', { termId: currentTermForSchool.id })
+              .andWhere('alloc.allocationReason IN (:...reasons)', { reasons: ['historical_settlement', 'carry_forward_settlement'] })
+              .getRawOne();
+
+            sumAppliedToPrevious = parseFloat(appliedPrevRes?.sum || '0');
+          }
+          currentTermOverpayments = sumCredits + sumAppliedToPrevious;
+        }
+      } catch (err) {
+        currentTermOverpayments = 0;
+      }
+
+      // Log overpayments calculation breakdown for debugging
+      try {
+        await this.systemLoggingService.logAction({
+          action: 'OVERPAYMENTS_CALCULATION',
+          module: 'FINANCE',
+          level: 'debug',
+          schoolId: schoolId,
+          metadata: {
+            currentTermId: currentTermForSchool?.id,
+            sumCredits,
+            sumAppliedToPrevious,
+            currentTermOverpayments,
+          },
+        });
+      } catch {}
+
       return {
         monthlyRevenue: parseFloat(currentMonthRevenue?.sum || '0'),
         monthlyRevenueLastMonth: parseFloat(lastMonthRevenue?.sum || '0'),
@@ -1156,6 +1282,8 @@ export class FinanceService {
         outstandingFeesLastMonth: 0, // Will be calculated properly later
         paymentsToday,
         collectionRate,
+        currentTermRevenue,
+        currentTermOverpayments,
       };
     } catch (error) {
       // Return default values if calculation fails
@@ -1167,6 +1295,8 @@ export class FinanceService {
         outstandingFeesLastMonth: 0,
         paymentsToday: 0,
         collectionRate: 0,
+        currentTermRevenue: 0,
+        currentTermOverpayments: 0,
       };
     }
   }

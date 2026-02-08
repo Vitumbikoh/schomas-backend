@@ -878,6 +878,7 @@ export class FinanceController {
     outstandingFees: number;
     paymentsToday: number;
     collectionRate: number;
+    currentTermOverpayments: number;
     dateRange?: { start?: string; end?: string };
     filters: { schoolId?: string };
     fallbackUsed?: boolean;
@@ -935,8 +936,8 @@ export class FinanceController {
         }
       }
 
-      // Use total accumulated revenue for display, not just monthly
-      const revenueNumber = Number(totalStats.totalRevenue) || 0;
+      // Prefer current term revenue for the dashboard "Fee Collection" metric
+      const revenueNumber = Number((metrics.currentTermRevenue ?? totalStats.totalRevenue) || 0);
 
       await this.systemLoggingService.logAction({
         action: 'FINANCE_TOTALS_QUERIED',
@@ -972,6 +973,7 @@ export class FinanceController {
         outstandingFees: metrics.outstandingFees,
         paymentsToday: metrics.paymentsToday,
         collectionRate: metrics.collectionRate,
+        currentTermOverpayments: metrics.currentTermOverpayments || 0,
         dateRange: startDate || endDate ? {
           start: startDate,
           end: endDate,
