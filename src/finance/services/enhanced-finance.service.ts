@@ -114,6 +114,7 @@ export class EnhancedFinanceService {
 
     if (isHistoricalTerm) {
       // For historical terms, query from student_academic_history
+      // Exclude graduated students from fee expectations
       this.logger.log(`Term ${termId} is historical, fetching from academic history`);
       
       const historicalQuery = `
@@ -127,6 +128,7 @@ export class EnhancedFinanceService {
         LEFT JOIN student s ON s.id = sah.student_id
         LEFT JOIN class c ON c.id = sah.class_id
         WHERE sah.term_id::uuid = $1
+        AND s."graduationTermId" IS NULL
         ${schoolId ? 'AND sah.school_id::uuid = $2' : ''}
       `;
 
@@ -150,18 +152,25 @@ export class EnhancedFinanceService {
         class: row.className ? { id: row.classId, name: row.className } : null
       })) as any[];
 
-      this.logger.log(`Found ${academicRecords.length} students in historical records`);
+      this.logger.log(`Found ${academicRecords.length} students in historical records (excluding graduated)`);
     } else {
       // Get all students who have academic records in this current term
-      academicRecords = await this.academicRecordRepo.find({
-        where: { 
-          termId,
-          ...(schoolId && { schoolId })
-        },
-        relations: ['student', 'class']
-      });
+      // Exclude graduated students
+      const qb = this.academicRecordRepo
+        .createQueryBuilder('ar')
+        .leftJoinAndSelect('ar.student', 'student')
+        .leftJoinAndSelect('ar.class', 'class')
+        .where('ar.termId = :termId', { termId })
+        .andWhere('ar.status != :graduatedStatus', { graduatedStatus: StudentStatus.GRADUATED })
+        .andWhere('student.graduationTermId IS NULL');
+      
+      if (schoolId) {
+        qb.andWhere('ar.schoolId = :schoolId', { schoolId });
+      }
+      
+      academicRecords = await qb.getMany();
 
-      this.logger.log(`Found ${academicRecords.length} students in current term records`);
+      this.logger.log(`Found ${academicRecords.length} students in current term records (excluding graduated)`);
     }
 
     if (academicRecords.length === 0) {
@@ -271,7 +280,8 @@ export class EnhancedFinanceService {
 
     const currentTermFees = expectedAmount - carryForwardAmount;
 
-    // Get allocated payments for this student in this term
+    // Get allocated payments TO this term (this includes credit applications)
+    // This is the correct way to calculate what has been paid FOR this term
     const allocations = await this.allocationRepo
       .createQueryBuilder('pa')
       .innerJoin('pa.payment', 'p')
@@ -282,35 +292,9 @@ export class EnhancedFinanceService {
       .orderBy('pa.allocatedAt', 'DESC')
       .getMany();
 
-    // Get TOTAL payments RECEIVED in this term (including overpayments/unallocated amounts)
-    // For auditing purposes: Count payments by the term they were RECEIVED in (termId),
-    // not where they were later allocated.
-    // 
-    // EXCLUDE auto-applied credit payments which have BOTH:
-    //   - receiptNumber starting with 'CREDIT-' AND
-    //   - notes containing 'Auto-applied'
-    
-    const termPayments = await this.paymentRepo
-      .createQueryBuilder('p')
-      .where('p.studentId = :studentId', { studentId })
-      .andWhere('p.termId = :termId', { termId })
-      .andWhere('p.status = :status', { status: 'completed' })
-      // Exclude auto-applied credits: must have BOTH conditions to be excluded
-      // So include if EITHER condition is false (De Morgan's law)
-      .andWhere(`(
-        p.receiptNumber IS NULL 
-        OR p.receiptNumber NOT LIKE 'CREDIT-%'
-      )`)
-      .andWhere(`(
-        p.notes IS NULL
-        OR p.notes NOT LIKE '%Auto-applied%'
-      )`)
-      .andWhere(schoolId ? 'p.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
-      .getMany();
-
-    // Use TOTAL payment amount received in this term (not just allocated amount)
-    // This includes overpayments that become credits and get allocated elsewhere
-    const paidAmount = termPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+    // Calculate paidAmount from allocations TO this term (not from payments RECEIVED in this term)
+    // This includes credit applications, historical settlements, and current term fees
+    const paidAmount = allocations.reduce((sum, alloc) => sum + Number(alloc.allocatedAmount), 0);
     const outstandingAmount = Math.max(0, expectedAmount - paidAmount);
 
     // Determine overdue status
@@ -361,19 +345,26 @@ export class EnhancedFinanceService {
 
   /**
    * Get fee statuses for all students in a term
+   * Excludes graduated students (they are handled in the Graduated Outstanding section)
    */
   async getTermStudentFeeStatuses(
     termId: string,
     schoolId?: string
   ): Promise<StudentFeeStatus[]> {
     
-    const academicRecords = await this.academicRecordRepo.find({
-      where: { 
-        termId,
-        ...(schoolId && { schoolId })
-      },
-      relations: ['student']
-    });
+    // Query builder to filter out graduated students
+    const qb = this.academicRecordRepo
+      .createQueryBuilder('ar')
+      .leftJoinAndSelect('ar.student', 'student')
+      .where('ar.termId = :termId', { termId })
+      .andWhere('ar.status != :graduatedStatus', { graduatedStatus: StudentStatus.GRADUATED })
+    .andWhere('student.graduationTermId IS NULL') // Additional check for student-level graduation
+    .andWhere("COALESCE(student.inactivationReason, '') != :gradReason", { gradReason: 'graduated' });
+    if (schoolId) {
+      qb.andWhere('ar.schoolId = :schoolId', { schoolId });
+    }
+    
+    const academicRecords = await qb.getMany();
 
     const statuses: StudentFeeStatus[] = [];
     

@@ -10,6 +10,30 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
 
+  // Ensure critical one-off tables exist (e.g., student_academic_history created by manual SQL)
+  try {
+    const dataSource = app.get(require('typeorm').DataSource) as import('typeorm').DataSource;
+    if (dataSource) {
+      const existsRes = await dataSource.query("SELECT to_regclass('public.student_academic_history') as reg");
+      const exists = existsRes && existsRes[0] && (existsRes[0].reg || existsRes[0].to_regclass);
+      if (!exists) {
+        const fs = require('fs');
+        const path = require('path');
+        const sqlPath = path.join(process.cwd(), 'create-student-academic-history-table.sql');
+        if (fs.existsSync(sqlPath)) {
+          const sql = fs.readFileSync(sqlPath, 'utf8');
+          console.log('student_academic_history not found — creating using', sqlPath);
+          await dataSource.query(sql);
+          console.log('student_academic_history table created');
+        } else {
+          console.warn('SQL file to create student_academic_history not found at', sqlPath);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to ensure student_academic_history table exists:', err.message || err);
+  }
+
   // Global pipes, filters, and interceptors
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
   app.useGlobalFilters(new HttpExceptionFilter());

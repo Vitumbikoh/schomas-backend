@@ -41,6 +41,8 @@ export class StudentPromotionService {
     dryRun?: boolean;
     note?: string;
     manager?: any; // Optional manager for transaction reuse
+    executionId?: string;
+    executionAt?: Date;
   }): Promise<{
     studentId: string;
     fromClassId: string | null;
@@ -50,7 +52,7 @@ export class StudentPromotionService {
     retainedCourseIds: string[];
     dryRun: boolean;
   }> {
-    const { studentId, targetClassId, triggeredByUserId, schoolId, dryRun = false, note, manager: providedManager } = options;
+    const { studentId, targetClassId, triggeredByUserId, schoolId, dryRun = false, note, manager: providedManager, executionId, executionAt } = options;
 
     // If a manager is provided, use it directly; otherwise create a transaction
     if (providedManager) {
@@ -72,6 +74,8 @@ export class StudentPromotionService {
     schoolId: string;
     dryRun: boolean;
     note?: string;
+    executionId?: string;
+    executionAt?: Date;
   }): Promise<{
     studentId: string;
     fromClassId: string | null;
@@ -81,7 +85,7 @@ export class StudentPromotionService {
     retainedCourseIds: string[];
     dryRun: boolean;
   }> {
-    const { studentId, targetClassId, triggeredByUserId, schoolId, dryRun = false, note } = options;
+    const { studentId, targetClassId, triggeredByUserId, schoolId, dryRun = false, note, executionId, executionAt } = options;
     const student = await manager.findOne(Student, { where: { id: studentId, schoolId }, relations: ['class'] });
     if (!student) {
       throw new Error('Student not found');
@@ -216,6 +220,8 @@ export class StudentPromotionService {
         },
         note: note || null,
         schoolId,
+        executionId: executionId || null,
+        executionAt: executionAt || null,
       });
       await manager.save(history);
     }
@@ -238,13 +244,15 @@ export class StudentPromotionService {
   async promoteStudentsToNextClass(
     schoolId: string,
     queryRunner?: QueryRunner,
+    options?: { executionId?: string; executionAt?: Date }
   ): Promise<{
     promotedStudents: number;
     graduatedStudents: number;
     errors: string[];
   }> {
     this.logger.log(`Starting student promotion for school: ${schoolId}`);
-
+    const executionId = options?.executionId;
+    const executionAt = options?.executionAt;
     const isExternalTransaction = !!queryRunner;
     if (!queryRunner) {
       queryRunner = this.dataSource.createQueryRunner();
@@ -393,6 +401,8 @@ export class StudentPromotionService {
               targetClassId: nextClassId,
               schoolId,
               manager: queryRunner.manager,
+              executionId: executionId,
+              executionAt: executionAt,
             });
             if (result.toClassId) {
               promotedCount++;
@@ -414,6 +424,8 @@ export class StudentPromotionService {
                 targetClassId: graduatedClass.id,
                 schoolId,
                 manager: queryRunner.manager,
+                executionId: executionId,
+                executionAt: executionAt,
               });
               if (result.toClassId) {
                 graduatedCount++;
@@ -576,11 +588,12 @@ export class StudentPromotionService {
   async revertStudentPromotions(
     schoolId: string,
     queryRunner?: QueryRunner,
+    executionId?: string,
   ): Promise<{
     revertedStudents: number;
     errors: string[];
   }> {
-    this.logger.log(`Starting student promotion revert for school: ${schoolId}`);
+    this.logger.log(`Starting student promotion revert for school: ${schoolId} (executionId=${executionId})`);
 
     const isExternalTransaction = !!queryRunner;
     if (!queryRunner) {
@@ -590,15 +603,18 @@ export class StudentPromotionService {
     }
 
     try {
-      // Get all recent promotion records for this school (assuming they were created during the last promotion execution)
+      // Get promotion records for the given execution if provided (prevents reverting older promotions accidentally)
+      const whereCondition: any = { schoolId };
+      if (executionId) whereCondition.executionId = executionId;
+
       const recentPromotions = await queryRunner.manager.find(StudentClassPromotion, {
-        where: { schoolId },
+        where: whereCondition,
         relations: ['student', 'fromClass', 'toClass'],
         order: { createdAt: 'DESC' },
       });
 
       if (recentPromotions.length === 0) {
-        this.logger.warn(`No promotion records found to revert for school ${schoolId}`);
+        this.logger.warn(`No promotion records found to revert for school ${schoolId} and executionId=${executionId}`);
         return { revertedStudents: 0, errors: [] };
       }
 

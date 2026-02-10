@@ -1246,7 +1246,8 @@ export class FinanceService {
       }
 
       // Calculate current term overpayments (excess payments that became credits)
-      // Sum credits linked to the current term OR created within the term date range
+      // Only sum REMAINING amounts from ACTIVE credits - when credits are applied, this reduces
+      // current-term overpayments calculation breakdown
       let currentTermOverpayments = 0;
       let sumCredits = 0;
       let sumAppliedToPrevious = 0;
@@ -1254,10 +1255,13 @@ export class FinanceService {
         if (currentTermForSchool && currentTermForSchool.id) {
           const termDetails = await this.termRepository.findOne({ where: { id: currentTermForSchool.id } });
 
+          // Sum remainingAmount of active credits only (not total amount)
+          // This ensures that when credits are applied, overpayments decrease
           const overpaymentQb = this.creditRepository
             .createQueryBuilder('credit')
-            .select('COALESCE(SUM(credit.amount), 0)', 'sum')
-            .where(!superAdmin && schoolId ? 'credit.schoolId = :schoolId' : '1=1', { schoolId });
+            .select('COALESCE(SUM(credit.remainingAmount), 0)', 'sum')
+            .where('credit.status = :status', { status: 'active' })
+            .andWhere(!superAdmin && schoolId ? 'credit.schoolId = :schoolId' : '1=1', { schoolId });
 
           // Match credits by explicit termId or by createdAt window inside the term
           overpaymentQb.andWhere(new Brackets((qb) => {
@@ -1291,10 +1295,13 @@ export class FinanceService {
 
             sumAppliedToPrevious = parseFloat(appliedPrevRes?.sum || '0');
           }
+
           currentTermOverpayments = sumCredits + sumAppliedToPrevious;
         }
       } catch (err) {
         currentTermOverpayments = 0;
+        sumCredits = 0;
+        sumAppliedToPrevious = 0;
       }
 
       // Log overpayments calculation breakdown for debugging

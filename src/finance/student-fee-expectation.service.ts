@@ -117,10 +117,14 @@ export class StudentFeeExpectationService {
       isHistoricalTerm = true;
       
       // Query historical students from student_academic_history
+      // Exclude graduated students
       const historicalQuery = `
         SELECT COUNT(DISTINCT sah.student_id) as student_count
         FROM student_academic_history sah
+        LEFT JOIN student s ON sah.student_id = s.id
         WHERE sah.term_id::uuid = $1
+        AND s."graduationTermId" IS NULL
+        AND COALESCE(s."inactivationReason", '') != 'graduated'
         ${schoolId && !superAdmin ? 'AND sah.school_id = $2' : ''}
       `;
       
@@ -133,15 +137,31 @@ export class StudentFeeExpectationService {
       console.log(`📚 Historical term summary: ${totalStudents} students from history table`);
     } else {
       // Use current student assignments for current terms
-      const students = await this.studentRepo.find({ where: { termId, ...(schoolId && !superAdmin ? { schoolId } : {}) } });
+      // Exclude graduated students
+      const qb = this.studentRepo
+        .createQueryBuilder('s')
+        .where('s.termId = :termId', { termId })
+        .andWhere('s.graduationTermId IS NULL');
+      
+      if (schoolId && !superAdmin) {
+        qb.andWhere('s.schoolId = :schoolId', { schoolId });
+      }
+      
+      const students = await qb.getMany();
       totalStudents = students.length;
       
-      console.log(`📖 Current term summary: ${totalStudents} current students`);
+      console.log(`📖 Current term summary: ${totalStudents} current students (excluding graduated)`);
     }
 
     const [feeStructures, payments] = await Promise.all([
       this.feeStructureRepo.find({ where: { termId, isActive: true, ...(schoolId ? { schoolId } : {}) } }),
-      this.paymentRepo.find({ where: { termId, status: 'completed', ...(schoolId ? { schoolId } : {}) } })
+      // Exclude credit_application payments - that money was already counted in previous terms
+      this.paymentRepo.createQueryBuilder('p')
+        .where('p.termId = :termId', { termId })
+        .andWhere('p.status = :status', { status: 'completed' })
+        .andWhere('(p.paymentType IS NULL OR p.paymentType != :creditType)', { creditType: 'credit_application' })
+        .andWhere(schoolId ? 'p.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+        .getMany()
     ]);
 
     const expectedFees = feeStructures.filter(i => !i.isOptional).reduce((sum, i) => sum + (Number(i.amount) * totalStudents), 0);
@@ -157,7 +177,17 @@ export class StudentFeeExpectationService {
         const perStudentExpected = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
         overdueStudents = totalStudents - (totalFeesPaid > 0 && perStudentExpected > 0 ? Math.floor(totalFeesPaid / perStudentExpected) : 0);
       } else {
-        const students = await this.studentRepo.find({ where: { termId, ...(schoolId && !superAdmin ? { schoolId } : {}) } });
+        // Build query to exclude graduated students from overdue calculation
+        const qb = this.studentRepo
+          .createQueryBuilder('s')
+          .where('s.termId = :termId', { termId })
+          .andWhere('s.graduationTermId IS NULL');
+        
+        if (schoolId && !superAdmin) {
+          qb.andWhere('s.schoolId = :schoolId', { schoolId });
+        }
+        
+        const students = await qb.getMany();
         const perStudentExpected = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
         const paidMap: Record<string, number> = {};
         payments.forEach(p => { const sid = (p.student as any)?.id; if (sid) paidMap[sid] = (paidMap[sid] || 0) + Number(p.amount); });
@@ -192,7 +222,14 @@ export class StudentFeeExpectationService {
     const term = await this.termRepo.findOne({ where: { id: termId }, relations: ['academicCalendar'] });
     if (!term) throw new NotFoundException('Term not found');
 
-    const payments = await this.paymentRepo.find({ where: { student: { id: studentId }, termId, status: 'completed', ...(schoolId ? { schoolId } : {}) } });
+    // Exclude credit_application payments - that money was already counted in previous terms
+    const payments = await this.paymentRepo.createQueryBuilder('p')
+      .where('p.studentId = :studentId', { studentId })
+      .andWhere('p.termId = :termId', { termId })
+      .andWhere('p.status = :status', { status: 'completed' })
+      .andWhere('(p.paymentType IS NULL OR p.paymentType != :creditType)', { creditType: 'credit_application' })
+      .andWhere(schoolId ? 'p.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+      .getMany();
     let totalPaidFromPayments = payments.reduce((s, p) => s + Number(p.amount), 0);
     // Include legacy/orphan credits (no sourcePayment) as part of Paid for the term
     try {
@@ -309,6 +346,7 @@ export class StudentFeeExpectationService {
       isHistoricalTerm = true;
       
       // Query historical students from student_academic_history
+      // Exclude graduated students from the fee statuses list
       const historicalQuery = `
         SELECT DISTINCT
           sah.student_id,
@@ -323,6 +361,8 @@ export class StudentFeeExpectationService {
         FROM student_academic_history sah
         LEFT JOIN student s ON sah.student_id = s.id
         WHERE sah.term_id::uuid = $1
+        AND s."graduationTermId" IS NULL
+        AND COALESCE(s."inactivationReason", '') != 'graduated'
         ${schoolId && !superAdmin ? 'AND sah.school_id = $2' : ''}
         ORDER BY s."firstName", s."lastName"
       `;
@@ -348,15 +388,32 @@ export class StudentFeeExpectationService {
       console.log(`📚 Historical term ${term.termNumber} from ${term.academicCalendar?.term}: Found ${students.length} historical students`);
     } else {
       // Use current student assignments for current terms - exclude inactive students (graduated, transferred, etc.)
-      students = await this.studentRepo.find({ 
-        where: { termId, isActive: true, ...(schoolId && !superAdmin ? { schoolId } : {}) } 
-      });
+      // Explicitly exclude graduated students
+      const qb = this.studentRepo
+        .createQueryBuilder('s')
+        .where('s.termId = :termId', { termId })
+        .andWhere('s.isActive = :isActive', { isActive: true })
+        .andWhere('s.graduationTermId IS NULL') // Exclude graduated students
+        .andWhere('COALESCE(s.inactivationReason, \'\') != :gradReason', { gradReason: 'graduated' });
       
-      console.log(`📖 Current term ${term.termNumber}: Found ${students.length} active students`);
+      if (schoolId && !superAdmin) {
+        qb.andWhere('s.schoolId = :schoolId', { schoolId });
+      }
+      
+      students = await qb.getMany();
+      
+      console.log(`📖 Current term ${term.termNumber}: Found ${students.length} active students (excluding graduated)`);
     }
 
     const [payments, feeStructures] = await Promise.all([
-      this.paymentRepo.find({ where: { termId, status: 'completed', ...(schoolId ? { schoolId } : {}) }, relations: ['student'] }),
+      // Exclude credit_application payments - that money was already counted in previous terms
+      this.paymentRepo.createQueryBuilder('p')
+        .leftJoinAndSelect('p.student', 'student')
+        .where('p.termId = :termId', { termId })
+        .andWhere('p.status = :status', { status: 'completed' })
+        .andWhere('(p.paymentType IS NULL OR p.paymentType != :creditType)', { creditType: 'credit_application' })
+        .andWhere(schoolId ? 'p.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+        .getMany(),
       this.feeStructureRepo.find({ where: { termId, isActive: true, ...(schoolId ? { schoolId } : {}) } })
     ]);
 
@@ -372,12 +429,47 @@ export class StudentFeeExpectationService {
         schoolId && !superAdmin ? [termId, schoolId] : [termId]
       );
       orphanRows.forEach((r: any) => { orphanCreditsByStudent[r.sid] = Number(r.sum || 0); });
-    } catch {}
+    } catch (err) {
+      // ignore
+    }
 
     const pastEnd = term ? new Date() > new Date(term.endDate) : false;
     const perStudentMandatoryTotal = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
+
+    // Build paidMap from allocations applied TO this term (authoritative)
     const paidMap: Record<string, number> = {};
-    payments.forEach(p => { if (p.student?.id) paidMap[p.student.id] = (paidMap[p.student.id] || 0) + Number(p.amount); });
+    try {
+      const allocRows = await this.studentRepo.query(
+        `SELECT p."studentId" as sid, COALESCE(SUM(pa."allocatedAmount"),0) as sum
+         FROM payment_allocations pa
+         INNER JOIN fee_payment p ON p.id = pa."paymentId"
+         WHERE pa."termId" = $1 AND p.status = 'completed'
+         ${schoolId && !superAdmin ? 'AND p."schoolId" = $2' : ''}
+         GROUP BY p."studentId"`,
+        schoolId && !superAdmin ? [termId, schoolId] : [termId]
+      );
+      allocRows.forEach((r: any) => { paidMap[r.sid] = Number(r.sum || 0); });
+    } catch (err) {
+      // fallback to payments if allocations query fails
+      payments.forEach(p => { if (p.student?.id) paidMap[p.student.id] = (paidMap[p.student.id] || 0) + Number(p.amount); });
+    }
+
+    // Include payments recorded directly for this term that have NO allocations (to avoid missing direct payments)
+    try {
+      const unallocatedRows = await this.studentRepo.query(
+        `SELECT p."studentId" as sid, COALESCE(SUM(p.amount),0) as sum
+         FROM fee_payment p
+         LEFT JOIN payment_allocations pa ON pa."paymentId" = p.id AND pa."termId" = $1
+         WHERE p."termId" = $1 AND p.status = 'completed' AND (p."paymentType" IS NULL OR p."paymentType" != 'credit_application') AND pa.id IS NULL
+         ${schoolId && !superAdmin ? 'AND p."schoolId" = $2' : ''}
+         GROUP BY p."studentId"`,
+        schoolId && !superAdmin ? [termId, schoolId] : [termId]
+      );
+      unallocatedRows.forEach((r: any) => { paidMap[r.sid] = (paidMap[r.sid] || 0) + Number(r.sum || 0); });
+    } catch (err) {
+      // ignore
+    }
+
     // Add orphan credits to paid map
     Object.entries(orphanCreditsByStudent).forEach(([sid, sum]) => {
       paidMap[sid] = (paidMap[sid] || 0) + Number(sum || 0);

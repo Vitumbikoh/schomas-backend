@@ -46,6 +46,8 @@ import { diskStorage } from 'multer';
 import { extname } from 'path';
 import type { Multer } from 'multer';
 import { StudentPromotionService } from '../student/services/student-promotion.service';
+import { NotificationService } from '../notifications/notification.service';
+import { NotificationType, NotificationPriority } from '../notifications/entities/notification.entity';
 
 @ApiTags('settings')
 @Controller('settings')
@@ -66,6 +68,7 @@ export class SettingsController {
     private readonly dataSource: DataSource,
     private readonly systemLoggingService: SystemLoggingService,
     private readonly studentPromotionService: StudentPromotionService,
+    private readonly notificationService: NotificationService,
     @InjectRepository(AcademicCalendar)
     private readonly academicCalendarRepository: Repository<AcademicCalendar>,
     @InjectRepository(Period)
@@ -1381,6 +1384,20 @@ async createTermPeriod(
       }
 
       if (currentAcademicCalendar.studentProgressionExecuted) {
+        // Notify admins that progression has already been run
+        try {
+          await this.notificationService.create({
+            title: 'Progression Already Completed',
+            message: `Student progression has already been executed for this academic year.\nExecuted during: ${progressionReason}\nTerm: Term ${progressionTerm.termNumber}`,
+            type: NotificationType.ALERT,
+            priority: NotificationPriority.MEDIUM,
+            schoolId: req.user.schoolId,
+            metadata: { progressionPeriod: progressionReason, term: `Term ${progressionTerm.termNumber}` }
+          });
+        } catch (err) {
+          this.logger.error('Failed to create progression-completed notification: ' + err.message);
+        }
+
         return {
           success: false,
           message: 'Student progression has already been executed for this academic year',
@@ -1425,9 +1442,37 @@ async createTermPeriod(
         newValues: result,
       });
 
+      // Create a system notification about the successful execution so it appears in the notifications icon
+      try {
+        await this.notificationService.create({
+          title: 'Student Progression Completed',
+          message: `Student progression executed successfully for ${result.progressionPeriod}. Promoted: ${result.promoted}, Graduated: ${result.graduated}.`,
+          type: NotificationType.SYSTEM,
+          priority: NotificationPriority.MEDIUM,
+          schoolId: req.user.schoolId,
+          metadata: { ...result }
+        });
+      } catch (err) {
+        this.logger.error('Failed to create progression-completed notification: ' + err.message);
+      }
+
       return result;
     } catch (error) {
       this.logger.error(`Error executing student promotion: ${error.message}`, error.stack);
+      // Create a notification for failure so admins see it in the notifications center
+      try {
+        await this.notificationService.create({
+          title: 'Student Progression Failed',
+          message: error?.message || 'Student progression failed to execute. Check system logs for details.',
+          type: NotificationType.ALERT,
+          priority: NotificationPriority.HIGH,
+          schoolId: req.user?.schoolId,
+          metadata: { error: error?.message }
+        });
+      } catch (notifyErr) {
+        this.logger.error('Failed to create progression-failed notification: ' + notifyErr.message);
+      }
+
       if (error instanceof BadRequestException || error instanceof UnauthorizedException) {
         throw error;
       }
@@ -1515,8 +1560,8 @@ async createTermPeriod(
         };
       }
 
-      // Execute the revert operation
-      const revertResult = await this.studentPromotionService.revertStudentPromotions(req.user.schoolId);
+      // Execute the revert operation (only revert promotions from the execution recorded on the active academic calendar)
+      const revertResult = await this.studentPromotionService.revertStudentPromotions(req.user.schoolId, undefined, currentAcademicCalendar.id);
 
       // Mark progression as not executed in the academic calendar
       await this.dataSource.manager.update(

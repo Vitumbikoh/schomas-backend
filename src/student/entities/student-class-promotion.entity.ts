@@ -51,6 +51,13 @@ export class StudentClassPromotion {
   @CreateDateColumn()
   createdAt: Date;
 
+  // Execution metadata (link back to the academic calendar execution)
+  @Column({ type: 'uuid', nullable: true })
+  executionId: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  executionAt: Date | null;
+
   // Multi-tenant scope
   @Column({ type: 'uuid', nullable: true })
   schoolId: string | null;

@@ -17,6 +17,7 @@ import { Period } from './entities/period.entity';
 import { Term } from './entities/term.entity';
 import { Class } from '../classes/entity/class.entity';
 import { AcademicCalendarConstraintService } from './services/academic-calendar-constraint.service';
+import { NotificationModule } from '../notifications/notification.module';
 import { AcademicHistoryService } from './services/academic-history.service';
 import { AcademicHistoryController } from './academic-history.controller';
 import { TermHoliday } from './entities/term-holiday.entity';
@@ -48,6 +49,8 @@ import { FeeStructure } from '../finance/entities/fee-structure.entity';
     ConfigModule,
     LogsModule,
     forwardRef(() => StudentsModule),
+    // Provide notification capabilities to settings controller
+    NotificationModule,
   ],
   providers: [SettingsService, AcademicCalendarConstraintService, AcademicHistoryService],
   controllers: [SettingsController, AcademicHistoryController],
