@@ -464,6 +464,112 @@ export class SettingsService {
     };
   }
 
+  async updateAcademicCalendarById(
+    id: string,
+    dto: AcademicCalendarDto,
+    schoolId: string,
+  ): Promise<AcademicCalendarDto> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const calendar = await queryRunner.manager.findOne(AcademicCalendar, {
+        where: { id, schoolId },
+      });
+
+      if (!calendar) {
+        throw new NotFoundException('Academic calendar not found for your school');
+      }
+
+      // Update fields if provided
+      if (dto.term !== undefined && dto.term !== null) calendar.term = dto.term;
+      if (dto.startDate) calendar.startDate = new Date(dto.startDate);
+      if (dto.endDate) calendar.endDate = new Date(dto.endDate);
+      if (dto.isCompleted !== undefined) calendar.isCompleted = !!dto.isCompleted;
+
+      const currentActiveCalendar = await queryRunner.manager.findOne(AcademicCalendar, {
+        where: { schoolId, isActive: true },
+      });
+
+      // Handle activation request
+      if (dto.isActive) {
+        // Validate activation constraints
+        const constraintValidation = await this.academicCalendarConstraintService.validateCalendarActivation(
+          schoolId,
+          id,
+        );
+
+        if (!constraintValidation.canActivate) {
+          throw new BadRequestException(constraintValidation.reason);
+        }
+
+        const validation = AcademicCalendarUtils.canActivateCalendar(
+          calendar.term,
+          currentActiveCalendar?.term,
+        );
+
+        if (!validation.isValid) {
+          throw new BadRequestException(validation.reason);
+        }
+
+        const isNewAcademicCalendar = !!currentActiveCalendar && currentActiveCalendar.id !== calendar.id && currentActiveCalendar.isCompleted;
+
+        // Deactivate others for this school
+        await queryRunner.manager.update(
+          AcademicCalendar,
+          { schoolId, isActive: true },
+          { isActive: false },
+        );
+
+        calendar.isActive = true;
+
+        const saved = await queryRunner.manager.save(AcademicCalendar, calendar);
+
+        // If moving to a new completed calendar, promote students
+        if (isNewAcademicCalendar) {
+          try {
+            await this.studentPromotionService.promoteStudentsToNextClass(schoolId, queryRunner);
+          } catch (promotionError) {
+            this.logger.error('Student promotion failed during calendar update', promotionError.stack);
+          }
+        }
+
+        await queryRunner.commitTransaction();
+
+        return {
+          id: saved.id,
+          term: saved.term,
+          startDate: saved.startDate ? new Date(saved.startDate).toISOString() : undefined,
+          endDate: saved.endDate ? new Date(saved.endDate).toISOString() : undefined,
+          isActive: saved.isActive,
+          isCompleted: saved.isCompleted,
+        };
+      }
+
+      // If not activating, just save the updates
+      const saved = await queryRunner.manager.save(AcademicCalendar, calendar);
+      await queryRunner.commitTransaction();
+
+      return {
+        id: saved.id,
+        term: saved.term,
+        startDate: saved.startDate ? new Date(saved.startDate).toISOString() : undefined,
+        endDate: saved.endDate ? new Date(saved.endDate).toISOString() : undefined,
+        isActive: saved.isActive,
+        isCompleted: saved.isCompleted,
+      };
+    } catch (error) {
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
+      this.logger.error('Failed to update academic calendar', error.stack);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async getAllAcademicCalendars(): Promise<AcademicCalendarDto[]> {
     const calendars = await this.academicCalendarRepository.find({
       order: { createdAt: 'DESC' },

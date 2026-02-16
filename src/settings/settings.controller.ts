@@ -818,6 +818,42 @@ async createTermPeriod(
   }
 
   @UseGuards(JwtAuthGuard)
+  @Patch('academic-calendars/:id')
+  async updateAcademicCalendar(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() dto: AcademicCalendarDto,
+  ): Promise<AcademicCalendarDto> {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can update academic calendars');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school to manage academic calendars');
+    }
+
+    try {
+      const updated = await this.settingsService.updateAcademicCalendarById(id, dto, req.user.schoolId);
+      await this.systemLoggingService.logAction({
+        action: 'ACADEMIC_CALENDAR_UPDATED',
+        module: 'SETTINGS',
+        level: 'info',
+        performedBy: { id: req.user.sub, email: req.user.email, role: req.user.role },
+        entityId: updated.id,
+        entityType: 'AcademicCalendar',
+        newValues: updated as any,
+      });
+      return updated;
+    } catch (error) {
+      this.logger.error('Failed to update academic calendar', error.stack);
+      if (error instanceof NotFoundException || error instanceof BadRequestException || error instanceof UnauthorizedException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to update academic calendar');
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get('calendar-completion-status')
   async getCalendarCompletionStatus(@Request() req) {
     if (req.user.role !== 'ADMIN') {
