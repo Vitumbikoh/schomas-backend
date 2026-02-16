@@ -180,16 +180,42 @@ export class ReceiptController {
          .fillColor('#6b7280')
          .text(formattedDate, doc.page.width - 150, 76);
       
-      // Academic calendar info (properly visible)
-      doc.fontSize(8)
-         .font('Helvetica-Bold')
-         .fillColor('#374151')
-         .text(`Academic Year: ${academicYear}`, doc.page.width - 150, 95);
+         // Academic calendar info (properly visible)
+         doc.fontSize(8)
+             .font('Helvetica-Bold')
+             .fillColor('#374151')
+             .text(`Academic Year: ${academicYear}`, doc.page.width - 150, 95);
       
-      doc.fontSize(8)
-         .font('Helvetica')
-         .fillColor('#6b7280')
-         .text(termName, doc.page.width - 150, 107);
+         doc.fontSize(8)
+             .font('Helvetica')
+             .fillColor('#6b7280')
+             .text(termName, doc.page.width - 150, 107);
+
+         // Determine For Term label from allocations (if any)
+         let forTermLabel = '-';
+         try {
+            if (Array.isArray((payment as any).allocations) && (payment as any).allocations.length > 0) {
+               const allocs = (payment as any).allocations;
+               // If any allocation is a credit balance, treat as 'Credit'
+               const hasCredit = allocs.some((a: any) => String(a.feeType).toLowerCase().includes('credit'));
+               if (hasCredit && allocs.length === 1) {
+                  forTermLabel = 'Credit';
+               } else {
+                  // Map allocation terms to readable labels, dedupe
+                  const labels = allocs.map((a: any) => {
+                     const tn = a.term?.termNumber || a.termNumber || a.termId ? `Term ${a.term?.termNumber || a.termNumber}` : null;
+                     const ay = a.term?.academicCalendar?.term || a.forAcademicYear || a.term?.academicCalendar || '';
+                     return tn ? `${tn} - ${ay}` : null;
+                  }).filter((l: any) => !!l);
+                  const unique = Array.from(new Set(labels));
+                  if (unique.length > 0) forTermLabel = unique.join(', ');
+               }
+            } else if ((payment as any).paymentType && String((payment as any).paymentType).toLowerCase().includes('credit')) {
+               forTermLabel = 'Credit';
+            }
+         } catch (e) {
+            // ignore and fallback to '-'
+         }
 
       // Clean Title Section
       const titleY = 140;
@@ -259,7 +285,7 @@ export class ReceiptController {
       
       addRow('Student Name:', studentFullName, true);
       addRow('Student ID:', humanStudentId);
-      addRow('Transaction Date:', formattedDate);
+      addRow('Transaction Date:', paymentDate.toISOString().slice(0,10).replace(/-/g,'/'));
       addRow('Transaction Time:', formattedTime);
       
       currentY += 10;
@@ -269,6 +295,7 @@ export class ReceiptController {
       
       addRow('Academic Year:', academicYear);
       addRow('Academic Term:', termName);
+      addRow('For Term:', forTermLabel);
       addRow('Fee Category:', paymentType, true);
       addRow('Payment Method:', paymentMethod);
       addRow('Payment Status:', paymentStatus, true);

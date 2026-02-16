@@ -1957,13 +1957,16 @@ async getParentPayments(
     return this.paymentRepository.findOne({
       where: { id },
       relations: [
-        'student', 
-        'processedBy', 
-        'processedByAdmin', 
-        'term', 
-        'term.academicCalendar', 
+        'student',
+        'processedBy',
+        'processedByAdmin',
+        'term',
+        'term.academicCalendar',
         'term.period',
-        'school'
+        'school',
+        'allocations',
+        'allocations.term',
+        'allocations.term.academicCalendar'
       ],
     });
   }
