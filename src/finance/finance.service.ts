@@ -1597,13 +1597,14 @@ export class FinanceService {
       order: { paymentDate: 'DESC' },
     });
 
-    return {
+        return {
       transactions: transactions.map((t) => ({
         ...t,
         studentName: t.student ? `${t.student.firstName} ${t.student.lastName}` : 'Unknown',
         studentId: t.student ? t.student.studentId : undefined,
         paymentDate: t.paymentDate?.toISOString(),
-        processedByName: t.processedBy?.user?.username || t.processedByAdmin?.username || 'Unknown',
+        // Ensure there's always a readable processedByName; fallback to any existing property or 'System'
+        processedByName: t.processedBy?.user?.username || t.processedByAdmin?.username || (t as any).processedByName || 'System',
         term: t.term ? `Term ${t.term.termNumber}` : 'N/A',
         academicYear: t.term?.academicCalendar?.term || 'N/A',
         // Populate for-term values when allocations exist (use first allocation as representative)
@@ -2105,6 +2106,24 @@ async getParentPayments(
       paymentsToday,
       collectionRate,
     };
+  }
+
+  /**
+   * Set the processor (admin user) for a payment record.
+   * Used to ensure `processedByAdminId` is populated when payments are created
+   * by controllers that have the authenticated user available.
+   */
+  async setPaymentProcessor(paymentId: string, adminUserId: string) {
+    if (!paymentId || !adminUserId) return;
+    try {
+      await this.paymentRepository.query(
+        'UPDATE fee_payment SET "processedByAdminId" = $1 WHERE id = $2',
+        [adminUserId, paymentId]
+      );
+    } catch (err) {
+      // Log but do not fail the main flow
+      try { console.error('Failed to set payment processor for', paymentId, err.message); } catch {}
+    }
   }
 
   async getPaymentMethodDistribution(schoolId?: string, superAdmin = false) {

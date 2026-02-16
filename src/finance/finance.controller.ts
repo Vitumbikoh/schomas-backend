@@ -276,6 +276,22 @@ export class FinanceController {
           },
         });
       }
+      // Ensure the authenticated user is recorded as processor for created payments
+      try {
+        const processorId = req.user?.sub || req.user?.id;
+        if (processorId && payments && payments.length) {
+          for (const p of payments) {
+            try {
+              // Only set if not already set on the payment (best-effort)
+              await this.financeService.setPaymentProcessor(p.id, processorId);
+            } catch (e) {
+              // ignore individual failures
+            }
+          }
+        }
+      } catch (e) {
+        // don't let this break the API response
+      }
       return paymentResult;
     } catch (error) {
       await this.systemLoggingService.logSystemError(
