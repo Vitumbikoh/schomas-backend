@@ -33,7 +33,7 @@ import { PaymentAllocationService } from './services/payment-allocation.service'
 import { CarryForwardService } from './services/carry-forward.service';
 
 // DTOs
-import { CreatePaymentDto, CreatePaymentAllocationDto, CarryForwardDto } from './dtos/enhanced-finance.dto';
+import { CreatePaymentDto, CreatePaymentAllocationDto, CarryForwardDto, CreatePaymentWithAllocationsDto } from './dtos/enhanced-finance.dto';
 
 @ApiTags('Enhanced Finance')
 @ApiBearerAuth()
@@ -124,7 +124,19 @@ export class EnhancedFinanceController {
     
     // Implementation would create payment and auto-allocate
     // This is a placeholder for the actual payment creation logic
-    throw new Error('Payment creation endpoint to be implemented with existing payment service integration');
+    throw new Error('Legacy payment creation uses /finance/payments; prefer /finance/v2/payments-with-allocations for allocation-aware transactions');
+  }
+
+  @Post('payments-with-allocations')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Record a payment and split into allocations in one transaction' })
+  @ApiBody({ type: CreatePaymentWithAllocationsDto })
+  async createPaymentWithAllocations(
+    @Body(ValidationPipe) dto: CreatePaymentWithAllocationsDto,
+    @Request() req?: any
+  ) {
+    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
+    return this.financeService.createPaymentWithAllocations(dto, schoolId);
   }
 
   @Get('payments/:paymentId/allocations')
@@ -143,6 +155,18 @@ export class EnhancedFinanceController {
     @Param('paymentId', ParseUUIDPipe) paymentId: string
   ) {
     return this.allocationService.getAllocationSuggestions(paymentId);
+  }
+
+  @Get('students/:studentId/outstanding-terms')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Get all terms where student has outstanding fees for allocation planning' })
+  @ApiQuery({ name: 'currentTermId', required: false, description: 'Current term ID for context' })
+  async getStudentOutstandingTerms(
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Query('currentTermId') currentTermId?: string,
+    @Request() req?: any
+  ) {
+    return this.allocationService.getStudentOutstandingTerms(studentId, currentTermId, req?.user?.schoolId);
   }
 
   @Post('payments/:paymentId/auto-allocate')
@@ -193,6 +217,19 @@ export class EnhancedFinanceController {
     const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
     
     return this.allocationService.getTermAllocations(termId, schoolId);
+  }
+
+  @Get('term-totals')
+  @Roles(Role.FINANCE, Role.ADMIN)
+  @ApiOperation({ summary: 'Aggregated totals for term: totalPaid, pending, overdue, credits, actualRevenue' })
+  @ApiQuery({ name: 'termId', required: true, description: 'Term ID' })
+  async getTermTotals(
+    @Query('termId', ParseUUIDPipe) termId: string,
+    @Request() req?: any
+  ) {
+    const role = req?.user?.role;
+    const schoolId = role === Role.ADMIN || role === Role.FINANCE ? req.user.schoolId : undefined;
+    return this.financeService.getTermAggregatedTotals(termId, schoolId);
   }
 
   // =====================================================

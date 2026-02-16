@@ -1,12 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, QueryRunner } from 'typeorm';
 import { StudentAcademicRecord, StudentStatus } from '../entities/student-academic-record.entity';
 import { ExpectedFee, FeeCategory } from '../entities/expected-fee.entity';
 import { PaymentAllocation, AllocationReason } from '../entities/payment-allocation.entity';
 import { FeePayment } from '../entities/fee-payment.entity';
+import { FeeStructure } from '../entities/fee-structure.entity';
 import { Term } from '../../settings/entities/term.entity';
 import { Student } from '../../user/entities/student.entity';
+import { CreditLedger } from '../entities/credit-ledger.entity';
+import { CreatePaymentWithAllocationsDto } from '../dtos/enhanced-finance.dto';
 
 export interface StudentFeeStatus {
   studentId: string;
@@ -78,10 +81,14 @@ export class EnhancedFinanceService {
     private allocationRepo: Repository<PaymentAllocation>,
     @InjectRepository(FeePayment)
     private paymentRepo: Repository<FeePayment>,
+    @InjectRepository(FeeStructure)
+    private feeStructureRepo: Repository<FeeStructure>,
     @InjectRepository(Term)
     private termRepo: Repository<Term>,
     @InjectRepository(Student)
     private studentRepo: Repository<Student>,
+    @InjectRepository(CreditLedger)
+    private creditRepo: Repository<CreditLedger>,
   ) {}
 
   /**
@@ -247,7 +254,7 @@ export class EnhancedFinanceService {
     schoolId?: string
   ): Promise<StudentFeeStatus> {
     
-    // Get student's academic record for this term
+    // Try to get student's academic record for this term
     const academicRecord = await this.academicRecordRepo.findOne({
       where: { 
         studentId, 
@@ -257,26 +264,73 @@ export class EnhancedFinanceService {
       relations: ['student', 'class', 'term', 'academicCalendar']
     });
 
+    let classId: string | undefined;
+    let term: any;
+
     if (!academicRecord) {
-      throw new Error(`No academic record found for student ${studentId} in term ${termId}`);
+      // Fallback: Get student and term directly (without academic record requirement)
+      const student = await this.studentRepo.findOne({
+        where: { id: studentId },
+        relations: ['class']
+      });
+      
+      if (!student) {
+        throw new Error(`Student ${studentId} not found`);
+      }
+      
+      term = await this.termRepo.findOne({
+        where: { id: termId },
+        relations: ['academicCalendar']
+      });
+      
+      if (!term) {
+        throw new Error(`Term ${termId} not found`);
+      }
+      
+      classId = student.class?.id;
+      this.logger.log(`No academic record for student ${studentId} in term ${termId}, using fee structures fallback with classId=${classId}`);
+    } else {
+      classId = academicRecord.classId;
+      term = academicRecord.term;
     }
 
-    // Get expected fees for this student in this term
+    // Get expected fees for this student in this term from ExpectedFee table
     const expectedFees = await this.expectedFeeRepo
       .createQueryBuilder('ef')
       .where('ef.termId = :termId', { termId })
       .andWhere('ef.isActive = true')
-      .andWhere('(ef.classId IS NULL OR ef.classId = :classId)', { classId: academicRecord.classId })
+      .andWhere('(ef.classId IS NULL OR ef.classId = :classId)', { classId })
       .andWhere(schoolId ? 'ef.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
       .getMany();
 
-    const expectedAmount = expectedFees
-      .filter(fee => !fee.isOptional)
-      .reduce((sum, fee) => sum + Number(fee.amount), 0);
+    let expectedAmount = 0;
+    let carryForwardAmount = 0;
+    
+    if (expectedFees.length > 0) {
+      // Use ExpectedFee table if available
+      expectedAmount = expectedFees
+        .filter(fee => !fee.isOptional)
+        .reduce((sum, fee) => sum + Number(fee.amount), 0);
 
-    const carryForwardAmount = expectedFees
-      .filter(fee => fee.isCarryForward)
-      .reduce((sum, fee) => sum + Number(fee.amount), 0);
+      carryForwardAmount = expectedFees
+        .filter(fee => fee.isCarryForward)
+        .reduce((sum, fee) => sum + Number(fee.amount), 0);
+    } else {
+      // Fallback to FeeStructure table
+      const feeStructures = await this.feeStructureRepo.find({
+        where: {
+          termId,
+          isActive: true,
+          ...(schoolId && { schoolId })
+        }
+      });
+      
+      expectedAmount = feeStructures
+        .filter(fs => !fs.isOptional && (!fs.classId || fs.classId === classId))
+        .reduce((sum, fs) => sum + Number(fs.amount), 0);
+      
+      this.logger.log(`Using fee structures fallback: expectedAmount=${expectedAmount} from ${feeStructures.length} structures`);
+    }
 
     const currentTermFees = expectedAmount - carryForwardAmount;
 
@@ -298,7 +352,6 @@ export class EnhancedFinanceService {
     const outstandingAmount = Math.max(0, expectedAmount - paidAmount);
 
     // Determine overdue status
-    const term = academicRecord.term;
     const now = new Date();
     const isTermCompleted = now > new Date(term.endDate);
     const isOverdue = isTermCompleted && outstandingAmount > 0;
@@ -322,13 +375,28 @@ export class EnhancedFinanceService {
     // Get last payment date
     const lastPaymentDate = allocations.length > 0 ? allocations[0].allocatedAt : undefined;
 
+    // Get student details if not from academic record
+    let student: any;
+    let className: string | undefined;
+    
+    if (academicRecord) {
+      student = academicRecord.student;
+      className = academicRecord.class?.name;
+    } else {
+      student = await this.studentRepo.findOne({
+        where: { id: studentId },
+        relations: ['class']
+      });
+      className = student?.class?.name;
+    }
+
     return {
       studentId,
-      studentName: `${academicRecord.student.firstName} ${academicRecord.student.lastName}`,
-      humanId: academicRecord.student.studentId || academicRecord.student.id,
+      studentName: student ? `${student.firstName} ${student.lastName}` : 'Unknown',
+      humanId: student?.studentId || studentId,
       termId,
-      classId: academicRecord.classId,
-      className: academicRecord.class?.name,
+      classId,
+      className,
       expectedAmount,
       paidAmount,
       outstandingAmount,
@@ -456,6 +524,262 @@ export class EnhancedFinanceService {
       averagePaymentPerStudent: 0,
       isTermCompleted: new Date() > new Date(term.endDate),
       termEndDate: term.endDate
+    };
+  }
+
+  /**
+   * Create a payment and allocate portions across terms in a single transaction.
+   * Credits are created for any unallocated remainder.
+   */
+  async createPaymentWithAllocations(
+    dto: CreatePaymentWithAllocationsDto,
+    schoolId?: string
+  ): Promise<{ payments: FeePayment[]; allocations: PaymentAllocation[]; credit?: { created: boolean; amount: number } }> {
+    const queryRunner = this.paymentRepo.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const student = await this.studentRepo.findOne({ where: { id: dto.studentId, ...(schoolId ? { schoolId } : {}) } });
+      if (!student) throw new BadRequestException('Student not found');
+
+      const paymentTerm = await this.termRepo.findOne({ where: { id: dto.termId }, relations: ['academicCalendar'] });
+      if (!paymentTerm) throw new BadRequestException('Payment term not found');
+
+      const totalAllocations = (dto.allocations || []).reduce((s, a) => s + Number(a.amount || 0), 0);
+      if (totalAllocations > Number(dto.amount)) {
+        throw new BadRequestException('Allocations exceed payment amount');
+      }
+
+      // Create one FeePayment per allocation so each allocation has its own receipt/transaction entry
+      const createdPayments: FeePayment[] = [];
+      const allocations: PaymentAllocation[] = [];
+
+      for (let i = 0; i < (dto.allocations || []).length; i++) {
+        const a = dto.allocations![i];
+        const term = await queryRunner.manager.findOne(Term, { where: { id: a.termId }, relations: ['academicCalendar'] });
+        if (!term) throw new BadRequestException(`Allocation term ${a.termId} not found`);
+
+        const receiptForAlloc = dto.receiptNumber ? `${dto.receiptNumber}-${i + 1}` : null;
+
+        const allocPayment = queryRunner.manager.create(FeePayment, {
+          amount: Number(a.amount),
+          receiptNumber: receiptForAlloc,
+          paymentType: 'allocation',
+          paymentMethod: (dto.paymentMethod || 'cash') as any,
+          notes: dto.notes || a.notes || null,
+          status: 'completed',
+          paymentDate: new Date(dto.paymentDate),
+          student: { id: student.id } as any,
+          // Record the payment under the term where it was captured (paymentTerm)
+          // so the receipt appears in the transaction history for the capture term,
+          // even if the allocation applies to a different term.
+          termId: paymentTerm.id,
+          schoolId: schoolId || (student as any)?.schoolId || null,
+          autoAllocateToCurrentTerm: false,
+        });
+
+        const savedAllocPayment = await queryRunner.manager.save(allocPayment);
+        createdPayments.push(savedAllocPayment);
+
+        const alloc = queryRunner.manager.create(PaymentAllocation, {
+          schoolId: savedAllocPayment.schoolId as any,
+          paymentId: savedAllocPayment.id,
+          academicCalendarId: term.academicCalendar?.id,
+          termId: term.id,
+          allocatedAmount: Number(a.amount),
+          allocationReason: a.reason,
+          notes: a.notes,
+          isAutoAllocation: false,
+        });
+        const savedAlloc = await queryRunner.manager.save(alloc);
+        allocations.push(savedAlloc);
+      }
+
+      // If there is any remainder, create a credit PAYMENT (so it appears in transactions) and a CreditLedger entry
+      let creditCreated = false;
+      let creditAmount = 0;
+      const totalAllocated = allocations.reduce((s, al) => s + Number(al.allocatedAmount || 0), 0);
+      const remainder = Number(dto.amount) - totalAllocated;
+      if (remainder > 0.009) {
+        creditAmount = Number(remainder.toFixed(2));
+        const receiptForCredit = dto.receiptNumber ? `${dto.receiptNumber}-CR` : null;
+        const creditPayment = queryRunner.manager.create(FeePayment, {
+          amount: creditAmount,
+          receiptNumber: receiptForCredit,
+          paymentType: 'credit_application',
+          paymentMethod: (dto.paymentMethod || 'cash') as any,
+          notes: dto.notes || `Surplus from allocations`,
+          status: 'completed',
+          paymentDate: new Date(dto.paymentDate),
+          student: { id: student.id } as any,
+          termId: paymentTerm.id,
+          schoolId: schoolId || (student as any)?.schoolId || null,
+          autoAllocateToCurrentTerm: false,
+        });
+
+        const savedCreditPayment = await queryRunner.manager.save(creditPayment);
+        createdPayments.push(savedCreditPayment);
+
+        const credit = queryRunner.manager.create(CreditLedger, {
+          student: { id: student.id } as any,
+          termId: paymentTerm.id,
+          schoolId: savedCreditPayment.schoolId as any,
+          sourcePayment: { id: savedCreditPayment.id } as any,
+          amount: creditAmount as any,
+          remainingAmount: creditAmount as any,
+          status: 'active',
+          notes: `Surplus from payment ${savedCreditPayment.id}`,
+        });
+        await queryRunner.manager.save(credit);
+        creditCreated = true;
+      }
+
+      await queryRunner.commitTransaction();
+      return { payments: createdPayments, allocations, credit: { created: creditCreated, amount: creditAmount } };
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Aggregated totals for a term using strict term-based accounting:
+   * - totalCollected: payments RECEIVED in this term (cashbook view)
+   * - actualRevenue/totalPaid: allocations APPLIED to this term (term performance view)
+   * - allocatedToPreviousTerms / allocatedToFutureTerms: where same-term collections were redirected
+   * - credits: remaining active credit/unallocated from collections in this term
+   */
+  async getTermAggregatedTotals(termId: string, schoolId?: string): Promise<{
+    totalCollected: number;
+    totalPaid: number;
+    pending: number;
+    overdue: number;
+    overdueFromPreviousTerms: number;
+    credits: number;
+    actualRevenue: number;
+    allocatedToPreviousTerms: number;
+    allocatedToFutureTerms: number;
+  }> {
+    const term = await this.termRepo.findOne({ where: { id: termId } });
+    if (!term) throw new BadRequestException('Term not found');
+
+    // 1) Revenue APPLIED TO this term (allocation-based; authoritative for term performance)
+    const actualRevenueRow = await this.allocationRepo
+      .createQueryBuilder('pa')
+      .innerJoin('pa.payment', 'p')
+      .select('COALESCE(SUM(pa.allocatedAmount), 0)', 'sum')
+      .where('pa.termId = :termId', { termId })
+      .andWhere('p.status = :status', { status: 'completed' })
+      .andWhere(schoolId ? 'pa.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+      .getRawOne();
+    const actualRevenue = parseFloat(actualRevenueRow?.sum || '0');
+
+    // 2) Expected/pending for selected term
+    let pending = 0;
+    try {
+      const statuses = await this.getTermStudentFeeStatuses(termId, schoolId);
+      const expected = statuses.reduce((s, st) => s + Number(st.expectedAmount || 0), 0);
+      pending = Math.max(0, expected - actualRevenue);
+    } catch {
+      pending = 0;
+    }
+
+    // Backward-compatible overdue: only selected-term overdue after term end.
+    const isTermCompleted = new Date() > new Date(term.endDate);
+    const overdue = isTermCompleted ? pending : 0;
+
+    // 3) Money RECEIVED in this term (term of collection, not paymentDate window)
+    const paymentsInTerm = await this.paymentRepo
+      .createQueryBuilder('p')
+      .where('p.status = :status', { status: 'completed' })
+      .andWhere('p.termId = :termId', { termId })
+      .andWhere(schoolId ? 'p.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+      .getMany();
+
+    const totalCollected = paymentsInTerm.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const paymentIds = paymentsInTerm.map((p) => p.id);
+
+    // 4) Track how same-term collections were allocated (current vs previous vs future terms)
+    let allocatedToPreviousTerms = 0;
+    let allocatedToFutureTerms = 0;
+    let totalAllocatedFromCollectedPayments = 0;
+
+    if (paymentIds.length > 0) {
+      const allocationsFromCollected = await this.allocationRepo
+        .createQueryBuilder('pa')
+        .leftJoinAndSelect('pa.term', 'allocTerm')
+        .where('pa.paymentId IN (:...paymentIds)', { paymentIds })
+        .getMany();
+
+      for (const allocation of allocationsFromCollected) {
+        const amount = Number(allocation.allocatedAmount || 0);
+        totalAllocatedFromCollectedPayments += amount;
+
+        if (allocation.termId === termId) continue;
+
+        const allocTermStart = allocation.term?.startDate ? new Date(allocation.term.startDate) : null;
+        if (allocTermStart && allocTermStart < new Date(term.startDate)) {
+          allocatedToPreviousTerms += amount;
+        } else {
+          allocatedToFutureTerms += amount;
+        }
+      }
+    }
+
+    // 5) Credits/unallocated - Get ALL available credits (not just current term)
+    // This ensures we show all overpayments that can be used
+    const allActiveCreditsRow = await this.creditRepo
+      .createQueryBuilder('cl')
+      .select('COALESCE(SUM(cl.remainingAmount), 0)', 'sum')
+      .where('cl.status = :status', { status: 'active' })
+      .andWhere(schoolId ? 'cl.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+      .getRawOne();
+    const credits = parseFloat(allActiveCreditsRow?.sum || '0');
+
+    // 6) Outstanding from previous terms - Calculate actual unpaid amounts from all previous terms
+    let overdueFromPreviousTerms = 0;
+    try {
+      // Get all terms that ended before the current term starts
+      const previousTerms = await this.termRepo
+        .createQueryBuilder('t')
+        .where('t.endDate < :currentTermStart', { currentTermStart: term.startDate })
+        .andWhere(schoolId ? 't.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+        .getMany();
+
+      // For each previous term, calculate total outstanding
+      for (const prevTerm of previousTerms) {
+        try {
+          const statuses = await this.getTermStudentFeeStatuses(prevTerm.id, schoolId);
+          const termOutstanding = statuses.reduce((sum, status) => {
+            const expected = Number(status.expectedAmount || 0);
+            const paid = Number(status.paidAmount || 0);
+            const outstanding = Math.max(0, expected - paid);
+            return sum + outstanding;
+          }, 0);
+          overdueFromPreviousTerms += termOutstanding;
+        } catch (err) {
+          this.logger.warn(`Failed to calculate outstanding for previous term ${prevTerm.id}: ${err.message}`);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Unable to load previous-term overdue totals for term ${termId}: ${error.message}`);
+    }
+
+    // totalPaid retained for compatibility with existing frontend expectations.
+    const totalPaid = actualRevenue;
+    return {
+      totalCollected,
+      totalPaid,
+      pending,
+      overdue,
+      overdueFromPreviousTerms,
+      credits,
+      actualRevenue,
+      allocatedToPreviousTerms,
+      allocatedToFutureTerms,
     };
   }
 }

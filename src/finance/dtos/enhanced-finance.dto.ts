@@ -37,6 +37,65 @@ export class CreatePaymentDto {
   autoAllocateToCurrentTerm?: boolean = true;
 }
 
+export class CreatePaymentAllocationInput {
+  @ApiProperty({ description: 'Term ID to allocate payment to' })
+  @IsUUID()
+  termId: string;
+
+  @ApiProperty({ description: 'Amount to allocate' })
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  amount: number;
+
+  @ApiProperty({ description: 'Reason for allocation', enum: AllocationReason })
+  @IsEnum(AllocationReason)
+  reason: AllocationReason;
+
+  @ApiPropertyOptional({ description: 'Allocation notes' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class CreatePaymentWithAllocationsDto {
+  @ApiProperty({ description: 'Student ID' })
+  @IsUUID()
+  studentId: string;
+
+  @ApiProperty({ description: 'Payment amount' })
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  amount: number;
+
+  @ApiProperty({ description: 'Payment date (YYYY-MM-DD)' })
+  @IsString()
+  paymentDate: string;
+
+  @ApiPropertyOptional({ description: 'Payment method' })
+  @IsOptional()
+  @IsString()
+  paymentMethod?: 'cash' | 'bank_transfer' | 'mobile_money' | 'cheque';
+
+  @ApiPropertyOptional({ description: 'Receipt number' })
+  @IsOptional()
+  @IsString()
+  receiptNumber?: string;
+
+  @ApiPropertyOptional({ description: 'Payment notes' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @ApiProperty({ description: 'Term when payment was made' })
+  @IsUUID()
+  termId: string;
+
+  @ApiProperty({ description: 'Allocations to apply', type: [CreatePaymentAllocationInput] })
+  @ValidateNested({ each: true })
+  @Type(() => CreatePaymentAllocationInput)
+  allocations: CreatePaymentAllocationInput[];
+}
+
 export class CreatePaymentAllocationDto {
   @ApiProperty({ description: 'Payment ID' })
   @IsUUID()

@@ -15,6 +15,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { FinanceService } from './finance.service';
+import { EnhancedFinanceService } from './services/enhanced-finance.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Role } from '../user/enums/role.enum';
@@ -43,6 +44,7 @@ import { CreateFeeStructureDto } from './dtos/fees-structure.dto';
 export class FinanceController {
   constructor(
     private readonly financeService: FinanceService,
+    private readonly enhancedFinanceService: EnhancedFinanceService,
     private readonly systemLoggingService: SystemLoggingService,
     private readonly studentFeeExpectationService: StudentFeeExpectationService,
     @InjectRepository(Student)
@@ -471,6 +473,19 @@ export class FinanceController {
     // Get term info for display
     const termInfo = await this.financeService.getTermInfo(termId);
 
+    // Use allocation-based actualRevenue when computing Pending (expected - actualRevenue)
+    let actualRevenue = 0;
+    try {
+      const agg = await this.enhancedFinanceService.getTermAggregatedTotals(termId, superAdmin ? req.query.schoolId : user.schoolId);
+      actualRevenue = agg?.actualRevenue || 0;
+    } catch (err) {
+      // fallback to 0 if enhanced totals are unavailable
+      actualRevenue = 0;
+    }
+
+    const expectedFees = summary.totalExpectedFees || 0;
+    const pendingCalculated = expectedFees - actualRevenue; // show expected - actualRevenue
+
     return {
       success: true,
       filters: {
@@ -483,9 +498,10 @@ export class FinanceController {
       },
       summary: {
         totalFeesPaid: summary.totalFeesPaid || 0,
-        expectedFees: summary.totalExpectedFees || 0,
-        pending: summary.outstandingFees || 0,
+        expectedFees: expectedFees,
+        pending: pendingCalculated,
         overdue: summary.overdueFees || 0,
+        actualRevenue: actualRevenue,
       },
       statuses: statuses.map(status => ({
         ...status,

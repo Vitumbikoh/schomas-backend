@@ -893,6 +893,30 @@ export class FinanceService {
           }
         }
 
+        // Create explicit allocations for each split payment to align with allocation-based calculations
+        try {
+          const termForAlloc = await this.termRepository.findOne({ where: { id: currentTerm.id }, relations: ['academicCalendar'] });
+          const allocsToSave: any[] = [];
+          for (const sp of savedPayments) {
+            allocsToSave.push({
+              paymentId: sp.id,
+              schoolId: user.schoolId || sp.schoolId,
+              termId: currentTerm.id,
+              academicCalendarId: termForAlloc?.academicCalendar?.id,
+              allocatedAmount: Number(sp.amount || 0),
+              feeType: sp.paymentType,
+              allocationReason: 'term_fees' as any,
+              isAutoAllocation: true,
+              allocatedAt: new Date()
+            });
+          }
+          if (allocsToSave.length) {
+            await this.paymentAllocationRepository.save(allocsToSave);
+          }
+        } catch (allocErr) {
+          console.warn('Failed to create allocations for full payment split:', (allocErr as any)?.message);
+        }
+
         // Log each allocated payment
         for (const sp of savedPayments) {
           await this.systemLoggingService.logFeePaymentProcessed(
@@ -1567,7 +1591,7 @@ export class FinanceService {
 
     const [transactions, total] = await this.paymentRepository.findAndCount({
       where,
-      relations: ['student', 'processedBy', 'processedByAdmin', 'term', 'term.academicCalendar', 'term.period'],
+      relations: ['student', 'processedBy', 'processedByAdmin', 'term', 'term.academicCalendar', 'term.period', 'allocations', 'allocations.term', 'allocations.term.academicCalendar'],
       skip: (page - 1) * limit,
       take: limit,
       order: { paymentDate: 'DESC' },
@@ -1582,6 +1606,10 @@ export class FinanceService {
         processedByName: t.processedBy?.user?.username || t.processedByAdmin?.username || 'Unknown',
         term: t.term ? `Term ${t.term.termNumber}` : 'N/A',
         academicYear: t.term?.academicCalendar?.term || 'N/A',
+        // Populate for-term values when allocations exist (use first allocation as representative)
+        forTermId: t.allocations && t.allocations.length > 0 ? t.allocations[0].termId : undefined,
+        forTermNumber: t.allocations && t.allocations.length > 0 ? t.allocations[0].term?.termNumber : undefined,
+        forAcademicYear: t.allocations && t.allocations.length > 0 ? t.allocations[0].term?.academicCalendar?.term : undefined,
       })),
       pagination: {
         totalItems: total,
@@ -2599,9 +2627,14 @@ async getParentPayments(
         paymentType: 'Credit Balance',
         paymentMethod: source?.paymentMethod || '-',
         receiptNumber: source?.receiptNumber || null,
-        termId: c.termId || source?.termId || null,
-        termNumber: c.term?.termNumber || source?.term?.termNumber || null,
-        academicYear: c.term?.academicCalendar?.term || source?.term?.academicCalendar?.term || null,
+        // capture term (where the payment was captured)
+        termId: source?.termId || c.termId || null,
+        termNumber: source?.term?.termNumber || c.term?.termNumber || null,
+        academicYear: source?.term?.academicCalendar?.term || c.term?.academicCalendar?.term || null,
+        // for-term: the term the credit is intended for (carry-forward/target)
+        forTermId: c.termId || source?.termId || null,
+        forTermNumber: c.term?.termNumber || source?.term?.termNumber || null,
+        forAcademicYear: c.term?.academicCalendar?.term || source?.term?.academicCalendar?.term || null,
         status: 'completed',
         processedBy:
           source?.processedBy?.user?.username ||
@@ -2651,9 +2684,14 @@ async getParentPayments(
               paymentType: allocation.feeType || payment.paymentType,
               paymentMethod: payment.paymentMethod,
               receiptNumber: payment.receiptNumber,
-              termId: allocation.termId,
-              termNumber: allocation.term?.termNumber,
-              academicYear: allocation.term?.academicCalendar?.term,
+              // `termId` represents the capture/collection term (where the transaction occurred)
+              termId: payment.termId,
+              termNumber: payment.term?.termNumber,
+              academicYear: payment.term?.academicCalendar?.term,
+              // `forTerm*` fields indicate the term the allocation applies to
+              forTermId: allocation.termId,
+              forTermNumber: allocation.term?.termNumber,
+              forAcademicYear: allocation.term?.academicCalendar?.term,
               status: payment.status,
               notes: payment.notes,
               processedBy:
@@ -2676,9 +2714,14 @@ async getParentPayments(
             paymentType: payment.paymentType,
             paymentMethod: payment.paymentMethod,
             receiptNumber: payment.receiptNumber,
+            // capture/collection term
             termId: payment.termId,
             termNumber: payment.term?.termNumber,
             academicYear: payment.term?.academicCalendar?.term,
+            // for-term is same as capture term for simple payments
+            forTermId: payment.termId,
+            forTermNumber: payment.term?.termNumber,
+            forAcademicYear: payment.term?.academicCalendar?.term,
             status: payment.status,
             notes: payment.notes,
             processedBy:
@@ -2968,20 +3011,21 @@ async getParentPayments(
             .filter(fs => !fs.isOptional && (!fs.classId || fs.classId === student.class?.id))
             .reduce((sum, fs) => sum + Number(fs.amount), 0);
 
-          // Get payments for this term
-          console.log(`      Fetching payments...`);
-          const termPayments = await this.paymentRepository.find({
-            where: {
-              studentId: studentId,
-              termId: term.id,
-              status: 'completed',
-              schoolId: studentSchoolId
-            }
-          });
+          // Calculate paid amount using allocations TO this term (not raw payments)
+          console.log(`      Calculating paid via allocations...`);
+          const allocationsToTerm = await this.paymentAllocationRepository
+            .createQueryBuilder('pa')
+            .innerJoin('pa.payment', 'p')
+            .select('COALESCE(SUM(pa.allocatedAmount), 0)', 'sum')
+            .where('pa.termId = :termId', { termId: term.id })
+            .andWhere('p.studentId = :studentId', { studentId })
+            .andWhere('p.status = :status', { status: 'completed' })
+            .andWhere('p.schoolId = :schoolId', { schoolId: studentSchoolId })
+            .getRawOne();
 
-          console.log(`      Found ${termPayments.length} completed payments`);
+          const totalPaid = parseFloat(allocationsToTerm?.sum || '0');
+          console.log(`      Found allocations to this term: MK ${totalPaid}`);
           
-          const totalPaid = termPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
           const outstanding = Math.max(0, expectedMandatory - totalPaid);
 
           console.log(`      Expected (Mandatory): MK ${expectedMandatory}`);
@@ -3065,7 +3109,7 @@ async getParentPayments(
           console.log(`   Processing Current Term ${currentTerm.termNumber}...`);
           console.log(`   Remaining credit: MK ${remainingCredit}`);
           
-          // Calculate outstanding by directly querying fee structures and payments
+          // Calculate outstanding by directly querying fee structures and allocations
           const feeStructures = await this.feeStructureRepository.find({
             where: {
               termId: currentTerm.id,
@@ -3078,17 +3122,18 @@ async getParentPayments(
             .filter(fs => !fs.isOptional && (!fs.classId || fs.classId === student.class?.id))
             .reduce((sum, fs) => sum + Number(fs.amount), 0);
 
-          // Get payments for this term
-          const termPayments = await this.paymentRepository.find({
-            where: {
-              studentId: studentId,
-              termId: currentTerm.id,
-              status: 'completed',
-              schoolId: studentSchoolId
-            }
-          });
+          // Calculate paid amount using allocations TO current term (not raw payments)
+          const allocationsToCurrentTerm = await this.paymentAllocationRepository
+            .createQueryBuilder('pa')
+            .innerJoin('pa.payment', 'p')
+            .select('COALESCE(SUM(pa.allocatedAmount), 0)', 'sum')
+            .where('pa.termId = :termId', { termId: currentTerm.id })
+            .andWhere('p.studentId = :studentId', { studentId })
+            .andWhere('p.status = :status', { status: 'completed' })
+            .andWhere('p.schoolId = :schoolId', { schoolId: studentSchoolId })
+            .getRawOne();
 
-          const totalPaid = termPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+          const totalPaid = parseFloat(allocationsToCurrentTerm?.sum || '0');
           const outstanding = Math.max(0, expectedMandatory - totalPaid);
 
           console.log(`     Expected: MK ${expectedMandatory}, Paid: MK ${totalPaid}`);

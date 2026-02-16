@@ -4,6 +4,7 @@ import { Repository, QueryRunner } from 'typeorm';
 import { PaymentAllocation, AllocationReason } from '../entities/payment-allocation.entity';
 import { FeePayment } from '../entities/fee-payment.entity';
 import { Term } from '../../settings/entities/term.entity';
+import { Student } from '../../user/entities/student.entity';
 import { EnhancedFinanceService } from './enhanced-finance.service';
 
 export interface AllocationRequest {
@@ -39,6 +40,8 @@ export class PaymentAllocationService {
     private paymentRepo: Repository<FeePayment>,
     @InjectRepository(Term)
     private termRepo: Repository<Term>,
+    @InjectRepository(Student)
+    private studentRepo: Repository<Student>,
     private financeService: EnhancedFinanceService,
   ) {}
 
@@ -245,6 +248,166 @@ export class PaymentAllocationService {
     // This is typically for advance payments
 
     return suggestions.sort((a, b) => a.priority - b.priority);
+  }
+
+  /**
+   * Get all terms where student has outstanding fees (for pre-allocation planning)
+   * Returns terms sorted by priority: previous terms first (oldest to newest), then current term
+   */
+  async getStudentOutstandingTerms(
+    studentId: string,
+    currentTermId?: string,
+    schoolId?: string
+  ): Promise<Array<{
+    termId: string;
+    termName: string;
+    termNumber: number;
+    expectedAmount: number;
+    paidAmount: number;
+    outstandingAmount: number;
+    reason: AllocationReason;
+    priority: number;
+    isPreviousTerm: boolean;
+    isCurrentTerm: boolean;
+  }>> {
+    this.logger.log(`=== Getting outstanding terms for student ${studentId} ===`);
+    this.logger.log(`Parameters: currentTermId=${currentTermId}, schoolId=${schoolId}`);
+
+    // Get student with relations
+    const student = await this.studentRepo.findOne({
+      where: { 
+        id: studentId,
+        ...(schoolId && { schoolId })
+      },
+      relations: ['enrollmentTerm', 'enrollmentTerm.academicCalendar', 'graduationTerm']
+    });
+
+    if (!student) {
+      this.logger.warn(`Student ${studentId} not found`);
+      return [];
+    }
+
+    this.logger.log(`Found student: ${student.id}, schoolId=${student.schoolId}, enrollmentTermId=${student.enrollmentTermId}`);
+
+    // Get all terms for the student's school
+    const allTerms = await this.termRepo.find({
+      where: { 
+        schoolId: student.schoolId
+      },
+      relations: ['academicCalendar'],
+      order: { startDate: 'ASC' }
+    });
+
+    if (allTerms.length === 0) {
+      this.logger.warn(`No terms found for school ${student.schoolId}`);
+      return [];
+    }
+
+    this.logger.log(`Found ${allTerms.length} total terms for school ${student.schoolId}`);
+
+    // Filter terms based on enrollment
+    let applicableTerms = allTerms;
+    
+    // Filter to only include terms from enrollment onwards
+    if (student.enrollmentTermId && student.enrollmentTerm) {
+      const enrollmentStartDate = new Date(student.enrollmentTerm.startDate);
+      applicableTerms = allTerms.filter(term => {
+        const termStartDate = new Date(term.startDate);
+        return termStartDate >= enrollmentStartDate;
+      });
+      this.logger.log(`Filtered to ${applicableTerms.length} terms from enrollment (Term ${student.enrollmentTerm.termNumber}) onwards`);
+    } else {
+      this.logger.warn(`Student has no enrollment term set. Using all ${allTerms.length} terms.`);
+    }
+
+    // Further filter for graduated students
+    if (student.graduationTermId && student.graduationTerm) {
+      const graduationEndDate = new Date(student.graduationTerm.endDate);
+      applicableTerms = applicableTerms.filter(term => {
+        const termEndDate = new Date(term.endDate);
+        return termEndDate <= graduationEndDate;
+      });
+      this.logger.log(`Student is graduated. Filtered to ${applicableTerms.length} terms up to graduation`);
+    }
+
+    const outstandingTerms = [];
+    let priority = 1;
+
+    this.logger.log(`Processing ${applicableTerms.length} applicable terms...`);
+
+    // Process each applicable term
+    for (const term of applicableTerms) {
+      this.logger.log(`\n--- Processing term ${term.id} (Term ${term.termNumber}, ${term.academicCalendar?.term || 'N/A'}) ---`);
+      try {
+        const status = await this.financeService.getStudentFeeStatus(
+          studentId,
+          term.id,
+          schoolId
+        );
+
+        const outstandingAmount = Number(status.outstandingAmount || 0);
+        
+        this.logger.log(`Fee Status: Expected=${status.expectedAmount}, Paid=${status.paidAmount}, Outstanding=${outstandingAmount}`);
+        this.logger.log(`Status object: ${JSON.stringify(status)}`);
+        
+        // Only include terms with outstanding balances
+        if (outstandingAmount > 0) {
+          this.logger.log(`✓ Term ${term.termNumber} has outstanding balance, adding to results`);
+          const termEndDate = new Date(term.endDate);
+          const isTermCompleted = new Date() > termEndDate;
+          const isCurrentTerm = term.id === currentTermId;
+          const isPreviousTerm = isTermCompleted && !isCurrentTerm;
+
+          // Determine allocation reason
+          let reason: AllocationReason;
+          if (isPreviousTerm) {
+            reason = AllocationReason.HISTORICAL_SETTLEMENT;
+          } else if (isCurrentTerm) {
+            reason = AllocationReason.TERM_FEES;
+          } else {
+            reason = AllocationReason.ADVANCE_PAYMENT;
+          }
+
+          outstandingTerms.push({
+            termId: term.id,
+            termName: `${term.academicCalendar.term} - Term ${term.termNumber}`,
+            termNumber: term.termNumber,
+            expectedAmount: Number(status.expectedAmount || 0),
+            paidAmount: Number(status.paidAmount || 0),
+            outstandingAmount,
+            reason,
+            priority: priority++,
+            isPreviousTerm,
+            isCurrentTerm
+          });
+        } else {
+          this.logger.log(`✗ Term ${term.termNumber} has no outstanding balance (outstanding=${outstandingAmount}), skipping`);
+        }
+      } catch (error) {
+        this.logger.error(`Failed to get fee status for term ${term.id}: ${error.message}`, error.stack);
+      }
+    }
+
+    // Sort: previous terms first (oldest to newest), then current term
+    outstandingTerms.sort((a, b) => {
+      if (a.isPreviousTerm && !b.isPreviousTerm) return -1;
+      if (!a.isPreviousTerm && b.isPreviousTerm) return 1;
+      if (a.isCurrentTerm && !b.isCurrentTerm) return 1;
+      if (!a.isCurrentTerm && b.isCurrentTerm) return -1;
+      return a.termNumber - b.termNumber;
+    });
+
+    // Update priorities after sorting
+    outstandingTerms.forEach((term, index) => {
+      term.priority = index + 1;
+    });
+
+    this.logger.log(`Found ${outstandingTerms.length} terms with outstanding balances for student ${studentId}`);
+    outstandingTerms.forEach(term => {
+      this.logger.log(`  - ${term.termName}: Outstanding MK ${term.outstandingAmount.toLocaleString()}`);
+    });
+    
+    return outstandingTerms;
   }
 
   /**
