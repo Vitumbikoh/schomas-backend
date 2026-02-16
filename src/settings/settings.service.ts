@@ -528,8 +528,8 @@ export class SettingsService {
 
         // If moving to a new completed calendar, promote students
         if (isNewAcademicCalendar) {
-          try {
-            await this.studentPromotionService.promoteStudentsToNextClass(schoolId, queryRunner);
+            try {
+            await this.studentPromotionService.promoteStudentsToNextClass(schoolId, queryRunner, { executionId: saved.id, executionAt: new Date() });
           } catch (promotionError) {
             this.logger.error('Student promotion failed during calendar update', promotionError.stack);
           }
@@ -650,10 +650,11 @@ export class SettingsService {
           `Moving from completed academic calendar "${currentActiveCalendar.term}" to new calendar "${calendar.term}". Promoting students for school ${schoolId}`
         );
 
-        try {
-          const promotionResult = await this.studentPromotionService.promoteStudentsToNextClass(
+          try {
+            const promotionResult = await this.studentPromotionService.promoteStudentsToNextClass(
             schoolId,
-            queryRunner
+            queryRunner,
+            { executionId: updatedCalendar.id, executionAt: new Date() }
           );
 
           this.logger.log(

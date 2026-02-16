@@ -43,6 +43,7 @@ export class StudentPromotionService {
     manager?: any; // Optional manager for transaction reuse
     executionId?: string;
     executionAt?: Date;
+    progressionId?: string;
   }): Promise<{
     studentId: string;
     fromClassId: string | null;
@@ -52,15 +53,15 @@ export class StudentPromotionService {
     retainedCourseIds: string[];
     dryRun: boolean;
   }> {
-    const { studentId, targetClassId, triggeredByUserId, schoolId, dryRun = false, note, manager: providedManager, executionId, executionAt } = options;
+    const { studentId, targetClassId, triggeredByUserId, schoolId, dryRun = false, note, manager: providedManager, executionId, executionAt, progressionId } = options;
 
     // If a manager is provided, use it directly; otherwise create a transaction
     if (providedManager) {
-      return this.promoteSingleStudentWithManager(providedManager, { studentId, targetClassId, triggeredByUserId, schoolId, dryRun, note });
+      return this.promoteSingleStudentWithManager(providedManager, { studentId, targetClassId, triggeredByUserId, schoolId, dryRun, note, executionId, executionAt, progressionId });
     }
 
     return this.dataSource.transaction(async (manager) => {
-      return this.promoteSingleStudentWithManager(manager, { studentId, targetClassId, triggeredByUserId, schoolId, dryRun, note });
+      return this.promoteSingleStudentWithManager(manager, { studentId, targetClassId, triggeredByUserId, schoolId, dryRun, note, executionId, executionAt, progressionId });
     });
   }
 
@@ -76,6 +77,7 @@ export class StudentPromotionService {
     note?: string;
     executionId?: string;
     executionAt?: Date;
+    progressionId?: string;
   }): Promise<{
     studentId: string;
     fromClassId: string | null;
@@ -85,7 +87,7 @@ export class StudentPromotionService {
     retainedCourseIds: string[];
     dryRun: boolean;
   }> {
-    const { studentId, targetClassId, triggeredByUserId, schoolId, dryRun = false, note, executionId, executionAt } = options;
+    const { studentId, targetClassId, triggeredByUserId, schoolId, dryRun = false, note, executionId, executionAt, progressionId } = options;
     const student = await manager.findOne(Student, { where: { id: studentId, schoolId }, relations: ['class'] });
     if (!student) {
       throw new Error('Student not found');
@@ -111,10 +113,11 @@ export class StudentPromotionService {
       };
     }
     if (currentClass && currentClass.id === destinationClass.id) {
+      // No effective change; do not record history, signal no-op with toClassId null
       return {
         studentId,
         fromClassId: currentClass.id,
-        toClassId: destinationClass.id,
+        toClassId: null,
         addedCourseIds: [],
         removedCourseIds: [],
         retainedCourseIds: [],
@@ -222,6 +225,7 @@ export class StudentPromotionService {
         schoolId,
         executionId: executionId || null,
         executionAt: executionAt || null,
+        progressionId: progressionId || null,
       });
       await manager.save(history);
     }
@@ -244,7 +248,7 @@ export class StudentPromotionService {
   async promoteStudentsToNextClass(
     schoolId: string,
     queryRunner?: QueryRunner,
-    options?: { executionId?: string; executionAt?: Date }
+    options?: { executionId?: string; executionAt?: Date; progressionId?: string }
   ): Promise<{
     promotedStudents: number;
     graduatedStudents: number;
@@ -253,6 +257,7 @@ export class StudentPromotionService {
     this.logger.log(`Starting student promotion for school: ${schoolId}`);
     const executionId = options?.executionId;
     const executionAt = options?.executionAt;
+    const progressionId = options?.progressionId;
     const isExternalTransaction = !!queryRunner;
     if (!queryRunner) {
       queryRunner = this.dataSource.createQueryRunner();
@@ -403,6 +408,7 @@ export class StudentPromotionService {
               manager: queryRunner.manager,
               executionId: executionId,
               executionAt: executionAt,
+              progressionId: progressionId,
             });
             if (result.toClassId) {
               promotedCount++;
@@ -426,6 +432,7 @@ export class StudentPromotionService {
                 manager: queryRunner.manager,
                 executionId: executionId,
                 executionAt: executionAt,
+                progressionId: progressionId,
               });
               if (result.toClassId) {
                 graduatedCount++;
@@ -589,11 +596,12 @@ export class StudentPromotionService {
     schoolId: string,
     queryRunner?: QueryRunner,
     executionId?: string,
+    progressionId?: string,
   ): Promise<{
     revertedStudents: number;
     errors: string[];
   }> {
-    this.logger.log(`Starting student promotion revert for school: ${schoolId} (executionId=${executionId})`);
+    this.logger.log(`Starting student promotion revert for school: ${schoolId} (executionId=${executionId}, progressionId=${progressionId})`);
 
     const isExternalTransaction = !!queryRunner;
     if (!queryRunner) {
@@ -606,6 +614,7 @@ export class StudentPromotionService {
       // Get promotion records for the given execution if provided (prevents reverting older promotions accidentally)
       const whereCondition: any = { schoolId };
       if (executionId) whereCondition.executionId = executionId;
+      if (progressionId) whereCondition.progressionId = progressionId;
 
       const recentPromotions = await queryRunner.manager.find(StudentClassPromotion, {
         where: whereCondition,

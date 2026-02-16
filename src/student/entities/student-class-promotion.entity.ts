@@ -58,6 +58,10 @@ export class StudentClassPromotion {
   @Column({ type: 'timestamp', nullable: true })
   executionAt: Date | null;
 
+  // Unique progression run identifier (distinct from academic calendar execution)
+  @Column({ type: 'uuid', nullable: true })
+  progressionId: string | null;
+
   // Multi-tenant scope
   @Column({ type: 'uuid', nullable: true })
   schoolId: string | null;

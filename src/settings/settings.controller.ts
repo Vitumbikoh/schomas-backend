@@ -1443,8 +1443,14 @@ async createTermPeriod(
         };
       }
 
-      // Execute the actual student promotions
-      const promotionResult = await this.studentPromotionService.promoteStudentsToNextClass(req.user.schoolId);
+      // Execute the actual student promotions (record execution metadata for revert)
+      // Generate a unique progressionId for this run
+      const progressionId = require('crypto').randomUUID();
+      const promotionResult = await this.studentPromotionService.promoteStudentsToNextClass(
+        req.user.schoolId,
+        undefined,
+        { executionId: currentAcademicCalendar.id, executionAt: new Date(), progressionId }
+      );
 
       // Mark progression as executed in the academic calendar
       await this.dataSource.manager.update(
@@ -1466,7 +1472,8 @@ async createTermPeriod(
         totalProcessed: promotionResult.promotedStudents + promotionResult.graduatedStudents,
         executedAt: new Date(),
         executedBy: req.user.email,
-        classBreakdown: [] // Would need to be populated based on actual promotion results
+        classBreakdown: [], // Would need to be populated based on actual promotion results
+        progressionId
       };
 
       await this.systemLoggingService.logAction({
@@ -1522,7 +1529,7 @@ async createTermPeriod(
   @ApiResponse({ status: 200, description: 'Student promotions reverted successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 400, description: 'Not in progression period or progression not executed' })
-  async revertStudentPromotion(@Request() req) {
+  async revertStudentPromotion(@Request() req, @Body() body?: { executionId?: string; progressionId?: string }) {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can revert student promotions');
     }
@@ -1574,19 +1581,26 @@ async createTermPeriod(
         };
       }
 
-      // Get the current academic calendar
-      const currentAcademicCalendar = await this.dataSource.manager.findOne(AcademicCalendar, {
-        where: {
-          schoolId: req.user.schoolId,
-          isActive: true
+      // Determine executionId/progressionId to target
+      let executionId: string | undefined = body?.executionId;
+      const progressionId: string | undefined = body?.progressionId;
+      let currentAcademicCalendar: AcademicCalendar | null = null;
+      if (!executionId) {
+        // Default to current active calendar id
+        currentAcademicCalendar = await this.dataSource.manager.findOne(AcademicCalendar, {
+          where: {
+            schoolId: req.user.schoolId,
+            isActive: true
+          }
+        });
+        if (!currentAcademicCalendar) {
+          throw new BadRequestException('No active academic calendar found');
         }
-      });
-
-      if (!currentAcademicCalendar) {
-        throw new BadRequestException('No active academic calendar found');
+        executionId = currentAcademicCalendar.id;
       }
 
-      if (!currentAcademicCalendar.studentProgressionExecuted) {
+      // If using active calendar, ensure progression was executed
+      if (currentAcademicCalendar && !currentAcademicCalendar.studentProgressionExecuted) {
         return {
           success: false,
           message: 'Student progression has not been executed for this academic year',
@@ -1596,15 +1610,17 @@ async createTermPeriod(
         };
       }
 
-      // Execute the revert operation (only revert promotions from the execution recorded on the active academic calendar)
-      const revertResult = await this.studentPromotionService.revertStudentPromotions(req.user.schoolId, undefined, currentAcademicCalendar.id);
+      // Execute the revert operation for the specified executionId only
+      const revertResult = await this.studentPromotionService.revertStudentPromotions(req.user.schoolId, undefined, executionId, progressionId);
 
       // Mark progression as not executed in the academic calendar
-      await this.dataSource.manager.update(
-        AcademicCalendar,
-        { id: currentAcademicCalendar.id },
-        { studentProgressionExecuted: false, updatedAt: new Date() }
-      );
+      if (currentAcademicCalendar && executionId === currentAcademicCalendar.id) {
+        await this.dataSource.manager.update(
+          AcademicCalendar,
+          { id: currentAcademicCalendar.id },
+          { studentProgressionExecuted: false, updatedAt: new Date() }
+        );
+      }
 
       const result = {
         success: true,
@@ -1617,7 +1633,8 @@ async createTermPeriod(
         totalProcessed: revertResult.revertedStudents,
         revertedAt: new Date(),
         revertedBy: req.user.email,
-        classBreakdown: [] // Would need to be populated based on actual revert results
+        classBreakdown: [], // Would need to be populated based on actual revert results
+        progressionId
       };
 
       await this.systemLoggingService.logAction({
