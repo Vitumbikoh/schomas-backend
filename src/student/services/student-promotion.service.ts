@@ -338,6 +338,9 @@ export class StudentPromotionService {
         relations: ['class'],
       });
 
+      // Exclude inactive students from progression
+      students = students.filter(s => s.isActive);
+
       // Fallback: if no students returned (some legacy rows might have null schoolId but class belongs to school)
       if (students.length === 0) {
         const classIds = (await queryRunner.manager.find(Class, { where: { schoolId }, select: ['id'] })).map(c => c.id);
@@ -437,6 +440,16 @@ export class StudentPromotionService {
               if (result.toClassId) {
                 graduatedCount++;
                 this.logger.log(`Student ${student.studentId} moved from ${student.class.name} to Graduated class`);
+
+                // Immediately mark student inactive upon entering Graduated class
+                await queryRunner.manager.update(Student, { id: student.id }, {
+                  isActive: false,
+                  inactivatedAt: new Date(),
+                  inactivatedBy: null,
+                  inactivationReason: 'graduated',
+                  graduationTermId: progressionTerm.id,
+                  updatedAt: new Date(),
+                });
               }
             } else {
               this.logger.error(`Graduated class not found for school ${schoolId}. Student ${student.studentId} cannot be graduated.`);
@@ -551,10 +564,13 @@ export class StudentPromotionService {
     }
 
     // Get all students in this school with their current classes
-    const students = await this.studentRepository.find({
+    let students = await this.studentRepository.find({
       where: { schoolId },
       relations: ['class'],
     });
+
+    // Exclude inactive students from preview
+    students = students.filter(s => s.isActive);
 
     const promotions = students.map(student => {
       if (!student.class) {
@@ -653,6 +669,18 @@ export class StudentPromotionService {
               classId: promotion.fromClass.id,
               updatedAt: new Date(),
             });
+
+            // If the promotion previously moved the student to Graduated, reactivate on revert
+            if (promotion.toClass && promotion.toClass.name === 'Graduated') {
+              await queryRunner.manager.update(Student, student.id, {
+                isActive: true,
+                inactivatedAt: null,
+                inactivatedBy: null,
+                inactivationReason: null,
+                graduationTermId: null,
+                updatedAt: new Date(),
+              });
+            }
 
             // Handle course enrollments - remove courses from new class and restore courses from old class
             // This is a simplified version - in a real implementation, you'd need more sophisticated logic
