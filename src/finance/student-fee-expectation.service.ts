@@ -433,6 +433,25 @@ export class StudentFeeExpectationService {
       // ignore
     }
 
+    // Compute overall active credit balance per student (sum of remainingAmount across all terms)
+    // This aligns with the Student Financial Details modal which shows current credit balance
+    let creditBalanceByStudent: Record<string, number> = {};
+    try {
+      const params: any[] = [];
+      const whereSchool = schoolId && !superAdmin ? 'AND "schoolId" = $1' : '';
+      if (schoolId && !superAdmin) params.push(schoolId);
+      const creditRows = await this.studentRepo.query(
+        `SELECT "studentId" as sid, COALESCE(SUM("remainingAmount"),0) as sum
+         FROM credit_ledger
+         WHERE status = 'active' ${whereSchool}
+         GROUP BY "studentId"`,
+        params
+      );
+      creditRows.forEach((r: any) => { creditBalanceByStudent[r.sid] = Number(r.sum || 0); });
+    } catch (err) {
+      // ignore credit balance errors
+    }
+
     const pastEnd = term ? new Date() > new Date(term.endDate) : false;
     const perStudentMandatoryTotal = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
 
@@ -494,7 +513,8 @@ export class StudentFeeExpectationService {
           isOverdue: isOverdueHist,
           overdueAmount: isOverdueHist ? outstanding : 0,
           isHistorical: true,
-          historyStatus: student.historyStatus || null
+          historyStatus: student.historyStatus || null,
+          creditBalance: Number(creditBalanceByStudent[student.id] || 0)
         };
       } else {
         const totalExpected = perStudentMandatoryTotal;
@@ -514,7 +534,8 @@ export class StudentFeeExpectationService {
           isOverdue,
           overdueAmount: isOverdue ? outstanding : 0,
           isHistorical: false,
-          historyStatus: student.historyStatus || null
+          historyStatus: student.historyStatus || null,
+          creditBalance: Number(creditBalanceByStudent[student.id] || 0)
         };
       }
     });

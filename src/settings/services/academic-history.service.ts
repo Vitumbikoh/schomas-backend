@@ -15,6 +15,7 @@ export interface TermHistoricalData {
   studentsPreserved: number;
   paymentRecords: number;
   feeStructures: number;
+  examResultsPreserved?: number;
   preservationDate: Date;
 }
 
@@ -24,6 +25,7 @@ export interface AcademicCalendarHistoricalData {
   totalStudents: number;
   studentsPreserved: number;
   paymentRecords: number;
+  examResultsPreserved?: number;
   preservationDate: Date;
 }
 
@@ -188,7 +190,30 @@ export class AcademicHistoryService {
         }
       }
 
-      // 4. Get payment and fee structure counts for reporting
+      // 4. Snapshot exam results for this term
+      // Insert per-course exam result aggregates into exam_result_history (immutable)
+      const examInsert = await queryRunner.manager.query(`
+        INSERT INTO exam_result_history (school_id, academic_calendar_id, term_id, student_id, course_id, final_percentage, grade)
+        SELECT 
+          s."schoolId" as school_id,
+          t."academicCalendarId" as academic_calendar_id,
+          t.id as term_id,
+          er.studentId as student_id,
+          er.courseId as course_id,
+          er.finalPercentage as final_percentage,
+          er.grade as grade
+        FROM exam_result er
+        INNER JOIN term t ON t.id = er.termId::uuid
+        INNER JOIN student s ON s.id = er.studentId::uuid
+        WHERE er.termId::uuid = $1
+        ON CONFLICT (student_id, term_id, course_id)
+        DO UPDATE SET final_percentage = EXCLUDED.final_percentage, grade = EXCLUDED.grade
+        RETURNING id;
+      `, [termId]);
+
+      const examResultsPreserved = Array.isArray(examInsert) ? examInsert.length : 0;
+
+      // 5. Get payment and fee structure counts for reporting
       const [payments, feeStructures] = await Promise.all([
         this.feePaymentRepository.count({
           where: { 
@@ -224,6 +249,7 @@ export class AcademicHistoryService {
         studentsPreserved,
         paymentRecords: payments,
         feeStructures,
+        examResultsPreserved,
         preservationDate: new Date()
       };
 
@@ -275,6 +301,7 @@ export class AcademicHistoryService {
 
       let totalStudentsPreserved = 0;
       let totalPaymentRecords = 0;
+      let totalExamResultsPreserved = 0;
 
       // 3. Close all terms that aren't already closed and preserve historical data
       for (const term of terms) {
@@ -291,6 +318,7 @@ export class AcademicHistoryService {
           const termData = await this.closeTerm(term.id, schoolId, superAdmin);
           totalStudentsPreserved += termData.studentsPreserved;
           totalPaymentRecords += termData.paymentRecords;
+          totalExamResultsPreserved += termData.examResultsPreserved || 0;
         } else {
           this.logger.log(`Term ${term.termNumber} already has historical data`);
           // For already closed terms, just count the preserved data
@@ -302,6 +330,13 @@ export class AcademicHistoryService {
             WHERE "termId"::uuid = $1 AND status = 'completed'
           `, [term.id]);
           totalPaymentRecords += parseInt(paymentCount[0]?.count || 0);
+
+          // Count exam result snapshots for this term
+          const examCount = await queryRunner.manager.query(`
+            SELECT COUNT(*) as count FROM exam_result_history 
+            WHERE term_id::uuid = $1
+          `, [term.id]);
+          totalExamResultsPreserved += parseInt(examCount[0]?.count || 0);
         }
       }
 
@@ -328,6 +363,7 @@ export class AcademicHistoryService {
         totalStudents: uniqueStudentCount,
         studentsPreserved: totalStudentsPreserved,
         paymentRecords: totalPaymentRecords,
+        examResultsPreserved: totalExamResultsPreserved,
         preservationDate: new Date()
       };
 

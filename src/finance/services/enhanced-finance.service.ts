@@ -29,6 +29,7 @@ export interface StudentFeeStatus {
   carryForwardAmount: number;
   currentTermFees: number;
   allocations: PaymentAllocation[];
+  creditBalance?: number;
 }
 
 export interface TermFinanceSummary {
@@ -390,6 +391,22 @@ export class EnhancedFinanceService {
       className = student?.class?.name;
     }
 
+    // Compute active credit balance for this student (sum of remainingAmount in credit_ledger)
+    let creditBalance = 0;
+    try {
+      const creditRow = await this.creditRepo
+        .createQueryBuilder('cl')
+        .select('COALESCE(SUM(cl.remainingAmount), 0)', 'sum')
+        .where('cl.studentId = :studentId', { studentId })
+        .andWhere('cl.status = :status', { status: 'active' })
+        .andWhere(schoolId ? 'cl.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+        .getRawOne();
+      creditBalance = parseFloat(creditRow?.sum || '0');
+    } catch (err) {
+      this.logger.warn(`Failed to load credit balance for student ${studentId}: ${err.message}`);
+      creditBalance = 0;
+    }
+
     return {
       studentId,
       studentName: student ? `${student.firstName} ${student.lastName}` : 'Unknown',
@@ -408,6 +425,8 @@ export class EnhancedFinanceService {
       carryForwardAmount,
       currentTermFees,
       allocations
+      ,
+      creditBalance
     };
   }
 
