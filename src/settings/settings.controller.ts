@@ -48,6 +48,7 @@ import type { Multer } from 'multer';
 import { StudentPromotionService } from '../student/services/student-promotion.service';
 import { NotificationService } from '../notifications/notification.service';
 import { NotificationType, NotificationPriority } from '../notifications/entities/notification.entity';
+import { StudentClassPromotion } from '../student/entities/student-class-promotion.entity';
 
 @ApiTags('settings')
 @Controller('settings')
@@ -1521,6 +1522,90 @@ async createTermPeriod(
       }
       throw new InternalServerErrorException('Failed to execute student promotion');
     }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('student-promotion/history')
+  @ApiOperation({ summary: 'Get student progression execution history' })
+  @ApiResponse({ status: 200, description: 'Student progression history retrieved successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async getStudentPromotionHistory(
+    @Request() req,
+    @Query('limit') limit?: string,
+  ) {
+    if (req.user.role !== 'ADMIN') {
+      throw new UnauthorizedException('Only admins can view student progression history');
+    }
+
+    if (!req.user.schoolId) {
+      throw new UnauthorizedException('Administrator must be associated with a school');
+    }
+
+    const parsedLimit = Math.min(Math.max(parseInt(limit || '20', 10) || 20, 1), 100);
+
+    const rows = await this.dataSource.manager.find(StudentClassPromotion, {
+      where: { schoolId: req.user.schoolId },
+      relations: ['fromClass', 'toClass'],
+      order: { executionAt: 'DESC', createdAt: 'DESC' },
+      take: parsedLimit * 100, // fetch enough rows to group into executions
+    });
+
+    // Keep only records linked to an actual progression execution.
+    // Legacy rows without execution metadata appear as split one-student entries.
+    const executionRows = rows.filter((row) => row.progressionId || row.executionId);
+    const grouped = new Map<string, any>();
+
+    for (const row of executionRows) {
+      const executionKey =
+        row.progressionId ||
+        row.executionId ||
+        `single-${row.id}`;
+
+      if (!grouped.has(executionKey)) {
+        grouped.set(executionKey, {
+          id: executionKey,
+          date: row.executionAt || row.createdAt,
+          status: 'Completed',
+          promoted: 0,
+          graduated: 0,
+          errors: 0,
+          progressionPeriod: 'Progression execution',
+          term: '',
+          transitions: {} as Record<string, number>,
+          note: '',
+        });
+      }
+
+      const item = grouped.get(executionKey);
+      const fromName = row.fromClass?.name || 'Unknown';
+      const toName = row.toClass?.name || 'Unknown';
+      const transitionKey = `${fromName} -> ${toName}`;
+      item.transitions[transitionKey] = (item.transitions[transitionKey] || 0) + 1;
+
+      if (toName.toLowerCase() === 'graduated') {
+        item.graduated += 1;
+      } else {
+        item.promoted += 1;
+      }
+    }
+
+    const history = Array.from(grouped.values())
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, parsedLimit)
+      .map((item) => {
+        const transitionsSummary = Object.entries(item.transitions)
+          .map(([name, count]) => `${name} (${count})`)
+          .join(', ');
+        return {
+          ...item,
+          note: transitionsSummary || 'No transition records found',
+        };
+      });
+
+    return {
+      success: true,
+      history,
+    };
   }
 
   @UseGuards(JwtAuthGuard)
