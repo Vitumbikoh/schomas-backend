@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import * as os from 'os';
+import * as fs from 'fs';
+import * as path from 'path';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 
@@ -16,7 +18,7 @@ export class SystemService {
 
   async getSystemOverview(schoolId?: string, superAdmin = false) {
     const uptimeSeconds = Math.floor((Date.now() - this.startTime) / 1000);
-    const uptime30DayPercent = 99.9; // Placeholder, real impl would pull from uptime tracking table / monitoring
+    const uptime30DayPercent = Math.round(Math.min(100, (uptimeSeconds / (30 * 24 * 60 * 60)) * 100) * 100) / 100;
 
     // Active sessions: count users who have been active in the last 30 minutes
     // Apply school filtering for multi-tenant isolation
@@ -92,6 +94,33 @@ export class SystemService {
       alerts += parseInt(result[0]?.count || '0', 10);
     } catch {}
 
+    let lastBackupAt: string | null = null;
+    try {
+      const backupDirs = [
+        path.resolve(process.cwd(), 'db_backups'),
+        path.resolve(process.cwd(), '..', 'db_backups'),
+        path.resolve(process.cwd(), 'backups'),
+        path.resolve(process.cwd(), '..', 'backups'),
+      ];
+      let latestMtime = 0;
+      for (const dir of backupDirs) {
+        if (!fs.existsSync(dir)) continue;
+        const entries = fs.readdirSync(dir);
+        for (const entry of entries) {
+          const full = path.join(dir, entry);
+          try {
+            const stat = fs.statSync(full);
+            if (stat.isFile() && stat.mtimeMs > latestMtime) {
+              latestMtime = stat.mtimeMs;
+            }
+          } catch {}
+        }
+      }
+      if (latestMtime > 0) {
+        lastBackupAt = new Date(latestMtime).toISOString();
+      }
+    } catch {}
+
     return {
       status: 'HEALTHY',
       statusMessage: 'All systems operational',
@@ -99,6 +128,7 @@ export class SystemService {
       uptime30DayPercent,
       activeSessions,
       alerts,
+      lastBackupAt,
       generatedAt: new Date().toISOString(),
     };
   }
@@ -114,23 +144,39 @@ export class SystemService {
     const cpuCount = os.cpus().length;
     const cpuPercent = Math.min(100, parseFloat(((load / cpuCount) * 100).toFixed(2))); // naive approximation
 
-    // Disk usage requires additional lib; placeholder values for now
-    const diskPercent = 45; // TODO integrate real disk stats
+    // Disk usage from filesystem stats when supported by runtime
+    let diskPercent = 0;
+    try {
+      const statfs = (fs as any).statfsSync?.(process.cwd());
+      if (statfs && statfs.blocks && statfs.bfree !== undefined) {
+        const totalBlocks = Number(statfs.blocks);
+        const freeBlocks = Number(statfs.bfree);
+        if (totalBlocks > 0) {
+          diskPercent = parseFloat((((totalBlocks - freeBlocks) / totalBlocks) * 100).toFixed(2));
+        }
+      }
+    } catch {}
 
-    // Database load (active connections / pool size)
+    // Database performance/load from pool + latency
     let dbPercent = 0;
+    let dbLatencyMs = 0;
     try {
       const pool: any = (this.dataSource as any).driver?.master; // pg pool
       if (pool?.totalCount && pool?.options?.max) {
         dbPercent = parseFloat(((pool.totalCount / pool.options.max) * 100).toFixed(2));
       }
     } catch {}
+    try {
+      const start = Date.now();
+      await this.dataSource.query('SELECT 1');
+      dbLatencyMs = Date.now() - start;
+    } catch {}
 
     return {
       cpu: { percent: cpuPercent },
       memory: { percent: parseFloat(memPercent.toFixed(2)), used: usedMem, total: totalMem },
       disk: { percent: diskPercent },
-      database: { percent: dbPercent },
+      database: { percent: dbPercent, latencyMs: dbLatencyMs },
       generatedAt: new Date().toISOString(),
     };
   }
