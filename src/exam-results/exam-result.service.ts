@@ -212,6 +212,21 @@ export class ExamResultService {
       studentIds: classEntity.students?.map(s => ({ id: s.id, studentId: s.studentId, name: `${s.firstName} ${s.lastName}` })) || []
     });
 
+    const classStudents = Array.isArray(classEntity.students) ? classEntity.students : [];
+    if (classStudents.length === 0) {
+      return {
+        classInfo: {
+          id: classEntity.id,
+          name: classEntity.name,
+        },
+        students: [],
+        summary: {
+          totalStudents: 0,
+          studentsWithResults: 0,
+        },
+      };
+    }
+
     // Additional debug: Check for any exam results with matching studentId values
     // Guard against empty student list and optional termId to avoid SQL errors
     let examResultsForStudentIds: ExamResultAggregate[] = [];
@@ -246,8 +261,21 @@ export class ExamResultService {
 
     // Get all exam results for students in this class
     // Try multiple approaches to find matching results
-    const classStudentIds = classEntity.students.map(s => s.studentId);
-    const classStudentUUIDs = classEntity.students.map(s => s.id);
+    const classStudentIds = classStudents.map(s => s.studentId).filter(Boolean);
+    const classStudentUUIDs = classStudents.map(s => s.id).filter(Boolean);
+    if (classStudentIds.length === 0 && classStudentUUIDs.length === 0) {
+      return {
+        classInfo: {
+          id: classEntity.id,
+          name: classEntity.name,
+        },
+        students: [],
+        summary: {
+          totalStudents: classStudents.length,
+          studentsWithResults: 0,
+        },
+      };
+    }
     
     // First try to match by studentId (human readable like "250002")
     let query = this.examResultRepository
@@ -325,7 +353,7 @@ export class ExamResultService {
     });
 
     // Process each student's results
-    const studentResults = await Promise.all(classEntity.students.map(async student => {
+    const studentResults = await Promise.all(classStudents.map(async student => {
       // Try to find results by studentId first, then by UUID
       let studentExamResults = resultsByStudentId.get(student.studentId) || [];
       
@@ -409,7 +437,7 @@ export class ExamResultService {
       },
       students: studentResults,
       summary: {
-        totalStudents: classEntity.students.length,
+        totalStudents: classStudents.length,
         studentsWithResults: studentResults.filter(s => s.totalResults > 0).length,
       },
     };
