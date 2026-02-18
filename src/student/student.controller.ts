@@ -86,14 +86,15 @@ export class StudentController {
         throw new ForbiddenException('School ID not found');
       }
 
-      // Get all students for the school
+      // Get all students for the school and derive active-only metrics
       const students = await this.studentService.findAll(undefined, schoolId, false);
+      const activeStudents = students.filter((student) => student.isActive !== false);
 
       // Calculate class-based statistics
       const classStats = new Map<string, number>();
       let graduatedCount = 0;
 
-      for (const student of students) {
+      for (const student of activeStudents) {
         if (student.class) {
           const className = student.class.name;
           
@@ -109,6 +110,12 @@ export class StudentController {
           graduatedCount++;
         }
       }
+
+      // Graduated students are typically inactive; keep this count from the full student set
+      graduatedCount = students.filter((student) => {
+        const className = student.class?.name;
+        return className === 'Graduated' || !student.class;
+      }).length;
 
       // Convert class stats to array format
       const classBreakdown = Array.from(classStats.entries()).map(([className, count]) => ({
@@ -126,7 +133,7 @@ export class StudentController {
       return {
         success: true,
         data: {
-          totalStudents: students.length,
+          totalStudents: activeStudents.length,
           classBreakdown,
           graduatedStudents: graduatedCount,
         }
@@ -312,15 +319,16 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
   @ApiResponse({ status: 200, description: 'Total students count retrieved successfully' })
   async getTotalStudentsCount(
     @Request() req,
-    @Query('activeOnly') activeOnly: boolean,
+    @Query('activeOnly') activeOnly?: string,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
+    const activeOnlyFlag = String(activeOnly).toLowerCase() === 'true';
     this.logger.log(`Fetching total students count, activeOnly: ${activeOnly}`);
     try {
       const isSuper = req.user?.role === 'SUPER_ADMIN';
       const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
       
-      const total = await this.studentService.getTotalStudentsCount(activeOnly, effectiveSchoolId, isSuper);
+      const total = await this.studentService.getTotalStudentsCount(activeOnlyFlag, effectiveSchoolId, isSuper);
 
       // Calculate month-over-month trend
       const now = new Date();
@@ -332,11 +340,14 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
       const whereScope: any = {};
       if (!isSuper) {
         if (!effectiveSchoolId) {
-          return { success: true, totalStudents: 0, activeOnly: activeOnly || false, schoolId: null, trend: { value: 0, isPositive: true, hasComparativeData: false } };
+          return { success: true, totalStudents: 0, activeOnly: activeOnlyFlag, schoolId: null, trend: { value: 0, isPositive: true, hasComparativeData: false } };
         }
         whereScope.schoolId = effectiveSchoolId;
       } else if (effectiveSchoolId) {
         whereScope.schoolId = effectiveSchoolId;
+      }
+      if (activeOnlyFlag) {
+        whereScope.isActive = true;
       }
 
       // Snapshot-based totals
@@ -366,7 +377,7 @@ async createStudent(@Request() req, @Body() createStudentDto: CreateStudentDto) 
       return {
         success: true,
         totalStudents: total,
-        activeOnly: activeOnly || false,
+        activeOnly: activeOnlyFlag,
         schoolId: effectiveSchoolId,
         trend: { value: Math.abs(trendValue), isPositive, hasComparativeData: true },
       };

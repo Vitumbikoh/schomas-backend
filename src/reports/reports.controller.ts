@@ -128,10 +128,11 @@ export class ReportsController {
 
       // Apply controller-level filters for additional fields
       const filteredStudents = students.filter((s: any) => {
+        const activeMatch = s.isActive !== false;
         const classIdMatch = studentClassId ? (s.classId === studentClassId || s.class?.id === studentClassId) : true;
         const genderMatch = studentGender ? s.gender === studentGender : true;
         const classNameMatch = studentClass ? (s.gradeLevel === studentClass || s.class?.name === studentClass) : true;
-        return classIdMatch && genderMatch && classNameMatch;
+        return activeMatch && classIdMatch && genderMatch && classNameMatch;
       });
 
       const filteredTeachers = teachers.filter((t: any) => {
@@ -231,7 +232,8 @@ export class ReportsController {
     if (className) where.gradeLevel = className;
   const students = await this.studentsService.findAll({ where }, targetSchoolId, superAdmin);
     const filtered = students.filter((s: any) =>
-      classId ? (s.classId === classId || s.class?.id === classId) : true,
+      (s.isActive !== false) &&
+      (classId ? (s.classId === classId || s.class?.id === classId) : true),
     );
   return filtered.map(s => this.reportsMapper.mapStudent(s));
   }
