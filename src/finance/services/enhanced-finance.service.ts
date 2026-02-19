@@ -140,6 +140,8 @@ export class EnhancedFinanceService {
         LEFT JOIN class c ON c.id = sah.class_id
         WHERE sah.term_id::uuid = $1
         AND s."graduationTermId" IS NULL
+        AND s."isActive" = true
+        AND COALESCE(s."inactivationReason", '') != 'graduated'
         ${schoolId ? 'AND sah.school_id::uuid = $2' : ''}
       `;
 
@@ -173,7 +175,8 @@ export class EnhancedFinanceService {
         .leftJoinAndSelect('ar.class', 'class')
         .where('ar.termId = :termId', { termId })
         .andWhere('ar.status != :graduatedStatus', { graduatedStatus: StudentStatus.GRADUATED })
-        .andWhere('student.graduationTermId IS NULL');
+        .andWhere('student.graduationTermId IS NULL')
+        .andWhere('student.isActive = :isActive', { isActive: true });
       
       if (schoolId) {
         qb.andWhere('ar.schoolId = :schoolId', { schoolId });
@@ -448,8 +451,9 @@ export class EnhancedFinanceService {
       .leftJoinAndSelect('ar.student', 'student')
       .where('ar.termId = :termId', { termId })
       .andWhere('ar.status != :graduatedStatus', { graduatedStatus: StudentStatus.GRADUATED })
-    .andWhere('student.graduationTermId IS NULL') // Additional check for student-level graduation
-    .andWhere("COALESCE(student.inactivationReason, '') != :gradReason", { gradReason: 'graduated' });
+      .andWhere('student.graduationTermId IS NULL') // Additional check for student-level graduation
+      .andWhere("COALESCE(student.inactivationReason, '') != :gradReason", { gradReason: 'graduated' })
+      .andWhere('student.isActive = :isActive', { isActive: true });
     if (schoolId) {
       qb.andWhere('ar.schoolId = :schoolId', { schoolId });
     }
@@ -480,6 +484,8 @@ export class EnhancedFinanceService {
       .innerJoin('ar.student', 's')
       .innerJoin('ar.term', 't')
       .where('ar.status = :status', { status: StudentStatus.ACTIVE })
+      .andWhere('s.isActive = :isActive', { isActive: true })
+      .andWhere("COALESCE(s.inactivationReason, '') != :gradReason", { gradReason: 'graduated' })
       .andWhere('t.endDate < :now', { now: new Date() })
       .andWhere(schoolId ? 'ar.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {});
 
@@ -547,6 +553,31 @@ export class EnhancedFinanceService {
       isTermCompleted: new Date() > new Date(term.endDate),
       termEndDate: term.endDate
     };
+  }
+
+  private async getTermEffectiveDueDate(term: Term, schoolId?: string): Promise<Date> {
+    try {
+      const row = await this.feeStructureRepo
+        .createQueryBuilder('fs')
+        .select('MAX(fs.dueDate)', 'maxDueDate')
+        .where('fs.termId = :termId', { termId: term.id })
+        .andWhere('fs.isActive = true')
+        .andWhere('fs.isOptional = false')
+        .andWhere('fs.dueDate IS NOT NULL')
+        .andWhere(schoolId ? 'fs.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+        .getRawOne();
+
+      if (row?.maxDueDate) {
+        const parsed = new Date(row.maxDueDate);
+        if (!Number.isNaN(parsed.getTime())) {
+          return parsed;
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to load due date for term ${term.id}: ${error.message}`);
+    }
+
+    return new Date(term.endDate);
   }
 
   /**
@@ -796,20 +827,24 @@ export class EnhancedFinanceService {
       .getRawOne();
     const credits = parseFloat(allActiveCreditsRow?.sum || '0');
 
-    // 6) Outstanding from previous terms - Calculate actual unpaid amounts from all previous terms
+    // 6) Overdue across all terms (school-wide, active students only).
+    // A term is overdue when now > configured fee due date (if present), else now > term end date.
     let overdueFromPreviousTerms = 0;
     try {
-      // Get all terms that ended before the current term starts
-      const previousTerms = await this.termRepo
+      const allTerms = await this.termRepo
         .createQueryBuilder('t')
-        .where('t.endDate < :currentTermStart', { currentTermStart: term.startDate })
         .andWhere(schoolId ? 't.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
         .getMany();
 
-      // For each previous term, calculate total outstanding
-      for (const prevTerm of previousTerms) {
+      const now = new Date();
+      for (const scopedTerm of allTerms) {
         try {
-          const statuses = await this.getTermStudentFeeStatuses(prevTerm.id, schoolId);
+          const effectiveDueDate = await this.getTermEffectiveDueDate(scopedTerm, schoolId);
+          if (!(effectiveDueDate && now > effectiveDueDate)) {
+            continue;
+          }
+
+          const statuses = await this.getTermStudentFeeStatuses(scopedTerm.id, schoolId);
           const termOutstanding = statuses.reduce((sum, status) => {
             const expected = Number(status.expectedAmount || 0);
             const paid = Number(status.paidAmount || 0);
@@ -818,11 +853,11 @@ export class EnhancedFinanceService {
           }, 0);
           overdueFromPreviousTerms += termOutstanding;
         } catch (err) {
-          this.logger.warn(`Failed to calculate outstanding for previous term ${prevTerm.id}: ${err.message}`);
+          this.logger.warn(`Failed to calculate overdue outstanding for term ${scopedTerm.id}: ${err.message}`);
         }
       }
     } catch (error) {
-      this.logger.warn(`Unable to load previous-term overdue totals for term ${termId}: ${error.message}`);
+      this.logger.warn(`Unable to load overdue totals across terms for term ${termId}: ${error.message}`);
     }
 
     // totalPaid retained for compatibility with existing frontend expectations.

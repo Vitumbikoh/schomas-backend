@@ -29,6 +29,9 @@ export class FeeStructure {
   @Column({ type: 'varchar', length: 50, default: 'per_period' })
   frequency: 'per_period' | 'per_year' | 'one_time'; // How often the fee is charged
 
+  @Column({ type: 'date', nullable: true })
+  dueDate?: Date;
+
   @Column({ type: 'uuid' })
   termId: string;
 

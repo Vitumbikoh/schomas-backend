@@ -1,5 +1,5 @@
 // src/finance/dtos/fees-structure.dto.ts
-import { IsNumber, IsUUID, IsString, IsOptional, IsBoolean } from 'class-validator';
+import { IsNumber, IsUUID, IsString, IsOptional, IsBoolean, IsDateString } from 'class-validator';
 
 export class CreateFeeStructureDto {
   @IsNumber()
@@ -27,4 +27,8 @@ export class CreateFeeStructureDto {
   @IsUUID()
   @IsOptional()
   classId?: string; // Optional class-specific fee
+
+  @IsDateString()
+  @IsOptional()
+  dueDate?: string;
 }

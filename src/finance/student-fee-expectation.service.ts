@@ -42,6 +42,7 @@ export class StudentFeeExpectationService {
       isActive: dto.isActive,
       isOptional: dto.isOptional,
       frequency: dto.frequency === 'per_term' ? 'per_period' : dto.frequency as 'per_period' | 'per_year' | 'one_time' | undefined,
+      dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
       classId: dto.classId,
       schoolId: schoolId, // Always attach schoolId for multi-tenant isolation
     });
@@ -61,10 +62,20 @@ export class StudentFeeExpectationService {
       throw new NotFoundException('Fee structure not found or access denied');
     }
 
-    const updateDto = { 
-      ...dto, 
-      frequency: dto.frequency === 'per_term' ? 'per_period' : dto.frequency as 'per_period' | 'per_year' | 'one_time' | undefined 
-    };
+    const updateDto: Partial<FeeStructure> = {};
+    if (dto.amount !== undefined) updateDto.amount = dto.amount;
+    if (dto.termId !== undefined) updateDto.termId = dto.termId;
+    if (dto.feeType !== undefined) updateDto.feeType = dto.feeType;
+    if (dto.isActive !== undefined) updateDto.isActive = dto.isActive;
+    if (dto.isOptional !== undefined) updateDto.isOptional = dto.isOptional;
+    if (dto.classId !== undefined) updateDto.classId = dto.classId as any;
+    if (dto.frequency !== undefined) {
+      updateDto.frequency = (dto.frequency === 'per_term' ? 'per_period' : dto.frequency) as any;
+    }
+    if (dto.dueDate !== undefined) {
+      updateDto.dueDate = dto.dueDate ? (new Date(dto.dueDate) as any) : null as any;
+    }
+
     await this.feeStructureRepo.update(id, updateDto);
     return this.feeStructureRepo.findOne({ where: { id } });
   }
@@ -124,6 +135,7 @@ export class StudentFeeExpectationService {
         LEFT JOIN student s ON sah.student_id = s.id
         WHERE sah.term_id::uuid = $1
         AND s."graduationTermId" IS NULL
+        AND s."isActive" = true
         AND COALESCE(s."inactivationReason", '') != 'graduated'
         ${schoolId && !superAdmin ? 'AND sah.school_id = $2' : ''}
       `;
@@ -141,7 +153,8 @@ export class StudentFeeExpectationService {
       const qb = this.studentRepo
         .createQueryBuilder('s')
         .where('s.termId = :termId', { termId })
-        .andWhere('s.graduationTermId IS NULL');
+        .andWhere('s.graduationTermId IS NULL')
+        .andWhere('s.isActive = :isActive', { isActive: true });
       
       if (schoolId && !superAdmin) {
         qb.andWhere('s.schoolId = :schoolId', { schoolId });
@@ -181,7 +194,8 @@ export class StudentFeeExpectationService {
         const qb = this.studentRepo
           .createQueryBuilder('s')
           .where('s.termId = :termId', { termId })
-          .andWhere('s.graduationTermId IS NULL');
+          .andWhere('s.graduationTermId IS NULL')
+          .andWhere('s.isActive = :isActive', { isActive: true });
         
         if (schoolId && !superAdmin) {
           qb.andWhere('s.schoolId = :schoolId', { schoolId });
@@ -362,6 +376,7 @@ export class StudentFeeExpectationService {
         LEFT JOIN student s ON sah.student_id = s.id
         WHERE sah.term_id::uuid = $1
         AND s."graduationTermId" IS NULL
+        AND s."isActive" = true
         AND COALESCE(s."inactivationReason", '') != 'graduated'
         ${schoolId && !superAdmin ? 'AND sah.school_id = $2' : ''}
         ORDER BY s."firstName", s."lastName"
