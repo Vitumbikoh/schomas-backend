@@ -29,6 +29,7 @@ import { StudentAcademicRecord } from './entities/student-academic-record.entity
 import { PaymentAllocation } from './entities/payment-allocation.entity';
 import { ExpectedFee } from './entities/expected-fee.entity';
 import { GraduateOutstandingBalance } from './entities/graduate-outstanding-balance.entity';
+import { Payment } from './entities/payment.entity';
 
 // Enhanced services
 import { EnhancedFinanceService } from './services/enhanced-finance.service';
@@ -61,6 +62,7 @@ import { GraduateFeesController } from './controllers/graduate-fees.controller';
       PaymentAllocation,
       ExpectedFee,
       GraduateOutstandingBalance,
+      Payment,
     ]),
     SettingsModule,
     LogsModule,

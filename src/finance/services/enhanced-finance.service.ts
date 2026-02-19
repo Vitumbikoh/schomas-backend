@@ -5,6 +5,7 @@ import { StudentAcademicRecord, StudentStatus } from '../entities/student-academ
 import { ExpectedFee, FeeCategory } from '../entities/expected-fee.entity';
 import { PaymentAllocation, AllocationReason } from '../entities/payment-allocation.entity';
 import { FeePayment } from '../entities/fee-payment.entity';
+import { Payment } from '../entities/payment.entity';
 import { FeeStructure } from '../entities/fee-structure.entity';
 import { Term } from '../../settings/entities/term.entity';
 import { Student } from '../../user/entities/student.entity';
@@ -82,6 +83,8 @@ export class EnhancedFinanceService {
     private allocationRepo: Repository<PaymentAllocation>,
     @InjectRepository(FeePayment)
     private paymentRepo: Repository<FeePayment>,
+    @InjectRepository(Payment)
+    private paymentCaptureRepo: Repository<Payment>,
     @InjectRepository(FeeStructure)
     private feeStructureRepo: Repository<FeeStructure>,
     @InjectRepository(Term)
@@ -570,6 +573,23 @@ export class EnhancedFinanceService {
         throw new BadRequestException('Allocations exceed payment amount');
       }
 
+      // ── Trap the full cash amount in the dedicated `payments` table ──────────
+      // One record per payment session regardless of how the money is allocated.
+      const capturedPayment = this.paymentCaptureRepo.create({
+        amount: Number(dto.amount),
+        studentId: student.id,
+        termId: paymentTerm.id,
+        schoolId: schoolId || (student as any)?.schoolId || null,
+        paymentMethod: (dto.paymentMethod || 'cash') as any,
+        receiptNumber: dto.receiptNumber || null,
+        paymentDate: new Date(dto.paymentDate),
+        notes: dto.notes || null,
+        status: 'completed',
+        feePaymentId: null, // will be updated after first FeePayment is saved below
+      });
+      const savedCapture = await this.paymentCaptureRepo.save(capturedPayment);
+      // ─────────────────────────────────────────────────────────────────────────
+
       // Create one FeePayment per allocation so each allocation has its own receipt/transaction entry
       const createdPayments: FeePayment[] = [];
       const allocations: PaymentAllocation[] = [];
@@ -600,6 +620,11 @@ export class EnhancedFinanceService {
 
         const savedAllocPayment = await queryRunner.manager.save(allocPayment);
         createdPayments.push(savedAllocPayment);
+
+        // Link capture record to the first FeePayment for traceability
+        if (createdPayments.length === 1 && savedCapture.feePaymentId === null) {
+          await this.paymentCaptureRepo.update(savedCapture.id, { feePaymentId: savedAllocPayment.id });
+        }
 
         const alloc = queryRunner.manager.create(PaymentAllocation, {
           schoolId: savedAllocPayment.schoolId as any,
@@ -678,15 +703,28 @@ export class EnhancedFinanceService {
     overdue: number;
     overdueFromPreviousTerms: number;
     credits: number;
+    /** Raw cash physically collected in this term (from `payments` table). */
     actualRevenue: number;
+    /** Portion of collected cash applied to THIS term's expected fees (allocation-based). */
+    termFeesApplied: number;
     allocatedToPreviousTerms: number;
     allocatedToFutureTerms: number;
   }> {
     const term = await this.termRepo.findOne({ where: { id: termId } });
     if (!term) throw new BadRequestException('Term not found');
 
-    // 1) Revenue APPLIED TO this term (allocation-based; authoritative for term performance)
-    const actualRevenueRow = await this.allocationRepo
+    // 1) Cash PHYSICALLY RECEIVED in this term (from the dedicated `payments` table)
+    const cashCollectedRow = await this.paymentCaptureRepo
+      .createQueryBuilder('pm')
+      .select('COALESCE(SUM(pm.amount), 0)', 'sum')
+      .where('pm.termId = :termId', { termId })
+      .andWhere('pm.status = :status', { status: 'completed' })
+      .andWhere(schoolId ? 'pm.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+      .getRawOne();
+    const actualRevenue = parseFloat(cashCollectedRow?.sum || '0');
+
+    // 2) Portion of payments APPLIED to this term via allocations (term fees paid)
+    const termFeesAppliedRow = await this.allocationRepo
       .createQueryBuilder('pa')
       .innerJoin('pa.payment', 'p')
       .select('COALESCE(SUM(pa.allocatedAmount), 0)', 'sum')
@@ -694,14 +732,14 @@ export class EnhancedFinanceService {
       .andWhere('p.status = :status', { status: 'completed' })
       .andWhere(schoolId ? 'pa.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
       .getRawOne();
-    const actualRevenue = parseFloat(actualRevenueRow?.sum || '0');
+    const termFeesApplied = parseFloat(termFeesAppliedRow?.sum || '0');
 
-    // 2) Expected/pending for selected term
+    // 3) Expected/pending for selected term — Pending = Expected - termFeesApplied
     let pending = 0;
     try {
       const statuses = await this.getTermStudentFeeStatuses(termId, schoolId);
       const expected = statuses.reduce((s, st) => s + Number(st.expectedAmount || 0), 0);
-      pending = Math.max(0, expected - actualRevenue);
+      pending = Math.max(0, expected - termFeesApplied);
     } catch {
       pending = 0;
     }
@@ -710,7 +748,7 @@ export class EnhancedFinanceService {
     const isTermCompleted = new Date() > new Date(term.endDate);
     const overdue = isTermCompleted ? pending : 0;
 
-    // 3) Money RECEIVED in this term (term of collection, not paymentDate window)
+    // 4) Money RECEIVED in this term (from fee_payment table — for allocation breakdown)
     const paymentsInTerm = await this.paymentRepo
       .createQueryBuilder('p')
       .where('p.status = :status', { status: 'completed' })
@@ -718,7 +756,7 @@ export class EnhancedFinanceService {
       .andWhere(schoolId ? 'p.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
       .getMany();
 
-    const totalCollected = paymentsInTerm.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const totalCollected = actualRevenue; // same value - cash physically collected in term
     const paymentIds = paymentsInTerm.map((p) => p.id);
 
     // 4) Track how same-term collections were allocated (current vs previous vs future terms)
@@ -788,7 +826,7 @@ export class EnhancedFinanceService {
     }
 
     // totalPaid retained for compatibility with existing frontend expectations.
-    const totalPaid = actualRevenue;
+    const totalPaid = termFeesApplied;
     return {
       totalCollected,
       totalPaid,
@@ -797,6 +835,7 @@ export class EnhancedFinanceService {
       overdueFromPreviousTerms,
       credits,
       actualRevenue,
+      termFeesApplied,
       allocatedToPreviousTerms,
       allocatedToFutureTerms,
     };

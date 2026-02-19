@@ -28,6 +28,7 @@ import { StudentFeeExpectationService } from './student-fee-expectation.service'
 import { Term } from '../settings/entities/term.entity';
 import { AcademicCalendar } from '../settings/entities/academic-calendar.entity';
 import { PaymentAllocation } from './entities/payment-allocation.entity';
+import { Payment } from './entities/payment.entity';
 
 @Injectable()
 export class FinanceService {
@@ -59,6 +60,8 @@ export class FinanceService {
     private readonly academicCalendarRepository: Repository<AcademicCalendar>,
     @InjectRepository(PaymentAllocation)
     private readonly paymentAllocationRepository: Repository<PaymentAllocation>,
+    @InjectRepository(Payment)
+    private readonly paymentCaptureRepository: Repository<Payment>,
   ) {}
   /**
    * Monthly revenue trends for the last N months (defaults to 6)
@@ -937,6 +940,26 @@ export class FinanceService {
         const duration = Date.now() - startTime;
         console.log(`Full payment allocated across ${savedPayments.length} fee types in ${duration}ms for student ${student.id}`);
 
+        // ── Trap total cash collected in the `payments` table ──────────────────
+        try {
+          const capture = this.paymentCaptureRepository.create({
+            amount: Number(processPaymentDto.amount),
+            studentId: student.id,
+            termId: currentTerm.id,
+            schoolId: user.schoolId || null,
+            paymentMethod: (processPaymentDto.paymentMethod || 'cash') as any,
+            receiptNumber: processPaymentDto.receiptNumber || null,
+            paymentDate: new Date(processPaymentDto.paymentDate),
+            notes: processPaymentDto.notes || null,
+            status: 'completed',
+            feePaymentId: savedPayments[0]?.id || null,
+          });
+          await this.paymentCaptureRepository.save(capture);
+        } catch (captureErr) {
+          console.warn('Failed to write to payments table (full alloc):', (captureErr as any)?.message);
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         return {
           success: true,
           payments: savedPayments.map(sp => ({
@@ -967,6 +990,26 @@ export class FinanceService {
       });
       console.log('Payment object created with schoolId:', payment.schoolId);
       savedPayment = await this.paymentRepository.save(payment);
+
+      // ── Trap cash collected in the `payments` table ────────────────────────
+      try {
+        const capture = this.paymentCaptureRepository.create({
+          amount: Number(processPaymentDto.amount),
+          studentId: student.id,
+          termId: currentTerm.id,
+          schoolId: user.schoolId || null,
+          paymentMethod: (processPaymentDto.paymentMethod || 'cash') as any,
+          receiptNumber: processPaymentDto.receiptNumber || null,
+          paymentDate: new Date(processPaymentDto.paymentDate),
+          notes: processPaymentDto.notes || null,
+          status: 'completed',
+          feePaymentId: savedPayment.id,
+        });
+        await this.paymentCaptureRepository.save(capture);
+      } catch (captureErr) {
+        console.warn('Failed to write to payments table:', (captureErr as any)?.message);
+      }
+      // ─────────────────────────────────────────────────────────────────────
 
       // Auto-allocate the payment to fee structures
       await this.autoAllocatePayment(
