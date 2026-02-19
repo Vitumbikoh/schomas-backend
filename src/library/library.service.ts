@@ -149,7 +149,11 @@ export class LibraryService {
     const br = await this.borrowRepo.findOne({ where: { id: dto.borrowingId } });
     if (!br) throw new NotFoundException('Borrowing not found');
     if (actor.role !== 'SUPER_ADMIN' && actor.schoolId !== br.schoolId) throw new ForbiddenException('Scope mismatch');
-    if (br.returnedAt) throw new BadRequestException('Already returned');
+
+    // If already returned treat as idempotent success (helps when UI is stale or action retried)
+    if (br.returnedAt) {
+      return br; // nothing to change — don't modify book.availableCopies again
+    }
 
     br.returnedAt = dto.returnedAt ? new Date(dto.returnedAt) : new Date();
 
