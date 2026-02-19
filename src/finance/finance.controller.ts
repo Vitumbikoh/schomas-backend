@@ -1169,11 +1169,13 @@ export class FinanceController {
   @ApiOperation({ summary: 'Get combined financial report (fees by type + approved expenses)' })
   @ApiQuery({ name: 'startDate', required: false, type: String })
   @ApiQuery({ name: 'endDate', required: false, type: String })
+  @ApiQuery({ name: 'academicCalendarId', required: false, type: String })
   @ApiQuery({ name: 'schoolId', required: false, type: String })
   async getCombinedFinancialReport(
     @Request() req,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query('academicCalendarId') academicCalendarId?: string,
     @Query('schoolId') schoolIdOverride?: string,
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
@@ -1184,6 +1186,7 @@ export class FinanceController {
     const result = await this.financeService.getFinancialReportSummary({
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
+      academicCalendarId: academicCalendarId || undefined,
       schoolId: schoolScope,
       superAdmin: isSuper,
     });
@@ -1194,6 +1197,7 @@ export class FinanceController {
       filters: {
         startDate: startDate || null,
         endDate: endDate || null,
+        academicCalendarId: academicCalendarId || null,
         schoolId: schoolScope || null,
       },
     };
@@ -1203,21 +1207,29 @@ export class FinanceController {
   @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get term-based financial report with carry-forward balances' })
   @ApiQuery({ name: 'schoolId', required: false, type: String })
+  @ApiQuery({ name: 'academicCalendarId', required: false, type: String })
   @ApiQuery({ name: 'includeCarryForward', required: false, type: Boolean })
   async getTermBasedFinancialReport(
     @Request() req,
     @Query('schoolId') schoolIdOverride?: string,
-    @Query('includeCarryForward') includeCarryForward?: boolean,
+    @Query('academicCalendarId') academicCalendarId?: string,
+    @Query('includeCarryForward') includeCarryForward?: string | boolean,
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const schoolScope = isSuper
       ? schoolIdOverride || req.user?.schoolId
       : req.user?.schoolId;
 
+    const includeCarryForwardBool =
+      typeof includeCarryForward === 'string'
+        ? includeCarryForward.toLowerCase() !== 'false'
+        : includeCarryForward !== false;
+
     const result = await this.financeService.getTermBasedFinancialReport({
       schoolId: schoolScope,
+      academicCalendarId: academicCalendarId || undefined,
       superAdmin: isSuper,
-      includeCarryForward: includeCarryForward !== false, // Default to true
+      includeCarryForward: includeCarryForwardBool, // Default to true
     });
 
     return {

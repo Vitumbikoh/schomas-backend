@@ -295,6 +295,7 @@ export class FinanceService {
   async getFinancialReportSummary(params: {
     startDate?: Date;
     endDate?: Date;
+    academicCalendarId?: string;
     schoolId?: string;
     superAdmin?: boolean;
   }): Promise<{
@@ -306,84 +307,137 @@ export class FinanceService {
     };
     trends: Array<{ month: string; fees: number; expenses: number }>;
   }> {
-    const { startDate, endDate, schoolId, superAdmin = false } = params || {};
+    const { startDate, endDate, academicCalendarId, schoolId, superAdmin = false } = params || {};
 
-    // Build base where filters
-    const feeWhere: any = { status: 'completed' };
-    const expenseWhere: any = { status: 'Approved' as any };
+    if (!superAdmin && !schoolId) {
+      return {
+        totals: { totalFees: 0, totalByType: [], totalApprovedExpenses: 0, netBalance: 0 },
+        trends: [],
+      };
+    }
 
-    // Term scoping is already applied in some places, but for reports we'll honor date range primarily
-    if (!superAdmin) {
-      if (!schoolId) {
+    let calendarTermIds: string[] = [];
+    if (academicCalendarId) {
+      const termRows = await this.termRepository
+        .createQueryBuilder('term')
+        .where('term.id IS NOT NULL')
+        .andWhere('term.academicCalendarId = :academicCalendarId', { academicCalendarId })
+        .andWhere(schoolId ? 'term.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+        .getMany();
+      calendarTermIds = termRows.map((t) => t.id);
+      if (calendarTermIds.length === 0) {
         return {
           totals: { totalFees: 0, totalByType: [], totalApprovedExpenses: 0, netBalance: 0 },
           trends: [],
         };
       }
-      feeWhere.schoolId = schoolId;
-      expenseWhere.schoolId = schoolId;
-    } else if (schoolId) {
-      feeWhere.schoolId = schoolId;
-      expenseWhere.schoolId = schoolId;
     }
 
-    if (startDate && endDate) {
-      feeWhere.paymentDate = Between(startDate, endDate);
-      expenseWhere.approvedDate = Between(startDate, endDate);
-    }
-
-    // Totals by paymentType
-    const feeTotalsByTypeRaw = await this.paymentRepository
+    // Revenue by fee type (FeePayment) for category breakdown
+    const feeTotalsByTypeQb = this.paymentRepository
       .createQueryBuilder('payment')
       .select('payment.paymentType', 'paymentType')
-      .addSelect('SUM(payment.amount)', 'sum')
+      .addSelect('COALESCE(SUM(payment.amount), 0)', 'sum')
       .where('payment.status = :status', { status: 'completed' })
-      .andWhere(feeWhere.schoolId ? 'payment.schoolId = :schoolId' : '1=1', feeWhere.schoolId ? { schoolId: feeWhere.schoolId } : {})
-      .andWhere(startDate && endDate ? 'payment.paymentDate BETWEEN :start AND :end' : '1=1', startDate && endDate ? { start: startDate, end: endDate } : {})
+      .andWhere(schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {});
+
+    if (calendarTermIds.length > 0) {
+      feeTotalsByTypeQb.andWhere('payment.termId IN (:...termIds)', { termIds: calendarTermIds });
+    }
+    if (startDate) {
+      feeTotalsByTypeQb.andWhere('payment.paymentDate >= :start', { start: startDate });
+    }
+    if (endDate) {
+      feeTotalsByTypeQb.andWhere('payment.paymentDate <= :end', { end: endDate });
+    }
+
+    const feeTotalsByTypeRaw = await feeTotalsByTypeQb
       .groupBy('payment.paymentType')
       .getRawMany();
+    const totalByType = feeTotalsByTypeRaw.map((r: any) => ({
+      type: r.paymentType || 'other',
+      amount: parseFloat(r.sum || '0'),
+    }));
 
-    const totalByType = feeTotalsByTypeRaw.map((r: any) => ({ type: r.paymentType || 'other', amount: parseFloat(r.sum || '0') }));
-    const totalFees = totalByType.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+    // Total revenue from cashbook table (`payments`) = actual revenue
+    const totalRevenueQb = this.paymentCaptureRepository
+      .createQueryBuilder('payment')
+      .select('COALESCE(SUM(payment.amount), 0)', 'sum')
+      .where('payment.status = :status', { status: 'completed' })
+      .andWhere(schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {});
+    if (calendarTermIds.length > 0) {
+      totalRevenueQb.andWhere('payment.termId IN (:...termIds)', { termIds: calendarTermIds });
+    }
+    if (startDate) {
+      totalRevenueQb.andWhere('payment.paymentDate >= :start', { start: startDate });
+    }
+    if (endDate) {
+      totalRevenueQb.andWhere('payment.paymentDate <= :end', { end: endDate });
+    }
+    const totalRevenueRaw = await totalRevenueQb.getRawOne();
+    const totalFees = parseFloat(totalRevenueRaw?.sum || '0');
 
-    // Total approved expenses (use approvedAmount when present else amount)
+    // Total approved/paid expenses
     const approvedExpensesQb = this.expenseRepository
       .createQueryBuilder('expense')
       .select('COALESCE(SUM(COALESCE(expense.approvedAmount, expense.amount)), 0)', 'sum')
-      .where('expense.status = :status', { status: 'Approved' })
-      .andWhere(expenseWhere.schoolId ? 'expense.schoolId = :schoolId' : '1=1', expenseWhere.schoolId ? { schoolId: expenseWhere.schoolId } : {})
-      .andWhere(startDate && endDate ? 'expense.approvedDate BETWEEN :start AND :end' : '1=1', startDate && endDate ? { start: startDate, end: endDate } : {});
+      .where('expense.status IN (:...statuses)', { statuses: ['Approved', 'Paid'] })
+      .andWhere(schoolId ? 'expense.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {});
+    if (calendarTermIds.length > 0) {
+      approvedExpensesQb.andWhere('expense.termId IN (:...termIds)', { termIds: calendarTermIds });
+    }
+    if (startDate) {
+      approvedExpensesQb.andWhere('COALESCE(expense.paidDate, expense.approvedDate, expense.requestDate) >= :start', { start: startDate });
+    }
+    if (endDate) {
+      approvedExpensesQb.andWhere('COALESCE(expense.paidDate, expense.approvedDate, expense.requestDate) <= :end', { end: endDate });
+    }
     const approvedExpensesRaw = await approvedExpensesQb.getRawOne();
     const totalApprovedExpenses = parseFloat(approvedExpensesRaw?.sum || '0');
-
     const netBalance = totalFees - totalApprovedExpenses;
 
-    // Monthly trends combining fees and expenses
-    // Fees by month
-    const feeTrendsRaw = await this.paymentRepository
+    // Monthly revenue trends from cashbook (`payments`)
+    const feeTrendsQb = this.paymentCaptureRepository
       .createQueryBuilder('payment')
       .select("TO_CHAR(payment.paymentDate, 'YYYY-MM')", 'month')
-      .addSelect('SUM(payment.amount)', 'fees')
+      .addSelect('COALESCE(SUM(payment.amount), 0)', 'fees')
       .where('payment.status = :status', { status: 'completed' })
-      .andWhere(feeWhere.schoolId ? 'payment.schoolId = :schoolId' : '1=1', feeWhere.schoolId ? { schoolId: feeWhere.schoolId } : {})
-      .andWhere(startDate && endDate ? 'payment.paymentDate BETWEEN :start AND :end' : '1=1', startDate && endDate ? { start: startDate, end: endDate } : {})
+      .andWhere(schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {});
+    if (calendarTermIds.length > 0) {
+      feeTrendsQb.andWhere('payment.termId IN (:...termIds)', { termIds: calendarTermIds });
+    }
+    if (startDate) {
+      feeTrendsQb.andWhere('payment.paymentDate >= :start', { start: startDate });
+    }
+    if (endDate) {
+      feeTrendsQb.andWhere('payment.paymentDate <= :end', { end: endDate });
+    }
+    const feeTrendsRaw = await feeTrendsQb
       .groupBy("TO_CHAR(payment.paymentDate, 'YYYY-MM')")
       .orderBy("TO_CHAR(payment.paymentDate, 'YYYY-MM')", 'ASC')
       .getRawMany();
 
-    // Expenses by month (approved)
-    const expenseTrendsRaw = await this.expenseRepository
+    // Monthly expense trends
+    const expenseTrendsQb = this.expenseRepository
       .createQueryBuilder('expense')
-      .select("TO_CHAR(expense.approvedDate, 'YYYY-MM')", 'month')
-      .addSelect('SUM(COALESCE(expense.approvedAmount, expense.amount))', 'expenses')
-      .where('expense.status = :status', { status: 'Approved' })
-      .andWhere(expenseWhere.schoolId ? 'expense.schoolId = :schoolId' : '1=1', expenseWhere.schoolId ? { schoolId: expenseWhere.schoolId } : {})
-      .andWhere(startDate && endDate ? 'expense.approvedDate BETWEEN :start AND :end' : '1=1', startDate && endDate ? { start: startDate, end: endDate } : {})
-      .groupBy("TO_CHAR(expense.approvedDate, 'YYYY-MM')")
-      .orderBy("TO_CHAR(expense.approvedDate, 'YYYY-MM')", 'ASC')
+      .select("TO_CHAR(COALESCE(expense.paidDate, expense.approvedDate, expense.requestDate), 'YYYY-MM')", 'month')
+      .addSelect('COALESCE(SUM(COALESCE(expense.approvedAmount, expense.amount)), 0)', 'expenses')
+      .where('expense.status IN (:...statuses)', { statuses: ['Approved', 'Paid'] })
+      .andWhere(schoolId ? 'expense.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {});
+    if (calendarTermIds.length > 0) {
+      expenseTrendsQb.andWhere('expense.termId IN (:...termIds)', { termIds: calendarTermIds });
+    }
+    if (startDate) {
+      expenseTrendsQb.andWhere('COALESCE(expense.paidDate, expense.approvedDate, expense.requestDate) >= :start', { start: startDate });
+    }
+    if (endDate) {
+      expenseTrendsQb.andWhere('COALESCE(expense.paidDate, expense.approvedDate, expense.requestDate) <= :end', { end: endDate });
+    }
+    const expenseTrendsRaw = await expenseTrendsQb
+      .groupBy("TO_CHAR(COALESCE(expense.paidDate, expense.approvedDate, expense.requestDate), 'YYYY-MM')")
+      .orderBy("TO_CHAR(COALESCE(expense.paidDate, expense.approvedDate, expense.requestDate), 'YYYY-MM')", 'ASC')
       .getRawMany();
 
-    // Merge trends on month
     const monthMap = new Map<string, { fees: number; expenses: number }>();
     for (const r of feeTrendsRaw) {
       const m = r.month as string;
@@ -400,12 +454,7 @@ export class FinanceService {
       .map(([month, v]) => ({ month, fees: v.fees, expenses: v.expenses }));
 
     return {
-      totals: {
-        totalFees,
-        totalByType,
-        totalApprovedExpenses,
-        netBalance,
-      },
+      totals: { totalFees, totalByType, totalApprovedExpenses, netBalance },
       trends,
     };
   }
@@ -413,29 +462,67 @@ export class FinanceService {
   // Term-based financial report with carry-forward balances
   async getTermBasedFinancialReport(params: {
     schoolId?: string;
+    academicCalendarId?: string;
     superAdmin?: boolean;
     includeCarryForward?: boolean;
   }): Promise<{
+    academicCalendar: {
+      id: string;
+      name: string;
+      startDate?: Date;
+      endDate?: Date;
+    } | null;
+    calendarAnalysis: {
+      totalRevenue: number;
+      totalExpenses: number;
+      netProfit: number;
+      profitMargin: number;
+      previousAcademicCalendarCarryForward: number;
+    };
     currentTerm: {
       termId: string;
       termName: string;
       startDate: Date;
       endDate: Date;
       revenue: number;
+      actualRevenue: number;
       expenses: number;
+      baseProfit: number;
       profit: number;
       profitMargin: number;
-    };
+      previousTermBroughtForward: number;
+    } | null;
+    previousTerm: {
+      termId: string;
+      termName: string;
+      startDate: Date;
+      endDate: Date;
+      revenue: number;
+      actualRevenue: number;
+      expenses: number;
+      baseProfit: number;
+      profit: number;
+      profitMargin: number;
+    } | null;
     previousTerms: Array<{
       termId: string;
       termName: string;
       startDate: Date;
       endDate: Date;
       revenue: number;
+      actualRevenue: number;
       expenses: number;
+      baseProfit: number;
       profit: number;
       profitMargin: number;
     }>;
+    previousTermsSummary: {
+      broughtForwardProfit: number;
+      totalRevenue: number;
+      totalExpenses: number;
+      cumulativeProfit: number;
+      profitMargin: number;
+    };
     cumulative: {
       totalRevenue: number;
       totalExpenses: number;
@@ -445,96 +532,43 @@ export class FinanceService {
     };
     carryForwardBalance: number;
   }> {
-    const { schoolId, superAdmin = false, includeCarryForward = true } = params || {};
+    const { schoolId, academicCalendarId, superAdmin = false, includeCarryForward = true } = params || {};
 
     if (!superAdmin && !schoolId) {
       throw new BadRequestException('School ID is required');
     }
 
-    // Helper function to calculate financial data for a term
-    const calculateTermFinancials = async (term: Term) => {
-      // Revenue: completed payments FOR THIS TERM (by termId, not date range)
-      // This matches what the Finance page shows
-      const revenueResult = await this.paymentRepository
-        .createQueryBuilder('payment')
-        .select('COALESCE(SUM(payment.amount), 0)', 'revenue')
-        .where('payment.schoolId = :schoolId', { schoolId })
-        .andWhere('payment.status = :status', { status: 'completed' })
-        .andWhere('payment.termId = :termId', { termId: term.id })
-        .getRawOne();
+    const calendarQb = this.academicCalendarRepository
+      .createQueryBuilder('ac')
+      .where(schoolId ? 'ac.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {});
 
-      // Expenses: approved/paid expenses FOR THIS TERM
-      // Prefer direct termId match when available, otherwise include by date range within term
-      const expenseResult = await this.expenseRepository
-        .createQueryBuilder('expense')
-        .select('COALESCE(SUM(COALESCE(expense.approvedAmount, expense.amount)), 0)', 'expenses')
-        .where('expense.schoolId = :schoolId', { schoolId })
-        .andWhere('expense.status IN (:...statuses)', { statuses: ['Approved', 'Paid'] })
-        .andWhere('(expense.termId = :termId OR (expense.approvedDate BETWEEN :start AND :end OR expense.paidDate BETWEEN :start AND :end))', {
-          termId: term.id,
-          start: term.startDate,
-          end: term.endDate,
-        })
-        .getRawOne();
-
-      const revenue = parseFloat(revenueResult?.revenue || '0');
-      const expenses = parseFloat(expenseResult?.expenses || '0');
-      const profit = revenue - expenses;
-      const profitMargin = revenue > 0 ? (profit / revenue) * 100 : 0;
-
-      return {
-        termId: term.id,
-        termName: `${term.academicCalendar?.term || 'Unknown'} Term ${term.termNumber}`,
-        startDate: term.startDate,
-        endDate: term.endDate,
-        revenue,
-        expenses,
-        profit,
-        profitMargin,
-      };
-    };
-
-    // Get current term (isCurrent = true)
-    const currentTerm = await this.financeRepository.manager
-      .createQueryBuilder(Term, 'term')
-      .leftJoinAndSelect('term.academicCalendar', 'calendar')
-      .leftJoinAndSelect('term.period', 'period')
-      .where('term.schoolId = :schoolId', { schoolId })
-      .andWhere('term.isCurrent = :isCurrent', { isCurrent: true })
-      .getOne();
-
-    // Get all completed terms for the school, ordered by end date
-    const completedTerms = await this.financeRepository.manager
-      .createQueryBuilder(Term, 'term')
-      .leftJoinAndSelect('term.academicCalendar', 'calendar')
-      .leftJoinAndSelect('term.period', 'period')
-      .where('term.schoolId = :schoolId', { schoolId })
-      .andWhere('term.isCompleted = :isCompleted', { isCompleted: true })
-      .orderBy('term.endDate', 'ASC')
-      .getMany();
-
-    // Calculate current term data if it exists
-    let currentTermData = null;
-    if (currentTerm) {
-      currentTermData = await calculateTermFinancials(currentTerm);
+    if (academicCalendarId) {
+      calendarQb.andWhere('ac.id = :academicCalendarId', { academicCalendarId });
+    } else {
+      calendarQb.andWhere('ac.isActive = :isActive', { isActive: true });
     }
 
-    // Get the last 2 completed terms as "previous terms"
-    const previousTerms = completedTerms.slice(-2);
-    const previousTermsData = await Promise.all(
-      previousTerms.map(calculateTermFinancials)
-    );
-
-    // Calculate cumulative data
-    const allTermsData = [...previousTermsData];
-    if (currentTermData) {
-      allTermsData.push(currentTermData);
-    }
-
-    if (allTermsData.length === 0) {
+    const activeCalendar = await calendarQb.getOne();
+    if (!activeCalendar) {
       return {
+        academicCalendar: null,
+        calendarAnalysis: {
+          totalRevenue: 0,
+          totalExpenses: 0,
+          netProfit: 0,
+          profitMargin: 0,
+          previousAcademicCalendarCarryForward: 0,
+        },
         currentTerm: null,
+        previousTerm: null,
         previousTerms: [],
+        previousTermsSummary: {
+          broughtForwardProfit: 0,
+          totalRevenue: 0,
+          totalExpenses: 0,
+          cumulativeProfit: 0,
+          profitMargin: 0,
+        },
         cumulative: {
           totalRevenue: 0,
           totalExpenses: 0,
@@ -546,28 +580,180 @@ export class FinanceService {
       };
     }
 
-    const totalRevenue = allTermsData.reduce((sum, term) => sum + term.revenue, 0);
-    const totalExpenses = allTermsData.reduce((sum, term) => sum + term.expenses, 0);
-    const totalProfit = totalRevenue - totalExpenses;
-    const totalProfitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+    const termsInCalendarRaw = await this.termRepository
+      .createQueryBuilder('term')
+      .leftJoinAndSelect('term.academicCalendar', 'calendar')
+      .leftJoinAndSelect('term.period', 'period')
+      .where('term.academicCalendarId = :calendarId', { calendarId: activeCalendar.id })
+      .andWhere(schoolId ? 'term.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+      .orderBy('term.termNumber', 'ASC')
+      .addOrderBy('term.startDate', 'ASC')
+      .getMany();
 
-    // Calculate brought forward balance (cumulative profit from previous terms)
-    const broughtForward = previousTermsData.reduce((sum, term) => sum + term.profit, 0);
+    // Normalize term sequence by termNumber (Term 1 oldest, then 2, then 3, ...).
+    // This avoids relying on potentially inconsistent date metadata.
+    const termsInCalendar = [...termsInCalendarRaw].sort((a, b) => {
+      const aNum = Number(a.termNumber || 0);
+      const bNum = Number(b.termNumber || 0);
+      if (aNum !== bNum) return aNum - bNum;
+      const aStart = a.startDate ? new Date(a.startDate).getTime() : 0;
+      const bStart = b.startDate ? new Date(b.startDate).getTime() : 0;
+      return aStart - bStart;
+    });
 
-    // Calculate carry-forward balance (what will be brought forward to next term)
-    const carryForwardBalance = totalProfit;
+    const calculateTermFinancials = async (term: Term) => {
+      const revenueResult = await this.paymentCaptureRepository
+        .createQueryBuilder('payment')
+        .select('COALESCE(SUM(payment.amount), 0)', 'revenue')
+        .where('payment.status = :status', { status: 'completed' })
+        .andWhere('payment.termId = :termId', { termId: term.id })
+        .andWhere(schoolId ? 'payment.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+        .getRawOne();
+
+      const expenseResult = await this.expenseRepository
+        .createQueryBuilder('expense')
+        .select('COALESCE(SUM(COALESCE(expense.approvedAmount, expense.amount)), 0)', 'expenses')
+        .where('expense.status IN (:...statuses)', { statuses: ['Approved', 'Paid'] })
+        .andWhere(schoolId ? 'expense.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+        .andWhere(
+          '(expense.termId = :termId OR (COALESCE(expense.paidDate, expense.approvedDate, expense.requestDate) BETWEEN :start AND :end))',
+          { termId: term.id, start: term.startDate, end: term.endDate },
+        )
+        .getRawOne();
+
+      const revenue = parseFloat(revenueResult?.revenue || '0');
+      const expenses = parseFloat(expenseResult?.expenses || '0');
+      const baseProfit = revenue - expenses;
+      const profitMargin = revenue > 0 ? (baseProfit / revenue) * 100 : 0;
+
+      return {
+        termId: term.id,
+        termName: `${term.academicCalendar?.term || activeCalendar.term} Term ${term.termNumber}`,
+        startDate: term.startDate,
+        endDate: term.endDate,
+        revenue,
+        actualRevenue: revenue,
+        expenses,
+        baseProfit,
+        profit: baseProfit,
+        profitMargin,
+      };
+    };
+
+    const termFinancials = await Promise.all(termsInCalendar.map(calculateTermFinancials));
+
+    const currentTermRaw =
+      termsInCalendar.find((t) => t.isCurrent) ||
+      (termsInCalendar.length ? termsInCalendar[termsInCalendar.length - 1] : null);
+    const currentTermData = currentTermRaw
+      ? termFinancials.find((f) => f.termId === currentTermRaw.id) || null
+      : null;
+
+    // Resolve previous term by ordered position within the same academic calendar.
+    // This is more reliable than date comparisons when term boundaries touch.
+    const currentTermIndex = currentTermRaw
+      ? termsInCalendar.findIndex((t) => t.id === currentTermRaw.id)
+      : -1;
+
+    const previousTermRaw =
+      currentTermIndex > 0 ? termsInCalendar[currentTermIndex - 1] : null;
+
+    const previousTermData = previousTermRaw
+      ? termFinancials.find((f) => f.termId === previousTermRaw.id) || null
+      : null;
+
+    const termIndexById = new Map(termsInCalendar.map((t, idx) => [t.id, idx]));
+    const previousTerms =
+      currentTermIndex > 0
+        ? termFinancials.filter((f) => {
+            const idx = termIndexById.get(f.termId);
+            return typeof idx === 'number' && idx < currentTermIndex;
+          })
+        : currentTermRaw
+          ? []
+          : termFinancials.slice(0, Math.max(0, termFinancials.length - 1));
+
+    // Previous academic calendar carry-forward (profit carried into current calendar)
+    const calendarsOrdered = await this.academicCalendarRepository
+      .createQueryBuilder('ac')
+      .where(schoolId ? 'ac.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+      .orderBy('COALESCE(ac.startDate, ac.createdAt)', 'ASC')
+      .addOrderBy('ac.createdAt', 'ASC')
+      .getMany();
+    const currentCalendarIndex = calendarsOrdered.findIndex((c) => c.id === activeCalendar.id);
+    const previousCalendar = currentCalendarIndex > 0 ? calendarsOrdered[currentCalendarIndex - 1] : null;
+
+    let previousCalendarCarryForward = 0;
+    if (previousCalendar) {
+      const previousCalendarTerms = await this.termRepository
+        .createQueryBuilder('term')
+        .leftJoinAndSelect('term.academicCalendar', 'calendar')
+        .leftJoinAndSelect('term.period', 'period')
+        .where('term.academicCalendarId = :calendarId', { calendarId: previousCalendar.id })
+        .andWhere(schoolId ? 'term.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
+        .orderBy('term.termNumber', 'ASC')
+        .addOrderBy('term.startDate', 'ASC')
+        .getMany();
+
+      const previousCalendarFinancials = await Promise.all(previousCalendarTerms.map(calculateTermFinancials));
+      previousCalendarCarryForward = previousCalendarFinancials.reduce((sum, t) => sum + Number(t.baseProfit || 0), 0);
+    }
+
+    const calendarRevenue = termFinancials.reduce((sum, t) => sum + Number(t.revenue || 0), 0);
+    const calendarExpenses = termFinancials.reduce((sum, t) => sum + Number(t.expenses || 0), 0);
+    const calendarBaseProfit = calendarRevenue - calendarExpenses;
+    const calendarNetProfit = calendarBaseProfit + (includeCarryForward ? previousCalendarCarryForward : 0);
+    const calendarProfitMargin = calendarRevenue > 0 ? (calendarNetProfit / calendarRevenue) * 100 : 0;
+
+    const previousTermProfit = Number(previousTermData?.baseProfit || 0);
+    const currentTermWithCarry = currentTermData
+      ? {
+          ...currentTermData,
+          previousTermBroughtForward: includeCarryForward ? previousTermProfit : 0,
+          profit: Number(currentTermData.baseProfit || 0) + (includeCarryForward ? previousTermProfit : 0),
+          profitMargin:
+            Number(currentTermData.revenue || 0) > 0
+              ? ((Number(currentTermData.baseProfit || 0) + (includeCarryForward ? previousTermProfit : 0)) /
+                  Number(currentTermData.revenue || 0)) *
+                100
+              : 0,
+        }
+      : null;
+
+    const previousTermsSummary = {
+      broughtForwardProfit: includeCarryForward ? previousTermProfit : 0,
+      totalRevenue: Number(previousTermData?.revenue || 0),
+      totalExpenses: Number(previousTermData?.expenses || 0),
+      cumulativeProfit: Number(previousTermData?.baseProfit || 0),
+      profitMargin: Number(previousTermData?.profitMargin || 0),
+    };
 
     return {
-      currentTerm: currentTermData,
-      previousTerms: previousTermsData,
-      cumulative: {
-        totalRevenue,
-        totalExpenses,
-        totalProfit,
-        totalProfitMargin,
-        broughtForward,
+      academicCalendar: {
+        id: activeCalendar.id,
+        name: activeCalendar.term,
+        startDate: activeCalendar.startDate,
+        endDate: activeCalendar.endDate,
       },
-      carryForwardBalance,
+      calendarAnalysis: {
+        totalRevenue: calendarRevenue,
+        totalExpenses: calendarExpenses,
+        netProfit: calendarNetProfit,
+        profitMargin: calendarProfitMargin,
+        previousAcademicCalendarCarryForward: includeCarryForward ? previousCalendarCarryForward : 0,
+      },
+      currentTerm: currentTermWithCarry,
+      previousTerm: previousTermData,
+      previousTerms,
+      previousTermsSummary,
+      cumulative: {
+        totalRevenue: calendarRevenue,
+        totalExpenses: calendarExpenses,
+        totalProfit: calendarBaseProfit,
+        totalProfitMargin: calendarRevenue > 0 ? (calendarBaseProfit / calendarRevenue) * 100 : 0,
+        broughtForward: includeCarryForward ? previousTermProfit : 0,
+      },
+      carryForwardBalance: includeCarryForward ? previousCalendarCarryForward : 0,
     };
   }
 

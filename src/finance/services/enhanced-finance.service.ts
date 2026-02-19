@@ -458,7 +458,53 @@ export class EnhancedFinanceService {
       qb.andWhere('ar.schoolId = :schoolId', { schoolId });
     }
     
-    const academicRecords = await qb.getMany();
+    let academicRecords = await qb.getMany();
+
+    // Fallback: if no academic records exist (common for historical terms),
+    // derive student list from historical snapshots or current student-term mapping.
+    if (academicRecords.length === 0) {
+      try {
+        const term = await this.termRepo.findOne({
+          where: { id: termId },
+          relations: ['academicCalendar'],
+        });
+        const currentTerm = await this.termRepo.findOne({
+          where: { isCurrent: true, ...(schoolId && { schoolId }) },
+          relations: ['academicCalendar'],
+        });
+        const isHistoricalTerm = !!term && ((term.isCompleted === true) || (currentTerm && term.id !== currentTerm.id));
+
+        if (isHistoricalTerm) {
+          const historicalRows = await this.studentRepo.query(
+            `SELECT DISTINCT sah.student_id as "studentId"
+             FROM student_academic_history sah
+             INNER JOIN student s ON s.id = sah.student_id
+             WHERE sah.term_id::uuid = $1
+               AND s."isActive" = true
+               AND s."graduationTermId" IS NULL
+               AND COALESCE(s."inactivationReason", '') != 'graduated'
+               ${schoolId ? 'AND sah.school_id::uuid = $2' : ''}`,
+            schoolId ? [termId, schoolId] : [termId]
+          );
+          academicRecords = historicalRows.map((r: any) => ({ studentId: r.studentId, termId } as any));
+        } else {
+          const studentQb = this.studentRepo
+            .createQueryBuilder('s')
+            .select(['s.id'])
+            .where('s.termId = :termId', { termId })
+            .andWhere('s.isActive = :isActive', { isActive: true })
+            .andWhere('s.graduationTermId IS NULL')
+            .andWhere("COALESCE(s.inactivationReason, '') != :gradReason", { gradReason: 'graduated' });
+          if (schoolId) {
+            studentQb.andWhere('s.schoolId = :schoolId', { schoolId });
+          }
+          const studentRows = await studentQb.getMany();
+          academicRecords = studentRows.map((s: any) => ({ studentId: s.id, termId } as any));
+        }
+      } catch (error) {
+        this.logger.warn(`Fallback student lookup failed for term ${termId}: ${error.message}`);
+      }
+    }
 
     const statuses: StudentFeeStatus[] = [];
     
@@ -555,29 +601,59 @@ export class EnhancedFinanceService {
     };
   }
 
-  private async getTermEffectiveDueDate(term: Term, schoolId?: string): Promise<Date> {
-    try {
-      const row = await this.feeStructureRepo
-        .createQueryBuilder('fs')
-        .select('MAX(fs.dueDate)', 'maxDueDate')
-        .where('fs.termId = :termId', { termId: term.id })
-        .andWhere('fs.isActive = true')
-        .andWhere('fs.isOptional = false')
-        .andWhere('fs.dueDate IS NOT NULL')
-        .andWhere(schoolId ? 'fs.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
-        .getRawOne();
+  private async calculateTermOverdueByFeeDueDate(term: Term, schoolId?: string): Promise<number> {
+    const statuses = await this.getTermStudentFeeStatuses(term.id, schoolId);
+    if (!statuses.length) return 0;
 
-      if (row?.maxDueDate) {
-        const parsed = new Date(row.maxDueDate);
-        if (!Number.isNaN(parsed.getTime())) {
-          return parsed;
+    const feeStructures = await this.feeStructureRepo.find({
+      where: {
+        termId: term.id,
+        isActive: true,
+        isOptional: false,
+        ...(schoolId ? { schoolId } : {}),
+      },
+    });
+
+    const nowTs = Date.now();
+    const termEndTs = new Date(term.endDate).getTime();
+    let totalOverdue = 0;
+
+    for (const status of statuses) {
+      const paidAmount = Number(status.paidAmount || 0);
+      const outstandingAmount = Math.max(0, Number(status.outstandingAmount || 0));
+
+      const applicableFees = feeStructures
+        .filter((fs) => !fs.classId || (status.classId && fs.classId === status.classId))
+        .map((fs) => {
+          const fallback = new Date(term.endDate);
+          const due = fs.dueDate ? new Date(fs.dueDate) : fallback;
+          due.setHours(23, 59, 59, 999);
+          return { amount: Number(fs.amount || 0), dueTs: due.getTime() };
+        })
+        .filter((item) => item.amount > 0)
+        .sort((a, b) => a.dueTs - b.dueTs);
+
+      // Fallback: if fee items are missing, use the term-level overdue rule.
+      if (!applicableFees.length) {
+        if (nowTs > termEndTs) {
+          totalOverdue += outstandingAmount;
+        }
+        continue;
+      }
+
+      let remainingPaid = paidAmount;
+      for (const feeItem of applicableFees) {
+        const covered = Math.min(remainingPaid, feeItem.amount);
+        const itemOutstanding = Math.max(0, feeItem.amount - covered);
+        remainingPaid = Math.max(0, remainingPaid - covered);
+
+        if (nowTs > feeItem.dueTs) {
+          totalOverdue += itemOutstanding;
         }
       }
-    } catch (error) {
-      this.logger.warn(`Failed to load due date for term ${term.id}: ${error.message}`);
     }
 
-    return new Date(term.endDate);
+    return totalOverdue;
   }
 
   /**
@@ -836,21 +912,9 @@ export class EnhancedFinanceService {
         .andWhere(schoolId ? 't.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {})
         .getMany();
 
-      const now = new Date();
       for (const scopedTerm of allTerms) {
         try {
-          const effectiveDueDate = await this.getTermEffectiveDueDate(scopedTerm, schoolId);
-          if (!(effectiveDueDate && now > effectiveDueDate)) {
-            continue;
-          }
-
-          const statuses = await this.getTermStudentFeeStatuses(scopedTerm.id, schoolId);
-          const termOutstanding = statuses.reduce((sum, status) => {
-            const expected = Number(status.expectedAmount || 0);
-            const paid = Number(status.paidAmount || 0);
-            const outstanding = Math.max(0, expected - paid);
-            return sum + outstanding;
-          }, 0);
+          const termOutstanding = await this.calculateTermOverdueByFeeDueDate(scopedTerm, schoolId);
           overdueFromPreviousTerms += termOutstanding;
         } catch (err) {
           this.logger.warn(`Failed to calculate overdue outstanding for term ${scopedTerm.id}: ${err.message}`);
