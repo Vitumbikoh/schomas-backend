@@ -249,7 +249,12 @@ export class ProfileService {
 
     try {
       // Get recent system logs for this user
-      const logs = await this.systemLoggingService.getLogsByUser(userId, limit);
+      const logs = await this.systemLoggingService.getLogsByUser(
+        userId,
+        limit,
+        user.schoolId || undefined,
+        user.role === Role.SUPER_ADMIN,
+      );
       
       if (logs && logs.length > 0) {
         return logs.map(log => ({
@@ -384,7 +389,13 @@ export class ProfileService {
 
   private async getLoginCount(userId: string): Promise<number> {
     try {
-      const logs = await this.systemLoggingService.getLogsByUser(userId, 1000);
+      const user = await this.userRepository.findOne({ where: { id: userId } });
+      const logs = await this.systemLoggingService.getLogsByUser(
+        userId,
+        1000,
+        user?.schoolId || undefined,
+        user?.role === Role.SUPER_ADMIN,
+      );
       const loginLogs = logs.filter(log => log.action === 'LOGIN');
       return loginLogs.length > 0 ? loginLogs.length : Math.floor(Math.random() * 50) + 10; // Demo data if no logs
     } catch {

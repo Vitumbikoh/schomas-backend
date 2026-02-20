@@ -1003,6 +1003,22 @@ export class TeachersService {
       }
     }
 
+    // Ensure phone number uniqueness within the same school
+    if (validatedDto.phoneNumber) {
+      const phone = validatedDto.phoneNumber.trim();
+      const qb = this.teacherRepository.createQueryBuilder('t')
+        .where('LOWER(t."phoneNumber") = LOWER(:phone)', { phone });
+      if (createTeacherDto.schoolId) {
+        qb.andWhere('t."schoolId" = :schoolId', { schoolId: createTeacherDto.schoolId });
+      } else {
+        qb.andWhere('t."schoolId" IS NULL');
+      }
+      const existing = await qb.getOne();
+      if (existing) {
+        throw new BadRequestException('Phone number already exists');
+      }
+    }
+
     const user = this.userRepository.create({
       username,
       email: validatedDto.email,
@@ -1041,6 +1057,23 @@ export class TeachersService {
 
     const teacher = await this.findOne(id);
     const { user: userData, ...teacherData } = updateTeacherDto;
+
+    // If phoneNumber is being updated, ensure uniqueness within school
+    if (teacherData.phoneNumber && teacherData.phoneNumber !== teacher.phoneNumber) {
+      const phone = (teacherData.phoneNumber || '').trim();
+      const qb = this.teacherRepository.createQueryBuilder('t')
+        .where('t.id != :id', { id })
+        .andWhere('LOWER(t."phoneNumber") = LOWER(:phone)', { phone });
+      if (teacher.schoolId) {
+        qb.andWhere('t."schoolId" = :schoolId', { schoolId: teacher.schoolId });
+      } else {
+        qb.andWhere('t."schoolId" IS NULL');
+      }
+      const existing = await qb.getOne();
+      if (existing) {
+        throw new BadRequestException('Phone number already exists');
+      }
+    }
 
     Object.assign(teacher, teacherData);
 

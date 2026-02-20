@@ -46,4 +46,10 @@ export class RequestContext {
     };
     return data;
   }
+
+  static setUser(user?: RequestUser) {
+    const current = storage.getStore();
+    if (!current) return;
+    current.user = user;
+  }
 }

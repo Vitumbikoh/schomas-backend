@@ -52,7 +52,9 @@ export class SystemLoggingService {
           timestamp: new Date().toISOString(),
           duration: logEntry.duration,
           errorMessage: logEntry.errorMessage,
-          stackTrace: logEntry.stackTrace
+          stackTrace: logEntry.stackTrace,
+          ipAddress: logEntry.ipAddress,
+          userAgent: logEntry.userAgent,
         },
         ipAddress: logEntry.ipAddress,
         userAgent: logEntry.userAgent,

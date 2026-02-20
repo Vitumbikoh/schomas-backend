@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
   OneToMany,
   ManyToOne,
+  Index,
 } from 'typeorm';
 import { User } from './user.entity';
 import { Course } from '../../course/entities/course.entity';
@@ -14,6 +15,7 @@ import { School } from '../../school/entities/school.entity';
 import { Exam } from 'src/exams/entities/exam.entity';
 import { Schedule } from 'src/schedule/entity/schedule.entity';
 
+@Index('UQ_teacher_phone_school', ['schoolId', 'phoneNumber'], { unique: true })
 @Entity()
 export class Teacher extends BaseEntity {
   @PrimaryGeneratedColumn('uuid')

@@ -109,12 +109,24 @@ export class ClassService {
         .createQueryBuilder('class')
         .where('class.id != :id', { id });
 
+      // Build the duplicate check using OR between name and numericalName
+      const parts: string[] = [];
+      const params: any = { id };
+
       if (updateClassDto.name) {
-        qb.andWhere('LOWER(class.name) = LOWER(:name)', { name: updateClassDto.name.trim() });
+        parts.push('LOWER(class.name) = LOWER(:name)');
+        params.name = updateClassDto.name.trim();
       }
+
       if (updateClassDto.numericalName !== undefined) {
-        qb.andWhere('class.numericalName = :numericalName', { numericalName: updateClassDto.numericalName });
+        parts.push('class.numericalName = :numericalName');
+        params.numericalName = updateClassDto.numericalName;
       }
+
+      if (parts.length > 0) {
+        qb.andWhere(`(${parts.join(' OR ')})`, params);
+      }
+
       if (schoolId) {
         qb.andWhere('class.schoolId = :schoolId', { schoolId });
       } else {

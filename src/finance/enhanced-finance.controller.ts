@@ -46,6 +46,17 @@ export class EnhancedFinanceController {
     private readonly carryForwardService: CarryForwardService,
   ) {}
 
+  private resolveSchoolId(req?: any): string | undefined {
+    const role = req?.user?.role;
+    if (role === Role.SUPER_ADMIN) {
+      return req?.query?.schoolId || req?.user?.schoolId;
+    }
+    if (role === Role.ADMIN || role === Role.FINANCE) {
+      return req?.user?.schoolId;
+    }
+    return req?.user?.schoolId;
+  }
+
   // =====================================================
   // SUMMARY & REPORTING ENDPOINTS
   // =====================================================
@@ -60,7 +71,7 @@ export class EnhancedFinanceController {
     @Query('academicCalendarId') academicCalendarId?: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
+    const schoolId = this.resolveSchoolId(req);
     
     return this.financeService.getTermFinanceSummary(termId, schoolId);
   }
@@ -75,7 +86,7 @@ export class EnhancedFinanceController {
     @Query('academicCalendarId') academicCalendarId?: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
+    const schoolId = this.resolveSchoolId(req);
     
     return this.financeService.getTermStudentFeeStatuses(termId, schoolId);
   }
@@ -89,7 +100,7 @@ export class EnhancedFinanceController {
     @Query('termId', ParseUUIDPipe) termId: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
+    const schoolId = this.resolveSchoolId(req);
     
     // Additional authorization for students
     if (req?.user?.role === Role.STUDENT && req.user.id !== studentId) {
@@ -103,7 +114,7 @@ export class EnhancedFinanceController {
   @Roles(Role.FINANCE, Role.ADMIN)
   @ApiOperation({ summary: 'Get analysis of overdue amounts across all terms' })
   async getOverdueAnalysis(@Request() req?: any) {
-    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
+    const schoolId = this.resolveSchoolId(req);
     
     return this.financeService.getOverdueAnalysis(schoolId);
   }
@@ -214,7 +225,7 @@ export class EnhancedFinanceController {
     @Param('termId', ParseUUIDPipe) termId: string,
     @Request() req?: any
   ) {
-    const schoolId = req?.user?.role === Role.ADMIN ? req.user.schoolId : undefined;
+    const schoolId = this.resolveSchoolId(req);
     
     return this.allocationService.getTermAllocations(termId, schoolId);
   }
@@ -227,8 +238,7 @@ export class EnhancedFinanceController {
     @Query('termId', ParseUUIDPipe) termId: string,
     @Request() req?: any
   ) {
-    const role = req?.user?.role;
-    const schoolId = role === Role.ADMIN || role === Role.FINANCE ? req.user.schoolId : undefined;
+    const schoolId = this.resolveSchoolId(req);
     return this.financeService.getTermAggregatedTotals(termId, schoolId);
   }
 

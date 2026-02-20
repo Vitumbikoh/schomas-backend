@@ -17,6 +17,47 @@ export class StudentFeeExpectationService {
     @InjectRepository(AcademicCalendar) private academicCalendarRepo: Repository<AcademicCalendar>,
   ) {}
 
+  private calculateStudentOverdueFromDueDates(params: {
+    feeStructures: FeeStructure[];
+    classId?: string | null;
+    paidAmount: number;
+    expectedAmount: number;
+    nowTs?: number;
+  }): number {
+    const { feeStructures, classId, paidAmount, expectedAmount } = params;
+    const nowTs = params.nowTs ?? Date.now();
+
+    const dueItems = feeStructures
+      .filter((f) => !f.isOptional)
+      .filter((f) => !f.classId || (classId && f.classId === classId))
+      .filter((f) => !!f.dueDate)
+      .map((f) => {
+        const due = new Date(f.dueDate as any);
+        due.setHours(23, 59, 59, 999);
+        return { amount: Number(f.amount || 0), dueTs: due.getTime() };
+      })
+      .filter((i) => i.amount > 0)
+      .sort((a, b) => a.dueTs - b.dueTs);
+
+    // Strict due-date policy: no due date => not overdue.
+    if (!dueItems.length) return 0;
+
+    let remainingPaid = Number(paidAmount || 0);
+    let overdueAmount = 0;
+
+    for (const item of dueItems) {
+      const covered = Math.min(remainingPaid, item.amount);
+      const itemOutstanding = Math.max(0, item.amount - covered);
+      remainingPaid = Math.max(0, remainingPaid - covered);
+
+      if (nowTs > item.dueTs) {
+        overdueAmount += itemOutstanding;
+      }
+    }
+
+    return Math.max(0, Math.min(overdueAmount, Math.max(0, expectedAmount - paidAmount)));
+  }
+
   async getFeeStructureForTerm(termId: string | undefined, schoolId?: string, superAdmin = false) {
     if (!termId) return [];
     const where: any = { termId };
@@ -180,34 +221,9 @@ export class StudentFeeExpectationService {
     const expectedFees = feeStructures.filter(i => !i.isOptional).reduce((sum, i) => sum + (Number(i.amount) * totalStudents), 0);
     const totalFeesPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
     const remainingFees = Math.max(0, expectedFees - totalFeesPaid);
-    const now = new Date();
-    let overdueFees = 0; let overdueStudents = 0;
-    
-    if (now > new Date(term.endDate)) {
-      overdueFees = remainingFees;
-      // For historical terms, estimate overdue students based on payment data
-      if (isHistoricalTerm) {
-        const perStudentExpected = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
-        overdueStudents = totalStudents - (totalFeesPaid > 0 && perStudentExpected > 0 ? Math.floor(totalFeesPaid / perStudentExpected) : 0);
-      } else {
-        // Build query to exclude graduated students from overdue calculation
-        const qb = this.studentRepo
-          .createQueryBuilder('s')
-          .where('s.termId = :termId', { termId })
-          .andWhere('s.graduationTermId IS NULL')
-          .andWhere('s.isActive = :isActive', { isActive: true });
-        
-        if (schoolId && !superAdmin) {
-          qb.andWhere('s.schoolId = :schoolId', { schoolId });
-        }
-        
-        const students = await qb.getMany();
-        const perStudentExpected = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
-        const paidMap: Record<string, number> = {};
-        payments.forEach(p => { const sid = (p.student as any)?.id; if (sid) paidMap[sid] = (paidMap[sid] || 0) + Number(p.amount); });
-        overdueStudents = students.reduce((count, st) => { const paid = paidMap[st.id] || 0; const outstanding = Math.max(0, perStudentExpected - paid); return count + (outstanding > 0 ? 1 : 0); }, 0);
-      }
-    }
+    const statuses = await this.listStudentFeeStatuses(termId, schoolId, superAdmin);
+    const overdueFees = statuses.reduce((sum, s) => sum + Number(s.overdueAmount || 0), 0);
+    const overdueStudents = statuses.filter((s) => Number(s.overdueAmount || 0) > 0).length;
     
     return { 
       termId, 
@@ -221,7 +237,7 @@ export class StudentFeeExpectationService {
       remainingFees, 
       overdueFees, 
       overdueStudents, 
-      isPastTerm: now > new Date(term.endDate), 
+      isPastTerm: new Date() > new Date(term.endDate), 
       termEndDate: term.endDate, 
       isHistoricalTerm,
       feeStructures: feeStructures.map(f => ({ feeType: f.feeType, amount: f.amount, isOptional: f.isOptional, frequency: f.frequency })) 
@@ -364,6 +380,7 @@ export class StudentFeeExpectationService {
       const historicalQuery = `
         SELECT DISTINCT
           sah.student_id,
+          sah.class_id as "classId",
           s."firstName",
           s."lastName", 
           s."studentId" as "humanId",
@@ -389,6 +406,7 @@ export class StudentFeeExpectationService {
       
       students = historicalResults.map((row: any) => ({
         id: row.student_id,
+        classId: row.classId,
         firstName: row.firstName,
         lastName: row.lastName,
         studentId: row.humanId,
@@ -467,7 +485,7 @@ export class StudentFeeExpectationService {
       // ignore credit balance errors
     }
 
-    const pastEnd = term ? new Date() > new Date(term.endDate) : false;
+    const nowTs = Date.now();
     const perStudentMandatoryTotal = feeStructures.filter(f => !f.isOptional).reduce((s, f) => s + Number(f.amount), 0);
 
     // Build paidMap from allocations applied TO this term (authoritative)
@@ -510,11 +528,17 @@ export class StudentFeeExpectationService {
     });
     
     const statuses = students.map(student => {
-      const isOverdueHist = pastEnd && (student.histOutstanding ?? 0) > 0;
       if (isHistoricalTerm) {
         const totalExpected = Number(student.histTotalExpected ?? 0);
         const totalPaid = Number(student.histTotalPaid ?? 0);
         const outstanding = Number(student.histOutstanding ?? Math.max(0, totalExpected - totalPaid));
+        const overdueAmount = this.calculateStudentOverdueFromDueDates({
+          feeStructures,
+          classId: student.classId,
+          paidAmount: totalPaid,
+          expectedAmount: totalExpected,
+          nowTs,
+        });
         return {
           studentId: student.id,
           humanId: student.studentId || student.humanId,
@@ -525,8 +549,8 @@ export class StudentFeeExpectationService {
           outstanding,
           paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0,
           status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'),
-          isOverdue: isOverdueHist,
-          overdueAmount: isOverdueHist ? outstanding : 0,
+          isOverdue: overdueAmount > 0,
+          overdueAmount,
           isHistorical: true,
           historyStatus: student.historyStatus || null,
           creditBalance: Number(creditBalanceByStudent[student.id] || 0)
@@ -535,7 +559,14 @@ export class StudentFeeExpectationService {
         const totalExpected = perStudentMandatoryTotal;
         const totalPaid = paidMap[student.id] || 0;
         const outstanding = Math.max(0, totalExpected - totalPaid);
-        const isOverdue = pastEnd && outstanding > 0;
+        const overdueAmount = this.calculateStudentOverdueFromDueDates({
+          feeStructures,
+          classId: student.classId,
+          paidAmount: totalPaid,
+          expectedAmount: totalExpected,
+          nowTs,
+        });
+        const isOverdue = overdueAmount > 0;
         return {
           studentId: student.id,
           humanId: student.studentId || student.humanId,
@@ -547,7 +578,7 @@ export class StudentFeeExpectationService {
           paymentPercentage: totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0,
           status: outstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partial' : 'unpaid'),
           isOverdue,
-          overdueAmount: isOverdue ? outstanding : 0,
+          overdueAmount,
           isHistorical: false,
           historyStatus: student.historyStatus || null,
           creditBalance: Number(creditBalanceByStudent[student.id] || 0)

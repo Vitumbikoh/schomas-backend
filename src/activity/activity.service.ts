@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Log } from 'src/logs/logs.entity';
-import { Repository } from 'typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
 
 @Injectable()
 export class ActivitiesService {
@@ -10,34 +10,67 @@ export class ActivitiesService {
     private readonly activityRepository: Repository<Log>,
   ) {}
 
-  async getRecentActivities(limit: number = 10, schoolId?: string): Promise<Log[]> {
-    // Define patterns for actions that should be excluded (read/query operations)
-    const excludePatterns = [
-      'QUERY', 'QUERIED', 'REQUEST', 'RESPONSE', 'LIST', 'FIND', 'GET', 
-      'ACCESS', 'ACCESSED', 'VIEW', 'VIEWED', 'STATS', 'DEBUG', 'FALLBACK'
-    ];
-
-    // Build the query to exclude read/query operations
-    const queryBuilder = this.activityRepository.createQueryBuilder('log')
-      .orderBy('log.timestamp', 'DESC')
-      .take(limit * 2); // Take more initially to account for filtering
-
-    // Add school filtering for multi-tenancy
-    if (schoolId) {
-      queryBuilder.where('log.schoolId = :schoolId', { schoolId });
+  private applySchoolScope(
+    qb: SelectQueryBuilder<Log>,
+    schoolId?: string,
+    superAdmin = false,
+  ): SelectQueryBuilder<Log> {
+    if (!superAdmin) {
+      if (!schoolId) {
+        qb.andWhere('1 = 0');
+        return qb;
+      }
+      qb.andWhere('log.schoolId = :schoolId', { schoolId });
+      return qb;
     }
 
-    // Add WHERE conditions to exclude read operations
-    excludePatterns.forEach((pattern, index) => {
-      const whereMethod = (index === 0 && !schoolId) ? 'where' : 'andWhere';
-      queryBuilder[whereMethod](`log.action NOT LIKE :pattern${index}`, { [`pattern${index}`]: `%${pattern}%` });
-    });
+    if (schoolId) {
+      qb.andWhere('log.schoolId = :schoolId', { schoolId });
+    }
+    return qb;
+  }
 
-    const logs = await queryBuilder.getMany();
+  private applyCrudFilter(qb: SelectQueryBuilder<Log>): SelectQueryBuilder<Log> {
+    return qb.andWhere(
+      `(log.action IN (:...baseCrudActions)
+      OR log.action LIKE :createdPattern
+      OR log.action LIKE :updatedPattern
+      OR log.action LIKE :deletedPattern
+      OR log.action LIKE :removedPattern)`,
+      {
+        baseCrudActions: ['CREATE', 'UPDATE', 'DELETE'],
+        createdPattern: '%_CREATED',
+        updatedPattern: '%_UPDATED',
+        deletedPattern: '%_DELETED',
+        removedPattern: '%_REMOVED',
+      },
+    );
+  }
 
-    // Take only the requested limit after filtering
-    const filteredLogs = logs.slice(0, limit);
+  async getRecentActivities(
+    limit = 10,
+    schoolId?: string,
+    superAdmin = false,
+  ): Promise<Log[]> {
+    const safeLimit = Number.isFinite(Number(limit)) ? Math.min(Math.max(Number(limit), 1), 100) : 10;
 
-    return filteredLogs;
+    const queryBuilder = this.activityRepository.createQueryBuilder('log');
+    this.applySchoolScope(queryBuilder, schoolId, superAdmin);
+    this.applyCrudFilter(queryBuilder);
+
+    return queryBuilder
+      .orderBy('log.timestamp', 'DESC')
+      .take(safeLimit)
+      .getMany();
+  }
+
+  async getActivityById(id: string, schoolId?: string, superAdmin = false): Promise<Log | null> {
+    const qb = this.activityRepository
+      .createQueryBuilder('log')
+      .where('log.id = :id', { id });
+
+    this.applySchoolScope(qb, schoolId, superAdmin);
+
+    return qb.getOne();
   }
 }

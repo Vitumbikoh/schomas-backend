@@ -4,6 +4,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { AuthService } from './auth.service';
 import { User } from '../user/entities/user.entity';
 import { ConfigService } from '../config/config.service';
+import { RequestContext } from '../common/request-context/request-context';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -35,6 +36,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         role: user.role,
         schoolId: user.schoolId || null,
       };
+      RequestContext.setUser({
+        id: result.id,
+        email: result.email,
+        role: result.role,
+        schoolId: result.schoolId,
+        name: result.username,
+      });
       console.log('JWT_STRATEGY - Returning user object:', JSON.stringify(result, null, 2));
       return result;
     } catch (error) {

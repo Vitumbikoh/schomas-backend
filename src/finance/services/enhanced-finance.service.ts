@@ -195,6 +195,7 @@ export class EnhancedFinanceService {
     let expectedAmount = 0;
     let paidAmount = 0;
     let carryForwardAmount = 0;
+    let overdueAmount = 0;
     let studentsFullyPaid = 0;
     let studentsPartiallyPaid = 0;
     let studentsUnpaid = 0;
@@ -206,6 +207,7 @@ export class EnhancedFinanceService {
       expectedAmount += studentStatus.expectedAmount;
       paidAmount += studentStatus.paidAmount;
       carryForwardAmount += studentStatus.carryForwardAmount;
+      overdueAmount += Number(studentStatus.overdueAmount || 0);
 
       // Categorize students
       if (studentStatus.outstandingAmount === 0) {
@@ -225,10 +227,7 @@ export class EnhancedFinanceService {
     const paymentPercentage = expectedAmount > 0 ? (paidAmount / expectedAmount) * 100 : 0;
     const currentTermFeesAmount = expectedAmount - carryForwardAmount;
     
-    // Calculate overdue amount (for completed terms)
-    const now = new Date();
-    const isTermCompleted = now > new Date(term.endDate);
-    const overdueAmount = isTermCompleted ? outstandingAmount : 0;
+    const isTermCompleted = new Date() > new Date(term.endDate);
 
     return {
       termId,
@@ -358,11 +357,15 @@ export class EnhancedFinanceService {
     const paidAmount = allocations.reduce((sum, alloc) => sum + Number(alloc.allocatedAmount), 0);
     const outstandingAmount = Math.max(0, expectedAmount - paidAmount);
 
-    // Determine overdue status
-    const now = new Date();
-    const isTermCompleted = now > new Date(term.endDate);
-    const isOverdue = isTermCompleted && outstandingAmount > 0;
-    const overdueAmount = isOverdue ? outstandingAmount : 0;
+    // Determine overdue status strictly from configured fee due dates
+    const overdueAmount = await this.calculateStudentOverdueByFeeDueDate({
+      termId,
+      classId,
+      paidAmount,
+      expectedAmount,
+      schoolId,
+    });
+    const isOverdue = overdueAmount > 0;
 
     // Calculate payment percentage
     const paymentPercentage = expectedAmount > 0 ? (paidAmount / expectedAmount) * 100 : 0;
@@ -532,7 +535,6 @@ export class EnhancedFinanceService {
       .where('ar.status = :status', { status: StudentStatus.ACTIVE })
       .andWhere('s.isActive = :isActive', { isActive: true })
       .andWhere("COALESCE(s.inactivationReason, '') != :gradReason", { gradReason: 'graduated' })
-      .andWhere('t.endDate < :now', { now: new Date() })
       .andWhere(schoolId ? 'ar.schoolId = :schoolId' : '1=1', schoolId ? { schoolId } : {});
 
     const records = await query.getMany();
@@ -543,7 +545,7 @@ export class EnhancedFinanceService {
       try {
         const status = await this.getStudentFeeStatus(record.studentId, record.termId, schoolId);
         
-        if (status.outstandingAmount > 0) {
+        if (status.overdueAmount > 0) {
           const key = record.studentId;
           
           if (!overdueMap.has(key)) {
@@ -556,16 +558,16 @@ export class EnhancedFinanceService {
           }
 
           const analysis = overdueMap.get(key)!;
-          analysis.totalOverdueAmount += status.outstandingAmount;
+          analysis.totalOverdueAmount += status.overdueAmount;
           
-          const daysPastDue = Math.floor(
+          const daysPastDue = Math.max(0, Math.floor(
             (new Date().getTime() - new Date(record.term.endDate).getTime()) / (1000 * 60 * 60 * 24)
-          );
+          ));
 
           analysis.overdueTerms.push({
             termId: record.termId,
             termName: `Term ${record.term.termNumber}`,
-            amount: status.outstandingAmount,
+            amount: status.overdueAmount,
             daysPastDue
           });
         }
@@ -601,6 +603,56 @@ export class EnhancedFinanceService {
     };
   }
 
+  private async calculateStudentOverdueByFeeDueDate(params: {
+    termId: string;
+    classId?: string;
+    paidAmount: number;
+    expectedAmount: number;
+    schoolId?: string;
+  }): Promise<number> {
+    const { termId, classId, paidAmount, expectedAmount, schoolId } = params;
+
+    const feeStructures = await this.feeStructureRepo.find({
+      where: {
+        termId,
+        isActive: true,
+        isOptional: false,
+        ...(schoolId ? { schoolId } : {}),
+      },
+    });
+
+    const applicableFees = feeStructures
+      .filter((fs) => !fs.classId || (classId && fs.classId === classId))
+      .filter((fs) => fs.dueDate)
+      .map((fs) => {
+        const due = new Date(fs.dueDate as any);
+        due.setHours(23, 59, 59, 999);
+        return { amount: Number(fs.amount || 0), dueTs: due.getTime() };
+      })
+      .filter((item) => item.amount > 0)
+      .sort((a, b) => a.dueTs - b.dueTs);
+
+    // No due dates configured => nothing is overdue yet by due-date rule.
+    if (!applicableFees.length) return 0;
+
+    const nowTs = Date.now();
+    let remainingPaid = Number(paidAmount || 0);
+    let overdueAmount = 0;
+
+    for (const feeItem of applicableFees) {
+      const covered = Math.min(remainingPaid, feeItem.amount);
+      const itemOutstanding = Math.max(0, feeItem.amount - covered);
+      remainingPaid = Math.max(0, remainingPaid - covered);
+
+      if (nowTs > feeItem.dueTs) {
+        overdueAmount += itemOutstanding;
+      }
+    }
+
+    // Safety cap: overdue can never exceed the student's outstanding balance.
+    return Math.max(0, Math.min(overdueAmount, Math.max(0, expectedAmount - paidAmount)));
+  }
+
   private async calculateTermOverdueByFeeDueDate(term: Term, schoolId?: string): Promise<number> {
     const statuses = await this.getTermStudentFeeStatuses(term.id, schoolId);
     if (!statuses.length) return 0;
@@ -615,7 +667,6 @@ export class EnhancedFinanceService {
     });
 
     const nowTs = Date.now();
-    const termEndTs = new Date(term.endDate).getTime();
     let totalOverdue = 0;
 
     for (const status of statuses) {
@@ -624,22 +675,17 @@ export class EnhancedFinanceService {
 
       const applicableFees = feeStructures
         .filter((fs) => !fs.classId || (status.classId && fs.classId === status.classId))
+        .filter((fs) => fs.dueDate)
         .map((fs) => {
-          const fallback = new Date(term.endDate);
-          const due = fs.dueDate ? new Date(fs.dueDate) : fallback;
+          const due = new Date(fs.dueDate as any);
           due.setHours(23, 59, 59, 999);
           return { amount: Number(fs.amount || 0), dueTs: due.getTime() };
         })
         .filter((item) => item.amount > 0)
         .sort((a, b) => a.dueTs - b.dueTs);
 
-      // Fallback: if fee items are missing, use the term-level overdue rule.
-      if (!applicableFees.length) {
-        if (nowTs > termEndTs) {
-          totalOverdue += outstandingAmount;
-        }
-        continue;
-      }
+      // No configured due dates => not overdue under due-date policy.
+      if (!applicableFees.length) continue;
 
       let remainingPaid = paidAmount;
       for (const feeItem of applicableFees) {
@@ -852,8 +898,7 @@ export class EnhancedFinanceService {
     }
 
     // Backward-compatible overdue: only selected-term overdue after term end.
-    const isTermCompleted = new Date() > new Date(term.endDate);
-    const overdue = isTermCompleted ? pending : 0;
+    const overdue = await this.calculateTermOverdueByFeeDueDate(term, schoolId);
 
     // 4) Money RECEIVED in this term (from fee_payment table — for allocation breakdown)
     const paymentsInTerm = await this.paymentRepo
