@@ -11,7 +11,11 @@ import { AcademicCalendar } from '../settings/entities/academic-calendar.entity'
 import { Enrollment } from '../enrollment/entities/enrollment.entity';
 import { School } from '../school/entities/school.entity';
 import { Student } from '../user/entities/student.entity';
+import { User } from '../user/entities/user.entity';
+import { Role } from '../user/enums/role.enum';
 import { Class } from '../classes/entity/class.entity';
+import { Expense, ExpenseStatus, ExpenseCategory, ExpensePriority } from '../expenses/entities/expense.entity';
+import { ExpenseApprovalHistory, ApprovalAction } from '../expenses/entities/expense-approval-history.entity';
 import { NotificationService } from '../notifications/notification.service';
 import { NotificationType, NotificationPriority } from '../notifications/entities/notification.entity';
 import PDFDocument = require('pdfkit');
@@ -29,6 +33,9 @@ export class BillingService {
     @InjectRepository(School) private schoolRepo: Repository<School>,
     @InjectRepository(Student) private studentRepo: Repository<Student>,
     @InjectRepository(Class) private classRepo: Repository<Class>,
+    @InjectRepository(Expense) private expenseRepo: Repository<Expense>,
+    @InjectRepository(ExpenseApprovalHistory) private approvalHistoryRepo: Repository<ExpenseApprovalHistory>,
+    @InjectRepository(User) private userRepo: Repository<User>,
     private notificationService: NotificationService,
   ) {}
 
@@ -198,26 +205,118 @@ export class BillingService {
     });
     const savedInvoice = await this.invoiceRepo.save(invoice);
 
-    // Create notification for invoice generation
+    // --- Automatically create a PENDING expense for the school admin to review ---
     try {
+      await this.createInvoiceExpense(savedInvoice, schoolId);
+    } catch (error) {
+      console.error('[BillingService] Failed to create invoice expense entry:', error);
+    }
+
+    // Create notification for school admin (school-scoped so school admin sees it)
+    try {
+      const periodLabel = termId
+        ? `Term ${(await this.termRepo.findOne({ where: { id: termId } }))?.termNumber ?? ''}`
+        : (academicCalendarId
+            ? (await this.calendarRepo.findOne({ where: { id: academicCalendarId } }))?.term ?? 'Academic Year'
+            : 'Selected Period');
+
       await this.notificationService.create({
-        title: 'New Invoice Generated',
-        message: `Invoice ${savedInvoice.invoiceNumber} has been generated for ${savedInvoice.currency} ${savedInvoice.totalAmount}`,
+        title: 'New Billing Invoice Received',
+        message: `A Schomas platform invoice (${savedInvoice.invoiceNumber}) has been issued for ${periodLabel}. Amount: ${savedInvoice.currency} ${Number(savedInvoice.totalAmount).toLocaleString()}. Please review and approve in Expenses.`,
         type: NotificationType.SYSTEM,
-        priority: NotificationPriority.MEDIUM,
+        priority: NotificationPriority.HIGH,
         schoolId,
         metadata: {
           invoiceId: savedInvoice.id,
           invoiceNumber: savedInvoice.invoiceNumber,
           amount: savedInvoice.totalAmount,
-          currency: savedInvoice.currency
-        }
+          currency: savedInvoice.currency,
+          isBillingInvoice: true,
+        },
       });
     } catch (error) {
-      console.error('Failed to create invoice notification:', error);
+      console.error('[BillingService] Failed to create invoice notification:', error);
     }
 
     return savedInvoice;
+  }
+
+  /** Generate a unique EXP-YYYY-NNNN number for auto-created invoice expenses */
+  private async generateInvoiceExpenseNumber(): Promise<string> {
+    const year = new Date().getFullYear();
+    const last = await this.expenseRepo
+      .createQueryBuilder('e')
+      .where('e.expenseNumber LIKE :pattern', { pattern: `EXP-${year}-%` })
+      .orderBy('e.expenseNumber', 'DESC')
+      .getOne();
+    let next = 1;
+    if (last?.expenseNumber) {
+      const parts = last.expenseNumber.split('-');
+      if (parts.length === 3) {
+        const n = parseInt(parts[2], 10);
+        if (!isNaN(n)) next = n + 1;
+      }
+    }
+    return `EXP-${year}-${next.toString().padStart(4, '0')}`;
+  }
+
+  /** Create a PENDING expense so the school admin can review/approve the billing invoice */
+  private async createInvoiceExpense(invoice: BillingInvoice, schoolId: string): Promise<void> {
+    // Find the school admin (ADMIN role) for this school to act as the requester reference
+    const adminUser = await this.userRepo.findOne({
+      where: { role: Role.ADMIN, schoolId, isActive: true },
+    });
+
+    // Determine a term for the expense (for grouping in finance reports)
+    const currentTerm = await this.termRepo.findOne({
+      where: { schoolId, isCurrent: true },
+      select: ['id'],
+    });
+
+    const expenseNumber = await this.generateInvoiceExpenseNumber();
+
+    // Build a human-readable due date (30 days from now if not on the invoice)
+    const dueDate = invoice.dueDate
+      ? new Date(invoice.dueDate as any)
+      : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d; })();
+
+    const expense = this.expenseRepo.create({
+      expenseNumber,
+      title: `Schomas Platform Invoice – ${invoice.invoiceNumber}`,
+      description:
+        `Schomas platform subscription invoice for ${invoice.activeStudentsCount} active students ` +
+        `at ${invoice.currency} ${Number(invoice.ratePerStudent).toFixed(2)} per student. ` +
+        `Invoice number: ${invoice.invoiceNumber}.`,
+      amount: Number(invoice.totalAmount),
+      category: ExpenseCategory.ADMINISTRATIVE,
+      department: 'Schomas Billing',
+      requestedBy: 'Schomas System',
+      requestedByUserId: adminUser?.id ?? null,
+      schoolId,
+      termId: currentTerm?.id ?? null,
+      status: ExpenseStatus.PENDING,
+      priority: ExpensePriority.HIGH,
+      budgetCode: invoice.invoiceNumber,
+      dueDate: dueDate,
+      requestDate: new Date(),
+      isBillingInvoice: true,
+      billingInvoiceId: invoice.id,
+      notes: `Auto-generated from Schomas billing invoice ${invoice.invoiceNumber}. Please approve to acknowledge receipt.`,
+    });
+
+    const savedExpense = await this.expenseRepo.save(expense);
+
+    // Record initial submission in approval history
+    const systemUserId = adminUser?.id ?? null;
+    const history = this.approvalHistoryRepo.create({
+      expenseId: savedExpense.id,
+      performedBy: 'Schomas System',
+      performedByUserId: systemUserId,
+      action: ApprovalAction.SUBMITTED,
+      comments: `Invoice ${invoice.invoiceNumber} submitted for school admin review.`,
+      newStatus: ExpenseStatus.PENDING,
+    });
+    await this.approvalHistoryRepo.save(history);
   }
 
   async listInvoices(schoolId: string) {

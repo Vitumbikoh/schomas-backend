@@ -97,6 +97,14 @@ export class Expense extends BaseEntity {
   @Column({ type: 'json', nullable: true })
   attachments: string[];
 
+  /** True when this expense was auto-created from a Schomas billing invoice */
+  @Column({ default: false })
+  isBillingInvoice: boolean;
+
+  /** The BillingInvoice.id that originated this expense (nullable for regular expenses) */
+  @Column({ type: 'uuid', nullable: true })
+  billingInvoiceId: string | null;
+
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
   approvedAmount: number;
 

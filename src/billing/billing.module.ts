@@ -11,16 +11,21 @@ import { Enrollment } from '../enrollment/entities/enrollment.entity';
 import { School } from '../school/entities/school.entity';
 import { Student } from '../user/entities/student.entity';
 import { Class } from '../classes/entity/class.entity';
+import { Expense } from '../expenses/entities/expense.entity';
+import { ExpenseApprovalHistory } from '../expenses/entities/expense-approval-history.entity';
+import { User } from '../user/entities/user.entity';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
 import { NotificationModule } from '../notifications/notification.module';
+import { LogsModule } from '../logs/logs.module';
 
 @Module({
   imports: [
-  TypeOrmModule.forFeature([SchoolBillingPlan, BillingInvoice, BillingPayment, Term, AcademicCalendar, Enrollment, School, Student, Class]),
+  TypeOrmModule.forFeature([SchoolBillingPlan, BillingInvoice, BillingPayment, Term, AcademicCalendar, Enrollment, School, Student, Class, Expense, ExpenseApprovalHistory, User]),
   AuthModule,
   ConfigModule,
   NotificationModule,
+  LogsModule,
   ],
   controllers: [BillingController],
   providers: [BillingService],
