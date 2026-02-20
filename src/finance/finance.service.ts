@@ -2709,12 +2709,20 @@ async getParentPayments(
       
       for (const payment of allTransactions) {
         if (payment.allocations && payment.allocations.length > 0) {
-          // Sum allocations for this specific term
-          const termAllocations = payment.allocations.filter(alloc => alloc.termId === term.id);
+          // Sum allocations for this specific term.
+          // Exclude 'Credit Balance' allocations - these represent surplus/overpayment
+          // that is tracked in the credit ledger and applied separately as a new
+          // credit_application payment.  Including them would double-count money
+          // that has already been credited to another term.
+          const termAllocations = payment.allocations.filter(
+            alloc => alloc.termId === term.id && alloc.feeType !== 'Credit Balance'
+          );
           totalPaid += termAllocations.reduce((sum, alloc) => sum + Number(alloc.allocatedAmount), 0);
         } else {
-          // No allocations - count payment if it belongs to this term
-          if (payment.termId === term.id) {
+          // No allocations - count payment if it belongs to this term.
+          // Skip credit_application payments that have no allocations to avoid
+          // double-counting (they will be caught via PaymentAllocation in other cases).
+          if (payment.termId === term.id && payment.paymentType !== 'credit_application') {
             totalPaid += Number(payment.amount);
           }
         }
@@ -3262,7 +3270,9 @@ async getParentPayments(
             .filter(fs => !fs.isOptional && (!fs.classId || fs.classId === student.class?.id))
             .reduce((sum, fs) => sum + Number(fs.amount), 0);
 
-          // Calculate paid amount using allocations TO this term (not raw payments)
+          // Calculate paid amount using allocations TO this term (not raw payments).
+          // Exclude 'Credit Balance' allocations - those represent overpayment surplus
+          // and would cause double-counting when credits are later applied as new payments.
           console.log(`      Calculating paid via allocations...`);
           const allocationsToTerm = await this.paymentAllocationRepository
             .createQueryBuilder('pa')
@@ -3272,6 +3282,7 @@ async getParentPayments(
             .andWhere('p.studentId = :studentId', { studentId })
             .andWhere('p.status = :status', { status: 'completed' })
             .andWhere('p.schoolId = :schoolId', { schoolId: studentSchoolId })
+            .andWhere("pa.feeType != 'Credit Balance'")
             .getRawOne();
 
           const totalPaid = parseFloat(allocationsToTerm?.sum || '0');
@@ -3373,7 +3384,8 @@ async getParentPayments(
             .filter(fs => !fs.isOptional && (!fs.classId || fs.classId === student.class?.id))
             .reduce((sum, fs) => sum + Number(fs.amount), 0);
 
-          // Calculate paid amount using allocations TO current term (not raw payments)
+          // Calculate paid amount using allocations TO current term (not raw payments).
+          // Exclude 'Credit Balance' allocations to prevent double-counting.
           const allocationsToCurrentTerm = await this.paymentAllocationRepository
             .createQueryBuilder('pa')
             .innerJoin('pa.payment', 'p')
@@ -3382,6 +3394,7 @@ async getParentPayments(
             .andWhere('p.studentId = :studentId', { studentId })
             .andWhere('p.status = :status', { status: 'completed' })
             .andWhere('p.schoolId = :schoolId', { schoolId: studentSchoolId })
+            .andWhere("pa.feeType != 'Credit Balance'")
             .getRawOne();
 
           const totalPaid = parseFloat(allocationsToCurrentTerm?.sum || '0');
