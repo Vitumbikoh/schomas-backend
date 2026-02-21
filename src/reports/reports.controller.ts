@@ -22,6 +22,7 @@ import { FeePayment } from '../finance/entities/fee-payment.entity';
 import { ReportsMapperService } from './reports-mapper.service';
 import { ComprehensiveReportDTO } from './dto/report-dtos';
 import { LibraryService } from '../library/library.service';
+import { StudentFeeExpectationService } from '../finance/student-fee-expectation.service';
 
 @ApiTags('Reports')
 @ApiBearerAuth()
@@ -38,6 +39,7 @@ export class ReportsController {
     private readonly settingsService: SettingsService,
     private readonly reportsMapper: ReportsMapperService,
     private readonly libraryService: LibraryService,
+    private readonly studentFeeExpectationService: StudentFeeExpectationService,
   ) {}
 
   private readonly logger = new Logger(ReportsController.name);
@@ -317,16 +319,64 @@ export class ReportsController {
     const superAdmin = user.role === Role.SUPER_ADMIN;
     const targetSchoolId = superAdmin ? (req.query.schoolId as string) : user.schoolId;
     this.logger.debug(`GET /admin/reports/fee-payments schoolId=${targetSchoolId} academicCalendarId=${academicCalendarId} studentId=${studentId} termId=${termId} classId=${classId}`);
-  const paymentsPaged = await this.financeService.getAllPayments(1, 5000, '', targetSchoolId, superAdmin);
-  const payments = paymentsPaged?.payments || [];
+    
+    // Pass termId to getAllPayments so it can fetch payments for the selected term instead of always using current term
+    const paymentsPaged = await this.financeService.getAllPayments(1, 5000, '', targetSchoolId, superAdmin, termId);
+    const payments = paymentsPaged?.payments || [];
+    
+    // Additional filtering for academicCalendarId, studentId, and classId
+    // Note: termId is already filtered at database level, so no need to filter again
     const filtered = payments.filter((p: any) => {
-      const acad = academicCalendarId ? (p.academicCalendarId === academicCalendarId || p.academicCalendar?.id === academicCalendarId || p.term?.academicCalendarId === academicCalendarId) : true;
+      // Filter by academic calendar if specified (term.academicCalendar relation is now loaded)
+      const acad = academicCalendarId ? (p.term?.academicCalendarId === academicCalendarId || p.term?.academicCalendar?.id === academicCalendarId) : true;
       const stu = studentId ? (p.studentId === studentId || p.student?.id === studentId) : true;
-      const term = termId ? (p.termId === termId || p.term?.id === termId) : true;
       const cls = classId ? (p.classId === classId || p.student?.classId === classId || p.student?.class?.id === classId) : true;
-      return acad && stu && term && cls;
+      return acad && stu && cls;
     });
     return filtered.map(p => this.reportsMapper.mapPayment(p));
+  }
+
+  @Get('outstanding-balances')
+  @ApiOperation({ summary: 'Get outstanding balances report for students with filters' })
+  async getOutstandingBalancesReport(
+    @Request() req,
+    @Query('termId') termId?: string,
+    @Query('classId') classId?: string,
+    @Query('studentId') studentId?: string,
+  ) {
+    const user = req.user;
+    const superAdmin = user.role === Role.SUPER_ADMIN;
+    const targetSchoolId = superAdmin ? (req.query.schoolId as string) : user.schoolId;
+    
+    this.logger.debug(`GET /admin/reports/outstanding-balances schoolId=${targetSchoolId} termId=${termId} classId=${classId} studentId=${studentId}`);
+    
+    // If no termId provided, use current term
+    let effectiveTermId = termId;
+    if (!effectiveTermId) {
+      const currentTerm = await this.settingsService.getCurrentTerm(targetSchoolId);
+      effectiveTermId = currentTerm?.id;
+    }
+
+    if (!effectiveTermId) {
+      return [];
+    }
+
+    // Get outstanding balances for the term
+    const balances = await this.studentFeeExpectationService.listStudentFeeStatuses(
+      effectiveTermId,
+      targetSchoolId,
+      superAdmin,
+    );
+
+    // Apply filters
+    const filtered = balances.filter((balance: any) => {
+      const stu = studentId ? balance.studentId === studentId : true;
+      // classId would require fetching student class info - implement if needed
+      const cls = classId ? true : true; // TODO: add class filtering if student class is included
+      return stu && cls;
+    });
+
+    return filtered;
   }
 
   @Get('library/most-borrowed')

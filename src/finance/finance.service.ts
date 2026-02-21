@@ -2171,9 +2171,11 @@ async getParentPayments(
     search: string = '',
     schoolId?: string,
     superAdmin = false,
+    termId?: string,
   ) {
-    // Get current term for filtering
-    const currentTerm = await this.settingsService.getCurrentTerm();
+    // Get current term for filtering (only if termId not explicitly provided)
+    const currentTerm = termId ? null : await this.settingsService.getCurrentTerm();
+    const effectiveTermId = termId || currentTerm?.id;
 
     const qb = this.paymentRepository
       .createQueryBuilder('payment')
@@ -2182,12 +2184,13 @@ async getParentPayments(
       .leftJoinAndSelect('payment.processedBy', 'processedBy')
       .leftJoinAndSelect('payment.processedByAdmin', 'processedByAdmin')
       .leftJoinAndSelect('payment.term', 'term')
+      .leftJoinAndSelect('term.academicCalendar', 'academicCalendar')
       .orderBy('payment.paymentDate', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
 
-    if (currentTerm) {
-      qb.andWhere('payment.termId = :termId', { termId: currentTerm.id });
+    if (effectiveTermId) {
+      qb.andWhere('payment.termId = :termId', { termId: effectiveTermId });
     }
 
     if (!superAdmin) {
