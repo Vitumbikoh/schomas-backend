@@ -62,8 +62,8 @@ async function bootstrap() {
       try {
         const parsed = new URL(origin);
         const host = parsed.hostname;
-        const port = parsed.port;
-        if ((host === 'localhost' || host === '127.0.0.1') && port === '3000') {
+        // allow any localhost/127.0.0.1 origin regardless of port (covers various dev servers, including schomas-app)
+        if (host === 'localhost' || host === '127.0.0.1') {
           return callback(null, true);
         }
       } catch (e) {
