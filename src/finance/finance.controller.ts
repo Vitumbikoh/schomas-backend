@@ -903,6 +903,8 @@ export class FinanceController {
     totalProcessedPayments: number;
     totalApprovedBudgets: number;
     totalRevenue: string;
+    /** Raw cash collected in current term – use this for the Fee Collection card */
+    currentTermRevenue: number;
     pendingStudents: number;
     trend: { value: number; isPositive: boolean; hasComparativeData: boolean };
     monthlyRevenue: number;
@@ -921,8 +923,10 @@ export class FinanceController {
         ? schoolIdOverride || req.user?.schoolId
         : req.user?.schoolId;
       
-      // Get total financial stats and dashboard metrics
-      const [totalStats, metrics] = await Promise.all([
+      // Get total financial stats and dashboard metrics in parallel.
+      // getDirectTermRevenue is the canonical source for the Fee Collection card:
+      // it queries the payments table directly using only termId (no date-range OR logic).
+      const [totalStats, metrics, termRevenue] = await Promise.all([
         this.financeService.getFinancialStats(
           startDate || endDate ? {
             startDate: startDate ? new Date(startDate) : undefined,
@@ -935,6 +939,7 @@ export class FinanceController {
           schoolScope,
           isSuper,
         ),
+        this.financeService.getDirectTermRevenue(schoolScope, isSuper),
       ]);
 
       // If term filtered stats are zero, attempt simple fallback without term filter
@@ -968,8 +973,8 @@ export class FinanceController {
         }
       }
 
-      // Prefer current term revenue for the dashboard "Fee Collection" metric
-      const revenueNumber = Number((metrics.currentTermRevenue ?? totalStats.totalRevenue) || 0);
+      // Use direct term revenue as the canonical Fee Collection figure
+      const revenueNumber = termRevenue;
 
       await this.systemLoggingService.logAction({
         action: 'FINANCE_TOTALS_QUERIED',
@@ -994,7 +999,8 @@ export class FinanceController {
       return {
         success: true,
         ...totalStats, // Include all the original stats (totalProcessedPayments, totalApprovedBudgets, pendingStudents)
-        totalRevenue: `$${revenueNumber.toFixed(2)}`,
+        totalRevenue: `$${revenueNumber.toFixed(2)}`, // kept for backward compat
+        currentTermRevenue: revenueNumber, // plain number – format on the frontend
         trend: {
           value: Math.abs(trendValue),
           isPositive,

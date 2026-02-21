@@ -1599,6 +1599,31 @@ export class FinanceService {
     }
   }
 
+  /**
+   * Direct, lightweight query: total cash collected for the current term.
+   * Reads straight from the payments (cashbook) table filtered by termId only.
+   * Used by the dashboard "Fee Collection" card to avoid the heavy
+   * calculateDashboardMetrics path.
+   */
+  async getDirectTermRevenue(schoolId?: string, superAdmin = false): Promise<number> {
+    try {
+      const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
+      if (!currentTerm?.id) return 0;
+
+      const result = await this.paymentCaptureRepository
+        .createQueryBuilder('payment')
+        .select('COALESCE(SUM(payment.amount), 0)', 'total')
+        .where('payment.status = :status', { status: 'completed' })
+        .andWhere('payment.termId = :termId', { termId: currentTerm.id })
+        .andWhere(!superAdmin && schoolId ? 'payment.schoolId = :schoolId' : '1=1', { schoolId })
+        .getRawOne();
+
+      return parseFloat(result?.total || '0');
+    } catch {
+      return 0;
+    }
+  }
+
   async getFinancialStats(dateRange?: {
     startDate?: Date;
     endDate?: Date;
