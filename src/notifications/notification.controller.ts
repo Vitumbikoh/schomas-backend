@@ -11,7 +11,14 @@ export class NotificationController {
   constructor(private readonly notificationService: NotificationService) {}
 
   @Get()
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.ADMIN,
+    Role.SUPER_ADMIN,
+    Role.STUDENT,
+    Role.TEACHER,
+    Role.PARENT,
+    Role.FINANCE,
+  )
   async getAllNotifications(
     @Request() req,
     @Query('page') page: string = '1',
@@ -41,7 +48,14 @@ export class NotificationController {
   }
 
   @Get('stats')
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.ADMIN,
+    Role.SUPER_ADMIN,
+    Role.STUDENT,
+    Role.TEACHER,
+    Role.PARENT,
+    Role.FINANCE,
+  )
   async getNotificationStats(@Request() req) {
     // Filter by school for ADMINs, show all for SUPER_ADMIN
     const schoolId = req.user?.role === 'SUPER_ADMIN' ? undefined : req.user?.schoolId;
@@ -68,7 +82,14 @@ export class NotificationController {
   }
 
   @Patch(':id/read')
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.ADMIN,
+    Role.SUPER_ADMIN,
+    Role.STUDENT,
+    Role.TEACHER,
+    Role.PARENT,
+    Role.FINANCE,
+  )
   async markAsRead(@Param('id') id: string, @Request() req) {
     try {
       const schoolId = req.user?.role === 'SUPER_ADMIN' ? undefined : req.user?.schoolId;
@@ -92,7 +113,14 @@ export class NotificationController {
   }
 
   @Patch('read-all')
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.ADMIN,
+    Role.SUPER_ADMIN,
+    Role.STUDENT,
+    Role.TEACHER,
+    Role.PARENT,
+    Role.FINANCE,
+  )
   async markAllAsRead(@Request() req) {
     try {
       // Filter by school for ADMINs, mark all for SUPER_ADMIN
