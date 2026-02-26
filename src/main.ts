@@ -5,6 +5,18 @@ import { ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/exceptions/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { networkInterfaces } from 'os';
+
+const isPrivateIpv4Host = (host: string): boolean => {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
+  const octets = host.split('.').map((s) => Number.parseInt(s, 10));
+  if (octets.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return false;
+  return (
+    octets[0] === 10 ||
+    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+    (octets[0] === 192 && octets[1] === 168)
+  );
+};
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -44,10 +56,16 @@ async function bootstrap() {
 
   // CORS configuration: allow list via CORS_ORIGIN env (comma-separated)
   let corsEnv: string | undefined;
+  let nodeEnv = 'development';
   try {
     corsEnv = configService.get('CORS_ORIGIN');
   } catch (e) {
     corsEnv = undefined;
+  }
+  try {
+    nodeEnv = configService.get('NODE_ENV');
+  } catch (e) {
+    nodeEnv = process.env.NODE_ENV || 'development';
   }
 
   const allowedOrigins = corsEnv ? corsEnv.split(',').map(s => s.trim()) : ['http://localhost:8080'];
@@ -64,6 +82,10 @@ async function bootstrap() {
         const host = parsed.hostname;
         // allow any localhost/127.0.0.1 origin regardless of port (covers various dev servers, including schomas-app)
         if (host === 'localhost' || host === '127.0.0.1') {
+          return callback(null, true);
+        }
+        // in non-production, allow private LAN origins to ease phone testing over Wi-Fi
+        if (nodeEnv !== 'production' && isPrivateIpv4Host(host)) {
           return callback(null, true);
         }
       } catch (e) {
@@ -86,6 +108,32 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
-  await app.listen(configService.get('PORT') || 5000);
+  let port = 5000;
+  let host = '0.0.0.0';
+  try {
+    port = Number.parseInt(configService.get('PORT'), 10) || 5000;
+  } catch (e) {
+    port = 5000;
+  }
+  try {
+    host = configService.get('HOST') || '0.0.0.0';
+  } catch (e) {
+    host = '0.0.0.0';
+  }
+
+  await app.listen(port, host);
+
+  const nets = networkInterfaces();
+  const lanAddresses = Object.values(nets)
+    .flat()
+    .filter((addr): addr is NonNullable<typeof addr> => Boolean(addr))
+    .filter((addr) => addr.family === 'IPv4' && !addr.internal)
+    .map((addr) => addr.address);
+  const uniqueLanAddresses = [...new Set(lanAddresses)];
+
+  console.log(`API listening on http://localhost:${port}/api/v1`);
+  uniqueLanAddresses.forEach((addr) => {
+    console.log(`API listening on http://${addr}:${port}/api/v1`);
+  });
 }
 bootstrap();
