@@ -1506,7 +1506,21 @@ async submitExamGrades(
     const attendanceByDate = new Map<string, any>();
 
     attendanceRecords.forEach(record => {
-      const dateKey = record.date.toISOString().split('T')[0];
+      let dateKey = '';
+      if (record.date instanceof Date) {
+        dateKey = record.date.toISOString().split('T')[0];
+      } else if (typeof (record.date as any) === 'string') {
+        dateKey = (record.date as any).split('T')[0];
+      } else if (record.date != null) {
+        const parsedDate = new Date(record.date as any);
+        if (!Number.isNaN(parsedDate.getTime())) {
+          dateKey = parsedDate.toISOString().split('T')[0];
+        }
+      }
+
+      if (!dateKey) {
+        return;
+      }
 
       if (!attendanceByDate.has(dateKey)) {
         attendanceByDate.set(dateKey, {
@@ -1538,8 +1552,28 @@ async submitExamGrades(
       }
 
       dayRecord.attendanceDetails.push({
-        studentId: record.student.id,
-        studentName: `${record.student.student?.firstName || 'Unknown'} ${record.student.student?.lastName || 'Student'}`,
+        studentId: record.student?.id,
+        studentName: (() => {
+          const studentProfile = (record.student as any)?.student;
+          const teacherProfile = (record.student as any)?.teacher;
+          const firstName =
+            studentProfile?.firstName ||
+            teacherProfile?.firstName ||
+            (record.student as any)?.firstName ||
+            '';
+          const lastName =
+            studentProfile?.lastName ||
+            teacherProfile?.lastName ||
+            (record.student as any)?.lastName ||
+            '';
+          const fullName = `${firstName} ${lastName}`.trim();
+          return (
+            fullName ||
+            record.student?.username ||
+            record.student?.email ||
+            'Unknown Student'
+          );
+        })(),
         isPresent: record.isPresent,
       });
     });
