@@ -25,6 +25,9 @@ export class ScheduleService {
     private readonly classRepository: Repository<Class>,
   ) {}
 
+  private readonly templateDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+  private readonly templateSlots = ['08:00', '09:00', '10:00', '11:00', '13:30', '14:30'];
+
   // Utilities
   private toTime(value: string | Date): string {
     if (!value) return '00:00:00';
@@ -787,6 +790,240 @@ export class ScheduleService {
       }
     }
     return { imported, total: rows.length, results };
+  }
+
+  async generateSchoolTemplate(schoolId: string, replaceExisting = true) {
+    if (!schoolId) {
+      throw new BadRequestException('schoolId is required');
+    }
+
+    const [allClasses, allCourses, allClassrooms, existingSchedules] = await Promise.all([
+      this.classRepository.find({ where: { schoolId, isActive: true } }),
+      this.courseRepository.find({ where: { schoolId }, relations: ['teacher', 'class'] }),
+      this.classroomRepository.find({ where: { isActive: true } }),
+      this.scheduleRepository.find({
+        where: { schoolId, isActive: true },
+        relations: ['class', 'teacher', 'classroom']
+      }),
+    ]);
+
+    const activeClasses = allClasses
+      .filter((cls) => cls.numericalName !== 999 && !(cls.name || '').toLowerCase().includes('graduated'))
+      .sort((a, b) => {
+        if ((a.numericalName || 0) !== (b.numericalName || 0)) {
+          return (a.numericalName || 0) - (b.numericalName || 0);
+        }
+        return (a.name || '').localeCompare(b.name || '');
+      });
+
+    if (activeClasses.length === 0) {
+      throw new BadRequestException('No active non-graduated classes found for this school');
+    }
+
+    const classIdSet = new Set(activeClasses.map((c) => c.id));
+    const eligibleCourses = allCourses.filter((course) => {
+      const hasTeacher = Boolean(course.teacherId && course.teacher);
+      const isActive = (course.status || 'active') !== 'inactive';
+      return hasTeacher && isActive;
+    });
+
+    if (eligibleCourses.length === 0) {
+      throw new BadRequestException('No teacher-assigned courses found for this school');
+    }
+
+    let deleted = 0;
+    if (replaceExisting) {
+      const toDelete = existingSchedules.filter((s) => classIdSet.has((s.class as any)?.id));
+      if (toDelete.length > 0) {
+        await this.scheduleRepository.remove(toDelete);
+        deleted = toDelete.length;
+      }
+    }
+
+    const teacherBusy = new Set<string>();
+    const roomBusy = new Set<string>();
+    const classBusy = new Set<string>();
+
+    if (!replaceExisting) {
+      for (const existing of existingSchedules) {
+        const day = existing.day;
+        const slot = existing.startTime.slice(0, 5);
+        if (existing.teacher?.id) {
+          teacherBusy.add(`${day}|${slot}|${existing.teacher.id}`);
+        }
+        if (existing.classroom?.id) {
+          roomBusy.add(`${day}|${slot}|${existing.classroom.id}`);
+        }
+        if (existing.class?.id) {
+          classBusy.add(`${day}|${slot}|${existing.class.id}`);
+        }
+      }
+    }
+
+    const toSave: Partial<Schedule>[] = [];
+    const classSummaries: Array<{
+      classId: string;
+      className: string;
+      generated: number;
+      skipped: number;
+      forcedTeacherOverlaps: number;
+      usedFallbackCourses: boolean;
+      coursePoolSize: number;
+    }> = [];
+
+    let roomCursor = 0;
+
+    const getEndTime = (start: string) => {
+      const [hours, minutes] = start.split(':').map(Number);
+      return `${String(hours + 1).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+    };
+
+    for (const cls of activeClasses) {
+      const classCoursesExact = eligibleCourses.filter((course) => (course.classId || course.class?.id) === cls.id);
+      const classCourses = classCoursesExact.length > 0 ? classCoursesExact : eligibleCourses;
+
+      const periodsPerWeek = this.templateDays.length * this.templateSlots.length;
+      const baseQuota = Math.floor(periodsPerWeek / classCourses.length) || 1;
+      const remainingByCourse: Record<string, number> = {};
+      classCourses.forEach((course) => {
+        remainingByCourse[course.id] = baseQuota;
+      });
+
+      let allocated = baseQuota * classCourses.length;
+      let quotaCursor = 0;
+      while (allocated < periodsPerWeek) {
+        const course = classCourses[quotaCursor % classCourses.length];
+        remainingByCourse[course.id] += 1;
+        allocated++;
+        quotaCursor++;
+      }
+
+      let generated = 0;
+      let skipped = 0;
+      let forcedTeacherOverlaps = 0;
+      let classOffset = 0;
+
+      for (const day of this.templateDays) {
+        const usedToday = new Set<string>();
+
+        for (let slotIndex = 0; slotIndex < this.templateSlots.length; slotIndex++) {
+          const slot = this.templateSlots[slotIndex];
+          const classSlotKey = `${day}|${slot}|${cls.id}`;
+
+          if (classBusy.has(classSlotKey)) {
+            skipped++;
+            continue;
+          }
+
+          const orderedCourses = [...classCourses].sort((a, b) => {
+            const aRemaining = remainingByCourse[a.id] || 0;
+            const bRemaining = remainingByCourse[b.id] || 0;
+            const aUsedToday = usedToday.has(a.id) ? 1 : 0;
+            const bUsedToday = usedToday.has(b.id) ? 1 : 0;
+
+            if (aUsedToday !== bUsedToday) return aUsedToday - bUsedToday;
+            if (aRemaining !== bRemaining) return bRemaining - aRemaining;
+
+            const ai = classCourses.findIndex((c) => c.id === a.id);
+            const bi = classCourses.findIndex((c) => c.id === b.id);
+            return ((ai - bi + classOffset + classCourses.length) % classCourses.length);
+          });
+
+          let selectedCourse: Course | null = null;
+          for (const course of orderedCourses) {
+            if ((remainingByCourse[course.id] || 0) <= 0) continue;
+            if (!course.teacher?.id) continue;
+
+            const teacherKey = `${day}|${slot}|${course.teacher.id}`;
+            if (teacherBusy.has(teacherKey)) continue;
+
+            selectedCourse = course;
+            break;
+          }
+
+          // Fallback: if all suitable courses are blocked by teacher overlap,
+          // still schedule to avoid starving later classes (e.g., Form 3/4).
+          if (!selectedCourse) {
+            for (const course of orderedCourses) {
+              if ((remainingByCourse[course.id] || 0) <= 0) continue;
+              if (!course.teacher?.id) continue;
+              selectedCourse = course;
+              forcedTeacherOverlaps++;
+              break;
+            }
+          }
+
+          if (!selectedCourse || !selectedCourse.teacher?.id) {
+            skipped++;
+            continue;
+          }
+
+          let selectedClassroom: Classroom | undefined;
+          if (allClassrooms.length > 0) {
+            for (let r = 0; r < allClassrooms.length; r++) {
+              const candidate = allClassrooms[(roomCursor + r) % allClassrooms.length];
+              const roomKey = `${day}|${slot}|${candidate.id}`;
+              if (!roomBusy.has(roomKey)) {
+                selectedClassroom = candidate;
+                roomCursor = (roomCursor + r + 1) % allClassrooms.length;
+                roomBusy.add(roomKey);
+                break;
+              }
+            }
+          }
+
+          const startTime = `${slot}:00`;
+          const endTime = getEndTime(slot);
+
+          toSave.push(
+            this.scheduleRepository.create({
+              class: cls,
+              date: new Date(),
+              day,
+              startTime,
+              endTime,
+              course: selectedCourse,
+              teacher: selectedCourse.teacher,
+              classroom: selectedClassroom,
+              isActive: true,
+              schoolId,
+            }),
+          );
+
+          remainingByCourse[selectedCourse.id] = Math.max((remainingByCourse[selectedCourse.id] || 1) - 1, 0);
+          teacherBusy.add(`${day}|${slot}|${selectedCourse.teacher.id}`);
+          classBusy.add(classSlotKey);
+          usedToday.add(selectedCourse.id);
+          generated++;
+        }
+
+        classOffset += 3;
+      }
+
+      classSummaries.push({
+        classId: cls.id,
+        className: cls.name,
+        generated,
+        skipped,
+        forcedTeacherOverlaps,
+        usedFallbackCourses: classCoursesExact.length === 0,
+        coursePoolSize: classCourses.length,
+      });
+    }
+
+    if (toSave.length > 0) {
+      await this.scheduleRepository.save(toSave as Schedule[]);
+    }
+
+    return {
+      classesProcessed: activeClasses.length,
+      created: toSave.length,
+      deleted,
+      replaceExisting,
+      classroomsUsed: allClassrooms.length,
+      forcedTeacherOverlaps: classSummaries.reduce((acc, item) => acc + item.forcedTeacherOverlaps, 0),
+      classSummaries,
+    };
   }
 
   // Bulk delete schedules

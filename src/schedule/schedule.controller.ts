@@ -278,6 +278,34 @@ export class ScheduleController {
     return result;
   }
 
+  @Post('generate-school-template')
+  @Roles(Role.ADMIN)
+  @ApiResponse({ status: 201, description: 'School-wide timetable template generated' })
+  async generateSchoolTemplate(
+    @Request() req,
+    @Body() dto?: { replaceExisting?: boolean },
+  ) {
+    const result = await this.scheduleService.generateSchoolTemplate(
+      req.user?.schoolId,
+      dto?.replaceExisting ?? true,
+    );
+
+    await this.systemLoggingService.logAction({
+      action: 'SCHOOL_TEMPLATE_GENERATED',
+      module: 'SCHEDULE',
+      level: 'info',
+      entityType: 'Schedule',
+      metadata: {
+        replaceExisting: dto?.replaceExisting ?? true,
+        classesProcessed: result.classesProcessed,
+        created: result.created,
+      } as any,
+      newValues: result as any,
+    });
+
+    return result;
+  }
+
   // CSV Export for specific class
   @Get('class/:classId/export.csv')
   @Roles(Role.ADMIN, Role.TEACHER)
