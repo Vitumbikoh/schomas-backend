@@ -51,6 +51,14 @@ export class Notification {
   @Column({ nullable: true })
   schoolId?: string;
 
+  /**
+   * Optional list of roles that should receive this notification.
+   * null / undefined = only ADMIN and SUPER_ADMIN see it (default for system/admin notices).
+   * e.g. ['STUDENT'] means only students see it; ['STUDENT','TEACHER'] targets both.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  targetRoles?: string[];
+
   @CreateDateColumn()
   createdAt: Date;
 

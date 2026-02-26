@@ -32,34 +32,39 @@ export class NotificationService {
     }
   }
 
-  async findAll(page: number = 1, limit: number = 10, schoolId?: string, userRole?: string): Promise<{ notifications: Notification[]; total: number }> {
-    let whereCondition: any = {};
-    
-    if (userRole === 'SUPER_ADMIN') {
-      // Super admin can see all notifications, optionally filtered by schoolId
-      if (schoolId) {
-        whereCondition = { schoolId };
-      }
-      // If no schoolId provided, show all notifications (no filter)
-    } else {
-      // Regular admin users can only see their school's notifications
-      if (!schoolId) {
-        // If no schoolId, return empty results for security
-        return { notifications: [], total: 0 };
-      }
-      whereCondition = { schoolId };
-    }
-    
-    console.log('🔔 NotificationService.findAll - whereCondition:', whereCondition, 'userRole:', userRole, 'schoolId:', schoolId);
-    
-    const [notifications, total] = await this.notificationRepository.findAndCount({
-      where: whereCondition,
-      relations: ['school'],
-      order: { createdAt: 'DESC' },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+  /** Roles that have a restricted (audience-scoped) view of notifications. */
+  private readonly roleScopedRoles = ['STUDENT', 'TEACHER', 'PARENT', 'FINANCE'];
 
+  async findAll(page: number = 1, limit: number = 10, schoolId?: string, userRole?: string): Promise<{ notifications: Notification[]; total: number }> {
+    console.log('🔔 NotificationService.findAll - userRole:', userRole, 'schoolId:', schoolId);
+
+    // Non-admin roles must have a schoolId
+    if (userRole !== 'SUPER_ADMIN' && !schoolId) {
+      return { notifications: [], total: 0 };
+    }
+
+    const qb = this.notificationRepository
+      .createQueryBuilder('n')
+      .leftJoinAndSelect('n.school', 'school')
+      .orderBy('n.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (userRole === 'SUPER_ADMIN') {
+      if (schoolId) qb.where('n.schoolId = :schoolId', { schoolId });
+    } else {
+      qb.where('n.schoolId = :schoolId', { schoolId });
+    }
+
+    // Students, teachers, parents, and finance users only see notifications
+    // explicitly addressed to their role via the targetRoles array.
+    if (userRole && this.roleScopedRoles.includes(userRole)) {
+      qb.andWhere(`n."targetRoles" @> :roles::jsonb`, {
+        roles: JSON.stringify([userRole]),
+      });
+    }
+
+    const [notifications, total] = await qb.getManyAndCount();
     return { notifications, total };
   }
 
@@ -98,49 +103,54 @@ export class NotificationService {
   }
 
   async markAllAsRead(schoolId?: string, userRole?: string): Promise<void> {
-    let whereCondition: any = { read: false };
-    
-    if (userRole === 'SUPER_ADMIN') {
-      // Super admin can mark all notifications as read, optionally filtered by schoolId
-      if (schoolId) {
-        whereCondition = { read: false, schoolId };
-      }
-      // If no schoolId provided, mark all unread notifications
-    } else {
-      // Regular admin users can only mark their school's notifications as read
-      if (!schoolId) {
-        console.log('🔔 NotificationService.markAllAsRead - No schoolId provided for non-super-admin user, no action taken');
-        return; // No action if no schoolId provided
-      }
-      whereCondition = { read: false, schoolId };
+    if (userRole !== 'SUPER_ADMIN' && !schoolId) return;
+
+    // For role-scoped users, only mark notifications targeted at their role
+    if (userRole && this.roleScopedRoles.includes(userRole)) {
+      await this.notificationRepository
+        .createQueryBuilder()
+        .update()
+        .set({ read: true, readAt: new Date() })
+        .where('read = :read', { read: false })
+        .andWhere(schoolId ? '"schoolId" = :schoolId' : '1=1', { schoolId })
+        .andWhere(`"targetRoles" @> :roles::jsonb`, {
+          roles: JSON.stringify([userRole]),
+        })
+        .execute();
+      return;
     }
-    
+
+    const whereCondition: any = { read: false };
+    if (userRole === 'SUPER_ADMIN') {
+      if (schoolId) whereCondition.schoolId = schoolId;
+    } else {
+      whereCondition.schoolId = schoolId;
+    }
+
     console.log('🔔 NotificationService.markAllAsRead - whereCondition:', whereCondition, 'userRole:', userRole);
-    
-    await this.notificationRepository.update(
-      whereCondition,
-      { read: true, readAt: new Date() }
-    );
+    await this.notificationRepository.update(whereCondition, { read: true, readAt: new Date() });
   }
 
   async getUnreadCount(schoolId?: string, userRole?: string): Promise<number> {
-    let whereCondition: any = { read: false };
-    
+    if (userRole !== 'SUPER_ADMIN' && !schoolId) return 0;
+
+    const qb = this.notificationRepository
+      .createQueryBuilder('n')
+      .where('n.read = :read', { read: false });
+
     if (userRole === 'SUPER_ADMIN') {
-      // Super admin can see count of all unread notifications, optionally filtered by schoolId
-      if (schoolId) {
-        whereCondition = { read: false, schoolId };
-      }
-      // If no schoolId provided, count all unread notifications
+      if (schoolId) qb.andWhere('n.schoolId = :schoolId', { schoolId });
     } else {
-      // Regular admin users can only see count of their school's unread notifications
-      if (!schoolId) {
-        return 0; // No notifications if no schoolId provided
-      }
-      whereCondition = { read: false, schoolId };
+      qb.andWhere('n.schoolId = :schoolId', { schoolId });
     }
-    
-    return this.notificationRepository.count({ where: whereCondition });
+
+    if (userRole && this.roleScopedRoles.includes(userRole)) {
+      qb.andWhere(`n."targetRoles" @> :roles::jsonb`, {
+        roles: JSON.stringify([userRole]),
+      });
+    }
+
+    return qb.getCount();
   }
 
   // Helper method to create credential notifications when new school credentials are generated

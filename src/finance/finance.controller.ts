@@ -585,6 +585,27 @@ export class FinanceController {
     );
   }
 
+  @Get('my-financial-summary')
+  @Roles(Role.STUDENT)
+  @ApiOperation({ summary: 'Get comprehensive all-term financial summary for the currently logged-in student' })
+  async myFinancialSummary(@Request() req) {
+    const user = req.user;
+
+    const student = await this.studentRepository.findOne({
+      where: { userId: user.sub },
+    });
+
+    if (!student) {
+      throw new NotFoundException('Student record not found for this user');
+    }
+
+    return this.financeService.getStudentFinancialDetails(
+      student.id,
+      user.schoolId,
+      false,
+    );
+  }
+
   @Get('student-financial-details/:studentId')
   @Roles(Role.ADMIN, Role.FINANCE)
   @ApiOperation({ summary: 'Get comprehensive financial details for a student including transaction history and multi-term breakdown' })
