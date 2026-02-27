@@ -627,8 +627,10 @@ export class TeacherController {
       const teacher = await this.teacherService.findOneByUserId(userId);
       if (!teacher) throw new NotFoundException('Your teacher record was not found');
 
+      // Exams store the user UUID (req.user.sub) as teacherId (set in exam.controller.ts create).
+      // Pass userId so both conditions in findAllForTeacherByTerm match correctly.
       const exams = await this.examService.findAllForTeacherByTerm(
-        teacher.id,
+        userId,
         termId,
         teacher.schoolId,
         false,
