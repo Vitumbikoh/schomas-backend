@@ -25,6 +25,7 @@ import { SettingsModule } from 'src/settings/settings.module';
 import { ExamModule } from 'src/exams/exam.module';
 import { LogsModule } from 'src/logs/logs.module';
 import { AggregationModule } from 'src/aggregation/aggregation.module';
+import { NotificationModule } from 'src/notifications/notification.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { AggregationModule } from 'src/aggregation/aggregation.module';
     ExamModule,
   LogsModule,
   AggregationModule,
+  NotificationModule,
   ],
   providers: [
     TeachersService,

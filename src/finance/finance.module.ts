@@ -39,6 +39,7 @@ import { GraduateFeesService } from './services/graduate-fees.service';
 
 // Controllers
 import { GraduateFeesController } from './controllers/graduate-fees.controller';
+import { NotificationModule } from '../notifications/notification.module';
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import { GraduateFeesController } from './controllers/graduate-fees.controller';
     LogsModule,
     AuthModule,
     ConfigModule,
+    NotificationModule,
   ],
   controllers: [
     FinanceController, 

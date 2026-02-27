@@ -226,6 +226,7 @@ export class BillingService {
         type: NotificationType.SYSTEM,
         priority: NotificationPriority.HIGH,
         schoolId,
+        targetRoles: ['ADMIN', 'FINANCE'],
         metadata: {
           invoiceId: savedInvoice.id,
           invoiceNumber: savedInvoice.invoiceNumber,
@@ -360,6 +361,7 @@ export class BillingService {
         type: NotificationType.SYSTEM,
         priority: isPaidInFull ? NotificationPriority.MEDIUM : NotificationPriority.LOW,
         schoolId,
+        targetRoles: ['ADMIN', 'FINANCE'],
         metadata: {
           invoiceId: invoice.id,
           invoiceNumber: invoice.invoiceNumber,

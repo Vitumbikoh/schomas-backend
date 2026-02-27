@@ -30,10 +30,17 @@ export class NotificationController {
     // Filter by school for ADMINs, show all for SUPER_ADMIN
     const schoolId = req.user?.role === 'SUPER_ADMIN' ? undefined : req.user?.schoolId;
     const userRole = req.user?.role;
+    const userId = req.user?.sub || req.user?.id;
     
     console.log('🔔 NotificationController.getAllNotifications - User:', req.user?.id, 'Role:', userRole, 'SchoolId:', schoolId);
     
-    const { notifications, total } = await this.notificationService.findAll(pageNum, limitNum, schoolId, userRole);
+    const { notifications, total } = await this.notificationService.findAll(
+      pageNum,
+      limitNum,
+      schoolId,
+      userRole,
+      userId,
+    );
     
     return {
       success: true,
@@ -60,11 +67,22 @@ export class NotificationController {
     // Filter by school for ADMINs, show all for SUPER_ADMIN
     const schoolId = req.user?.role === 'SUPER_ADMIN' ? undefined : req.user?.schoolId;
     const userRole = req.user?.role;
+    const userId = req.user?.sub || req.user?.id;
     
     console.log('🔔 NotificationController.getNotificationStats - User:', req.user?.id, 'Role:', userRole, 'SchoolId:', schoolId);
     
-    const { notifications, total } = await this.notificationService.findAll(1, 1000, schoolId, userRole); // Get all for stats
-    const unreadCount = await this.notificationService.getUnreadCount(schoolId, userRole);
+    const { notifications, total } = await this.notificationService.findAll(
+      1,
+      1000,
+      schoolId,
+      userRole,
+      userId,
+    ); // Get all for stats
+    const unreadCount = await this.notificationService.getUnreadCount(
+      userId,
+      schoolId,
+      userRole,
+    );
     
     return {
       success: true,
@@ -94,10 +112,16 @@ export class NotificationController {
     try {
       const schoolId = req.user?.role === 'SUPER_ADMIN' ? undefined : req.user?.schoolId;
       const userRole = req.user?.role;
+      const userId = req.user?.sub || req.user?.id;
       
       console.log('🔔 NotificationController.markAsRead - User:', req.user?.id, 'Role:', userRole, 'SchoolId:', schoolId, 'NotificationId:', id);
       
-      const notification = await this.notificationService.markAsRead(id, schoolId, userRole);
+      const notification = await this.notificationService.markAsRead(
+        id,
+        userId,
+        schoolId,
+        userRole,
+      );
       return {
         success: true,
         notification,
@@ -126,10 +150,11 @@ export class NotificationController {
       // Filter by school for ADMINs, mark all for SUPER_ADMIN
       const schoolId = req.user?.role === 'SUPER_ADMIN' ? undefined : req.user?.schoolId;
       const userRole = req.user?.role;
+      const userId = req.user?.sub || req.user?.id;
       
       console.log('🔔 NotificationController.markAllAsRead - User:', req.user?.id, 'Role:', userRole, 'SchoolId:', schoolId);
       
-      await this.notificationService.markAllAsRead(schoolId, userRole);
+      await this.notificationService.markAllAsRead(userId, schoolId, userRole);
       return {
         success: true,
         message: 'All notifications marked as read',

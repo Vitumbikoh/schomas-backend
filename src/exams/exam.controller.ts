@@ -6,12 +6,18 @@ import { CreateExamDto } from './dto/create-exam.dto';
 import { Exam } from './entities/exam.entity';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { Role } from 'src/user/enums/role.enum';
+import { NotificationService } from '../notifications/notification.service';
+import {
+  NotificationPriority,
+  NotificationType,
+} from '../notifications/entities/notification.entity';
 
 @Controller('exams')
 export class ExamController {
   constructor(
     private readonly examService: ExamService,
     private readonly systemLoggingService: SystemLoggingService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   @Get()
@@ -109,6 +115,36 @@ export class ExamController {
   newValues: { id: created.id, title: created.title, courseId: created.course?.id, classId: created.class?.id, date: created.date, status: created.status },
       metadata: { description: 'Exam created', schoolId: created.schoolId }
     });
+
+    await this.notificationService.createForRoles(['TEACHER', 'ADMIN'], {
+      schoolId: created.schoolId,
+      title: 'Exam created',
+      message: `${created.title} has been created and scheduled.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.MEDIUM,
+      metadata: {
+        action: 'create',
+        module: 'exams',
+        examId: created.id,
+        classId: created.class?.id,
+        courseId: created.course?.id,
+      },
+    });
+
+    await this.notificationService.createForRoles(['STUDENT', 'PARENT'], {
+      schoolId: created.schoolId,
+      title: 'New exam scheduled',
+      message: `${created.title} has been scheduled for your class.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.LOW,
+      metadata: {
+        action: 'create',
+        module: 'exams',
+        examId: created.id,
+        classId: created.class?.id,
+      },
+    });
+
     return created;
   }
 
@@ -137,6 +173,35 @@ export class ExamController {
       newValues: { status: 'administered' },
       metadata: { description: 'Exam administered by teacher', schoolId: updatedExam.schoolId }
     });
+
+    await this.notificationService.createForRoles(['TEACHER', 'ADMIN'], {
+      schoolId: updatedExam.schoolId,
+      title: 'Exam administered',
+      message: `${updatedExam.title} has been administered.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.MEDIUM,
+      metadata: {
+        action: 'update',
+        module: 'exams',
+        examId: updatedExam.id,
+        status: updatedExam.status,
+      },
+    });
+
+    await this.notificationService.createForRoles(['STUDENT', 'PARENT'], {
+      schoolId: updatedExam.schoolId,
+      title: 'Exam completed',
+      message: `${updatedExam.title} has been administered. Results will be published soon.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.LOW,
+      metadata: {
+        action: 'update',
+        module: 'exams',
+        examId: updatedExam.id,
+        status: updatedExam.status,
+      },
+    });
+
     return updatedExam;
   }
 

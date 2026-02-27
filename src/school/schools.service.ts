@@ -117,6 +117,7 @@ export class SchoolsService {
         type: NotificationType.SYSTEM,
         priority: NotificationPriority.HIGH,
         schoolId: result.school.id,
+        targetRoles: ['ADMIN'],
         metadata: {
           schoolId: result.school.id,
           schoolName: result.school.name,
@@ -221,6 +222,7 @@ export class SchoolsService {
           type: NotificationType.SYSTEM,
           priority: NotificationPriority.MEDIUM,
           schoolId: updatedSchool.id,
+          targetRoles: ['ADMIN'],
           metadata: {
             schoolId: updatedSchool.id,
             schoolName: updatedSchool.name,
@@ -248,6 +250,7 @@ export class SchoolsService {
         type: NotificationType.ALERT,
         priority: NotificationPriority.HIGH,
         schoolId: school.id,
+        targetRoles: ['ADMIN'],
         metadata: {
           schoolId: school.id,
           schoolName: school.name,
@@ -274,6 +277,7 @@ export class SchoolsService {
         type: NotificationType.SYSTEM,
         priority: NotificationPriority.MEDIUM,
         schoolId: school.id,
+        targetRoles: ['ADMIN'],
         metadata: {
           schoolId: school.id,
           schoolName: school.name,

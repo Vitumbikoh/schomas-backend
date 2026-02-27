@@ -36,6 +36,11 @@ import { CreateFinanceDto } from 'src/user/dtos/create-finance.dto';
 import { StudentFeeExpectationService } from './student-fee-expectation.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
 import { CreateFeeStructureDto } from './dtos/fees-structure.dto';
+import { NotificationService } from '../notifications/notification.service';
+import {
+  NotificationPriority,
+  NotificationType,
+} from '../notifications/entities/notification.entity';
 
 @ApiTags('Finance')
 @ApiBearerAuth()
@@ -47,6 +52,7 @@ export class FinanceController {
     private readonly enhancedFinanceService: EnhancedFinanceService,
     private readonly systemLoggingService: SystemLoggingService,
     private readonly studentFeeExpectationService: StudentFeeExpectationService,
+    private readonly notificationService: NotificationService,
     @InjectRepository(Student)
     private readonly studentRepository: Repository<Student>,
   ) {}
@@ -261,6 +267,39 @@ export class FinanceController {
               description: 'Fee payment processed via FinanceController',
             },
           });
+
+          const studentName = payment.studentName || 'Student';
+          await this.notificationService.createForRoles(
+            ['FINANCE', 'ADMIN'],
+            {
+              schoolId: req.user.schoolId,
+              title: 'Payment recorded',
+              message: `${studentName} paid ${payment.amount ?? 0} via ${payment.paymentMethod ?? 'N/A'}`,
+              type: NotificationType.SYSTEM,
+              priority: NotificationPriority.MEDIUM,
+              metadata: {
+                action: 'create',
+                module: 'finance',
+                paymentId: payment.id,
+                receiptNumber: payment.receiptNumber,
+              },
+            },
+          );
+
+          await this.notificationService.createForRoles(['STUDENT', 'PARENT'], {
+            schoolId: req.user.schoolId,
+            title: 'Fee payment received',
+            message: `Your payment of ${payment.amount ?? 0} has been recorded${payment.receiptNumber ? ` (Receipt: ${payment.receiptNumber})` : ''}.`,
+            type: NotificationType.SYSTEM,
+            priority: NotificationPriority.LOW,
+            metadata: {
+              action: 'create',
+              module: 'finance',
+              paymentId: payment.id,
+              studentId: payment.studentId,
+              receiptNumber: payment.receiptNumber,
+            },
+          });
         }
       } else {
         await this.systemLoggingService.logAction({
@@ -353,10 +392,25 @@ export class FinanceController {
     };
 
     // Pass schoolId from authenticated user for multi-tenant isolation
-    return this.studentFeeExpectationService.createFeeStructureItem(
+    const created = await this.studentFeeExpectationService.createFeeStructureItem(
       feeStructureData,
       superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
     );
+
+    await this.notificationService.createForRoles(['FINANCE', 'ADMIN'], {
+      schoolId: superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
+      title: 'Fee structure created',
+      message: `${created?.feeType ?? feeStructureData.feeType} fee structure has been added.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.MEDIUM,
+      metadata: {
+        action: 'create',
+        module: 'finance-fee-structure',
+        feeStructureId: created?.id,
+      },
+    });
+
+    return created;
   }
 
   @Get('fee-structure')
@@ -411,12 +465,27 @@ export class FinanceController {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
 
-    return this.studentFeeExpectationService.updateFeeStructureItem(
+    const updated = await this.studentFeeExpectationService.updateFeeStructureItem(
       id,
       dto,
       superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
       superAdmin,
     );
+
+    await this.notificationService.createForRoles(['FINANCE', 'ADMIN'], {
+      schoolId: superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
+      title: 'Fee structure updated',
+      message: `Fee structure item has been updated.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.LOW,
+      metadata: {
+        action: 'update',
+        module: 'finance-fee-structure',
+        feeStructureId: id,
+      },
+    });
+
+    return updated;
   }
 
   @Delete('fee-structure/:id')
@@ -430,11 +499,26 @@ export class FinanceController {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
 
-    return this.studentFeeExpectationService.deleteFeeStructureItem(
+    const deleted = await this.studentFeeExpectationService.deleteFeeStructureItem(
       id,
       superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
       superAdmin,
     );
+
+    await this.notificationService.createForRoles(['FINANCE', 'ADMIN'], {
+      schoolId: superAdmin ? req.query.schoolId || user.schoolId : user.schoolId,
+      title: 'Fee structure deleted',
+      message: `A fee structure item has been removed.`,
+      type: NotificationType.ALERT,
+      priority: NotificationPriority.MEDIUM,
+      metadata: {
+        action: 'delete',
+        module: 'finance-fee-structure',
+        feeStructureId: id,
+      },
+    });
+
+    return deleted;
   }
 
   // ---------------- Fee Status and Summary ----------------

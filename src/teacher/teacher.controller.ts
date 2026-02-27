@@ -27,6 +27,11 @@ import { SubmitGradesDto } from 'src/exams/dto/submit-grades.dto';
 import { BadRequestException } from '@nestjs/common';
 import { ExamService } from 'src/exams/exam.service';
 import { SystemLoggingService } from 'src/logs/system-logging.service';
+import { NotificationService } from 'src/notifications/notification.service';
+import {
+  NotificationPriority,
+  NotificationType,
+} from 'src/notifications/entities/notification.entity';
 
 @Controller('teacher')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -36,6 +41,7 @@ export class TeacherController {
     private readonly userService: UsersService,
     private readonly examService: ExamService,
     private readonly systemLoggingService: SystemLoggingService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   @Get('total-teachers')
@@ -1283,6 +1289,46 @@ export class TeacherController {
           exam_title: exam.title || 'Unknown',
           submission_timestamp: new Date().toISOString()
         }
+      });
+
+      await this.notificationService.createForRoles(['TEACHER', 'ADMIN'], {
+        schoolId: teacher.schoolId,
+        title: 'Grades submitted',
+        message: `${teacher.firstName} ${teacher.lastName} submitted grades for ${exam.title ?? 'an exam'}.`,
+        type: NotificationType.SYSTEM,
+        priority: NotificationPriority.MEDIUM,
+        metadata: {
+          action: 'update',
+          module: 'grades',
+          examId: submitGradesDto.examId,
+          gradedStudents: submitGradesDto.grades?.length || 0,
+        },
+      });
+
+      await this.notificationService.createForRoles(['STUDENT'], {
+        schoolId: teacher.schoolId,
+        title: 'Exam results updated',
+        message: `Results for ${exam.title ?? 'your exam'} are now available.`,
+        type: NotificationType.ALERT,
+        priority: NotificationPriority.HIGH,
+        metadata: {
+          action: 'update',
+          module: 'grades',
+          examId: submitGradesDto.examId,
+        },
+      });
+
+      await this.notificationService.createForRoles(['PARENT'], {
+        schoolId: teacher.schoolId,
+        title: 'Student results published',
+        message: `Exam results for ${exam.title ?? 'an exam'} have been published.`,
+        type: NotificationType.SYSTEM,
+        priority: NotificationPriority.MEDIUM,
+        metadata: {
+          action: 'update',
+          module: 'grades',
+          examId: submitGradesDto.examId,
+        },
       });
 
       return {

@@ -16,6 +16,7 @@ import { LogsModule } from '../logs/logs.module';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
 import { AcademicCalendar } from '../settings/entities/academic-calendar.entity';
+import { NotificationModule } from '../notifications/notification.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { AcademicCalendar } from '../settings/entities/academic-calendar.entity'
     LogsModule,
     AuthModule,
     ConfigModule,
+    NotificationModule,
   ],
   controllers: [ExamController],
   providers: [ExamService],

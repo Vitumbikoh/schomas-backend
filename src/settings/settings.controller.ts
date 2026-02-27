@@ -1429,6 +1429,7 @@ async createTermPeriod(
             type: NotificationType.ALERT,
             priority: NotificationPriority.MEDIUM,
             schoolId: req.user.schoolId,
+            targetRoles: ['ADMIN'],
             metadata: { progressionPeriod: progressionReason, term: `Term ${progressionTerm.termNumber}` }
           });
         } catch (err) {
@@ -1494,6 +1495,7 @@ async createTermPeriod(
           type: NotificationType.SYSTEM,
           priority: NotificationPriority.MEDIUM,
           schoolId: req.user.schoolId,
+          targetRoles: ['ADMIN'],
           metadata: { ...result }
         });
       } catch (err) {
@@ -1511,6 +1513,7 @@ async createTermPeriod(
           type: NotificationType.ALERT,
           priority: NotificationPriority.HIGH,
           schoolId: req.user?.schoolId,
+          targetRoles: ['ADMIN'],
           metadata: { error: error?.message }
         });
       } catch (notifyErr) {

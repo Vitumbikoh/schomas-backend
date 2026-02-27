@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository, SelectQueryBuilder } from 'typeorm';
 import { Notification, NotificationType, NotificationPriority } from './entities/notification.entity';
+import { NotificationRead } from './entities/notification-read.entity';
 
 export interface CreateNotificationDto {
   title: string;
@@ -9,6 +10,7 @@ export interface CreateNotificationDto {
   type?: NotificationType;
   priority?: NotificationPriority;
   schoolId?: string;
+  targetRoles?: string[];
   metadata?: Record<string, any>;
 }
 
@@ -17,6 +19,8 @@ export class NotificationService {
   constructor(
     @InjectRepository(Notification)
     private notificationRepository: Repository<Notification>,
+    @InjectRepository(NotificationRead)
+    private notificationReadRepository: Repository<NotificationRead>,
   ) {}
 
   async create(createNotificationDto: CreateNotificationDto): Promise<Notification> {
@@ -32,10 +36,62 @@ export class NotificationService {
     }
   }
 
+  async createForRoles(
+    roles: string[],
+    createNotificationDto: CreateNotificationDto,
+  ): Promise<Notification> {
+    return this.create({
+      ...createNotificationDto,
+      targetRoles: roles,
+    });
+  }
+
   /** Roles that have a restricted (audience-scoped) view of notifications. */
   private readonly roleScopedRoles = ['STUDENT', 'TEACHER', 'PARENT', 'FINANCE'];
+  private readonly adminRole = 'ADMIN';
+  private readonly superAdminRole = 'SUPER_ADMIN';
 
-  async findAll(page: number = 1, limit: number = 10, schoolId?: string, userRole?: string): Promise<{ notifications: Notification[]; total: number }> {
+  private applyRoleAudienceFilter(
+    qb: SelectQueryBuilder<Notification>,
+    userRole?: string,
+  ): void {
+    const normalizedRole = userRole?.toUpperCase();
+    if (!normalizedRole || normalizedRole === this.superAdminRole) {
+      return;
+    }
+
+    // Admins see admin notices plus legacy notices with no explicit targets.
+    if (normalizedRole === this.adminRole) {
+      qb.andWhere(
+        `(n."targetRoles" IS NULL OR n."targetRoles" @> :adminRole::jsonb)`,
+        {
+          adminRole: JSON.stringify([this.adminRole]),
+        },
+      );
+      return;
+    }
+
+    // Role-scoped users only see notifications explicitly targeted to their role.
+    if (this.roleScopedRoles.includes(normalizedRole)) {
+      qb.andWhere(`n."targetRoles" @> :role::jsonb`, {
+        role: JSON.stringify([normalizedRole]),
+      });
+      return;
+    }
+
+    // Unknown/custom roles default to explicit targeting only.
+    qb.andWhere(`n."targetRoles" @> :role::jsonb`, {
+      role: JSON.stringify([normalizedRole]),
+    });
+  }
+
+  async findAll(
+    page: number = 1,
+    limit: number = 10,
+    schoolId?: string,
+    userRole?: string,
+    userId?: string,
+  ): Promise<{ notifications: Notification[]; total: number }> {
     console.log('🔔 NotificationService.findAll - userRole:', userRole, 'schoolId:', schoolId);
 
     // Non-admin roles must have a schoolId
@@ -56,87 +112,50 @@ export class NotificationService {
       qb.where('n.schoolId = :schoolId', { schoolId });
     }
 
-    // Students, teachers, parents, and finance users only see notifications
-    // explicitly addressed to their role via the targetRoles array.
-    if (userRole && this.roleScopedRoles.includes(userRole)) {
-      qb.andWhere(`n."targetRoles" @> :roles::jsonb`, {
-        roles: JSON.stringify([userRole]),
-      });
-    }
+    this.applyRoleAudienceFilter(qb, userRole);
 
     const [notifications, total] = await qb.getManyAndCount();
-    return { notifications, total };
-  }
 
-  async findById(id: string, schoolId?: string, userRole?: string): Promise<Notification> {
-    let whereCondition: any = { id };
-    
-    if (userRole === 'SUPER_ADMIN') {
-      // Super admin can access any notification
-      whereCondition = { id };
-    } else {
-      // Regular admin users can only access their school's notifications
-      if (!schoolId) {
-        return null; // No access if no schoolId provided
-      }
-      whereCondition = { id, schoolId };
+    if (!notifications.length || !userId) {
+      return { notifications, total };
     }
-    
-    console.log('🔔 NotificationService.findById - whereCondition:', whereCondition, 'userRole:', userRole);
-    
-    return this.notificationRepository.findOne({
-      where: whereCondition,
-      relations: ['school'],
+
+    const reads = await this.notificationReadRepository.find({
+      where: {
+        userId,
+        notificationId: In(notifications.map((n) => n.id)),
+      },
     });
+    const readByNotification = new Map(
+      reads.map((r) => [r.notificationId, r.readAt]),
+    );
+
+    const hydrated = notifications.map((n) => {
+      const readAt = readByNotification.get(n.id);
+      return {
+        ...n,
+        read: !!readAt,
+        readAt: readAt ?? null,
+      } as Notification;
+    });
+
+    return { notifications: hydrated, total };
   }
 
-  async markAsRead(id: string, schoolId?: string, userRole?: string): Promise<Notification> {
-    const notification = await this.findById(id, schoolId, userRole);
-    if (!notification) {
-      throw new Error('Notification not found or access denied');
+  async findById(
+    id: string,
+    schoolId?: string,
+    userRole?: string,
+    userId?: string,
+  ): Promise<Notification> {
+    if (userRole !== 'SUPER_ADMIN' && !schoolId) {
+      return null;
     }
-
-    notification.read = true;
-    notification.readAt = new Date();
-    console.log('🔔 NotificationService.markAsRead - marking notification as read:', id, 'by user role:', userRole);
-    return this.notificationRepository.save(notification);
-  }
-
-  async markAllAsRead(schoolId?: string, userRole?: string): Promise<void> {
-    if (userRole !== 'SUPER_ADMIN' && !schoolId) return;
-
-    // For role-scoped users, only mark notifications targeted at their role
-    if (userRole && this.roleScopedRoles.includes(userRole)) {
-      await this.notificationRepository
-        .createQueryBuilder()
-        .update()
-        .set({ read: true, readAt: new Date() })
-        .where('read = :read', { read: false })
-        .andWhere(schoolId ? '"schoolId" = :schoolId' : '1=1', { schoolId })
-        .andWhere(`"targetRoles" @> :roles::jsonb`, {
-          roles: JSON.stringify([userRole]),
-        })
-        .execute();
-      return;
-    }
-
-    const whereCondition: any = { read: false };
-    if (userRole === 'SUPER_ADMIN') {
-      if (schoolId) whereCondition.schoolId = schoolId;
-    } else {
-      whereCondition.schoolId = schoolId;
-    }
-
-    console.log('🔔 NotificationService.markAllAsRead - whereCondition:', whereCondition, 'userRole:', userRole);
-    await this.notificationRepository.update(whereCondition, { read: true, readAt: new Date() });
-  }
-
-  async getUnreadCount(schoolId?: string, userRole?: string): Promise<number> {
-    if (userRole !== 'SUPER_ADMIN' && !schoolId) return 0;
 
     const qb = this.notificationRepository
       .createQueryBuilder('n')
-      .where('n.read = :read', { read: false });
+      .leftJoinAndSelect('n.school', 'school')
+      .where('n.id = :id', { id });
 
     if (userRole === 'SUPER_ADMIN') {
       if (schoolId) qb.andWhere('n.schoolId = :schoolId', { schoolId });
@@ -144,11 +163,129 @@ export class NotificationService {
       qb.andWhere('n.schoolId = :schoolId', { schoolId });
     }
 
-    if (userRole && this.roleScopedRoles.includes(userRole)) {
-      qb.andWhere(`n."targetRoles" @> :roles::jsonb`, {
-        roles: JSON.stringify([userRole]),
-      });
+    this.applyRoleAudienceFilter(qb, userRole);
+
+    const notification = await qb.getOne();
+    if (!notification || !userId) {
+      return notification;
     }
+
+    const readRecord = await this.notificationReadRepository.findOne({
+      where: { notificationId: id, userId },
+    });
+
+    return {
+      ...notification,
+      read: !!readRecord,
+      readAt: readRecord?.readAt ?? null,
+    } as Notification;
+  }
+
+  async markAsRead(
+    id: string,
+    userId?: string,
+    schoolId?: string,
+    userRole?: string,
+  ): Promise<Notification> {
+    if (!userId) {
+      throw new Error('User context missing');
+    }
+
+    const notification = await this.findById(id, schoolId, userRole, userId);
+    if (!notification) {
+      throw new Error('Notification not found or access denied');
+    }
+
+    const existing = await this.notificationReadRepository.findOne({
+      where: { notificationId: id, userId },
+    });
+
+    if (!existing) {
+      await this.notificationReadRepository.save(
+        this.notificationReadRepository.create({
+          notificationId: id,
+          userId,
+          schoolId,
+        }),
+      );
+    }
+
+    notification.read = true;
+    notification.readAt = existing?.readAt ?? new Date();
+    console.log('🔔 NotificationService.markAsRead - marking notification as read:', id, 'by user role:', userRole);
+    return notification;
+  }
+
+  async markAllAsRead(
+    userId?: string,
+    schoolId?: string,
+    userRole?: string,
+  ): Promise<void> {
+    if (!userId) return;
+    if (userRole !== 'SUPER_ADMIN' && !schoolId) return;
+
+    const qb = this.notificationRepository.createQueryBuilder('n').select('n.id', 'id');
+    if (userRole === 'SUPER_ADMIN') {
+      if (schoolId) qb.where('n.schoolId = :schoolId', { schoolId });
+    } else {
+      qb.where('n.schoolId = :schoolId', { schoolId });
+    }
+
+    this.applyRoleAudienceFilter(qb, userRole);
+
+    const rows = await qb.getRawMany<{ id: string }>();
+    const ids = rows.map((r) => r.id).filter(Boolean);
+    if (!ids.length) return;
+
+    const existing = await this.notificationReadRepository.find({
+      where: { userId, notificationId: In(ids) },
+    });
+    const existingIds = new Set(existing.map((r) => r.notificationId));
+
+    const toInsert = ids
+      .filter((id) => !existingIds.has(id))
+      .map((notificationId) => ({
+        notificationId,
+        userId,
+        schoolId,
+      }));
+
+    if (!toInsert.length) return;
+
+    await this.notificationReadRepository
+      .createQueryBuilder()
+      .insert()
+      .into(NotificationRead)
+      .values(toInsert)
+      .orIgnore()
+      .execute();
+  }
+
+  async getUnreadCount(
+    userId?: string,
+    schoolId?: string,
+    userRole?: string,
+  ): Promise<number> {
+    if (!userId) return 0;
+    if (userRole !== 'SUPER_ADMIN' && !schoolId) return 0;
+
+    const qb = this.notificationRepository
+      .createQueryBuilder('n')
+      .leftJoin(
+        NotificationRead,
+        'nr',
+        'nr.notificationId = n.id AND nr.userId = :userId',
+        { userId },
+      )
+      .where('nr.id IS NULL');
+
+    if (userRole === 'SUPER_ADMIN') {
+      if (schoolId) qb.andWhere('n.schoolId = :schoolId', { schoolId });
+    } else {
+      qb.andWhere('n.schoolId = :schoolId', { schoolId });
+    }
+
+    this.applyRoleAudienceFilter(qb, userRole);
 
     return qb.getCount();
   }
@@ -161,6 +298,7 @@ export class NotificationService {
       type: NotificationType.CREDENTIALS,
       priority: NotificationPriority.MEDIUM,
       schoolId,
+      targetRoles: [this.adminRole],
       metadata: {
         credentials,
         schoolName,
