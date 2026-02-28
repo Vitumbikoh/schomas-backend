@@ -2595,7 +2595,7 @@ async getParentPayments(
     // We'll filter by enrollment date later for active students
     let termsQuery = `
       SELECT t.id, t."termNumber", t."startDate", t."endDate", ac.term as academic_year,
-             ac.id as academic_calendar_id
+             ac.id as academic_calendar_id, ac."startDate" as academic_calendar_start_date
       FROM term t
       LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
     `;
@@ -2621,9 +2621,45 @@ async getParentPayments(
       queryParams.push(schoolId);
     }
 
-    termsQuery += ` ORDER BY t."startDate" ASC, t."termNumber" ASC`;
+    termsQuery += ` ORDER BY COALESCE(ac."startDate", t."startDate") ASC, t."termNumber" ASC`;
     
     let terms = await this.studentRepository.query(termsQuery, queryParams);
+
+    let enrollmentCutoffTermId = student.enrollmentTermId;
+    if (!enrollmentCutoffTermId) {
+      try {
+        const earliestAcademicRecord = await this.studentRepository.query(
+          `SELECT x."termId" FROM (
+             SELECT e."termId"
+             FROM enrollment e
+             WHERE e."studentId"::uuid = $1
+             ${!superAdmin && schoolId ? 'AND e."schoolId"::uuid = $2' : ''}
+             UNION
+             SELECT sar."termId"
+             FROM student_academic_records sar
+             WHERE sar."studentId"::uuid = $1
+             ${!superAdmin && schoolId ? 'AND sar."schoolId"::uuid = $2' : ''}
+             UNION
+             SELECT sah.term_id as "termId"
+             FROM student_academic_history sah
+             WHERE sah.student_id::uuid = $1
+             ${!superAdmin && schoolId ? 'AND sah.school_id::uuid = $2' : ''}
+           ) x
+           INNER JOIN term t ON x."termId" = t.id
+           LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
+           ORDER BY COALESCE(ac."startDate", t."startDate", t."createdAt") ASC, t."termNumber" ASC
+           LIMIT 1`,
+          !superAdmin && schoolId ? [studentId, schoolId] : [studentId],
+        );
+
+        if (earliestAcademicRecord?.length > 0 && earliestAcademicRecord[0]?.termId) {
+          enrollmentCutoffTermId = earliestAcademicRecord[0].termId;
+          console.log(`ℹ️  Enrollment cutoff inferred from earliest academic record: ${enrollmentCutoffTermId}`);
+        }
+      } catch (error) {
+        console.log(`⚠️  Failed to infer enrollment cutoff from academic records: ${error?.message || error}`);
+      }
+    }
 
     // Check if student is graduated based on class name
     const isGraduated = student.class?.name && /graduated|alumni|leavers/i.test(student.class.name);
@@ -2631,18 +2667,29 @@ async getParentPayments(
     if (isGraduated) {
       // For graduated students, filter terms from enrollment to graduation
       
-      // Filter to terms from enrollment onwards
-      if (student.enrollmentTermId && student.enrollmentTerm) {
-        const enrollmentStartDate = new Date(student.enrollmentTerm.startDate);
-        terms = terms.filter((term: any) => new Date(term.startDate) >= enrollmentStartDate);
+      // Filter to terms from enrollment term onwards using term sequence (not dates)
+      if (enrollmentCutoffTermId) {
+        const enrollmentTermIndex = terms.findIndex(
+          (term: any) => term.id === enrollmentCutoffTermId,
+        );
+        if (enrollmentTermIndex >= 0) {
+          terms = terms.filter((_: any, index: number) => index >= enrollmentTermIndex);
+        } else {
+          console.log(`⚠️  Enrollment cutoff term ${enrollmentCutoffTermId} not found in term list. Keeping all terms.`);
+        }
       }
       
       // Use graduationTermId if set (preferred method)
       if (student.graduationTermId && student.graduationTerm) {
-        const graduationEndDate = new Date(student.graduationTerm.endDate);
-        
-        // Only include terms up to and including graduation term
-        terms = terms.filter((term: any) => new Date(term.endDate) <= graduationEndDate);
+        const graduationTermIndex = terms.findIndex(
+          (term: any) => term.id === student.graduationTermId,
+        );
+        if (graduationTermIndex >= 0) {
+          // Only include terms up to and including graduation term
+          terms = terms.filter((_: any, index: number) => index <= graduationTermIndex);
+        } else {
+          console.log(`⚠️  Graduation term ${student.graduationTermId} not found in term list. Keeping post-enrollment terms.`);
+        }
         
         console.log(`🎓 Graduated student ${student.firstName} ${student.lastName}. Calculating fees for ${terms.length} terms (enrollment to graduation: ${student.graduationTerm.termNumber} of ${student.graduationTerm.academicCalendar?.term}).`);
       } else {
@@ -2661,8 +2708,12 @@ async getParentPayments(
         
         if (academicRecords.length > 0) {
           const lastRecord = academicRecords[0];
-          const graduationEndDate = new Date(lastRecord.endDate);
-          terms = terms.filter((term: any) => new Date(term.endDate) <= graduationEndDate);
+          const inferredGraduationTermIndex = terms.findIndex(
+            (term: any) => term.id === lastRecord.termId,
+          );
+          if (inferredGraduationTermIndex >= 0) {
+            terms = terms.filter((_: any, index: number) => index <= inferredGraduationTermIndex);
+          }
           
           console.log(`   → Inferred graduation from last academic record. Calculating fees for ${terms.length} terms.`);
         } else {
@@ -2672,16 +2723,21 @@ async getParentPayments(
       }
     } else {
       // For active students, filter terms to only include those from enrollment term onwards
-      if (student.enrollmentTermId && student.enrollmentTerm) {
-        const enrollmentTermStartDate = new Date(student.enrollmentTerm.startDate);
-        
-        terms = terms.filter((term: any) => {
-          const termStartDate = new Date(term.startDate);
-          // Include term if it starts on or after the enrollment term
-          return termStartDate >= enrollmentTermStartDate;
-        });
-        
-        console.log(`✅ Student ${student.firstName} ${student.lastName} enrolled in Term ${student.enrollmentTerm.termNumber} (${student.enrollmentTerm.academicCalendar?.term}). Charging fees for ${terms.length} terms from enrollment onwards (across all academic years).`);
+      // using term sequence (not dates)
+      if (enrollmentCutoffTermId) {
+        const enrollmentTermIndex = terms.findIndex(
+          (term: any) => term.id === enrollmentCutoffTermId,
+        );
+        if (enrollmentTermIndex >= 0) {
+          terms = terms.filter((_: any, index: number) => index >= enrollmentTermIndex);
+        } else {
+          console.log(`⚠️  Enrollment cutoff term ${enrollmentCutoffTermId} not found in term list. Keeping all terms.`);
+        }
+
+        const enrollmentLabel = student.enrollmentTerm
+          ? `Term ${student.enrollmentTerm.termNumber} (${student.enrollmentTerm.academicCalendar?.term})`
+          : `termId cutoff (${student.termId})`;
+        console.log(`✅ Student ${student.firstName} ${student.lastName} enrollment cutoff: ${enrollmentLabel}. Charging fees for ${terms.length} terms from cutoff onwards (across all academic years).`);
       } else {
         console.log(`⚠️  Student ${student.firstName} ${student.lastName} has NO enrollment term set. Charging for all ${terms.length} terms (this may be incorrect).`);
       }
@@ -3135,9 +3191,48 @@ async getParentPayments(
         console.log(`   ⚠️  Credits will NOT be applied to terms after graduation!`);
       }
       
-      if (student.enrollmentTermId && student.enrollmentTerm) {
-        console.log(`   📅 Enrollment Term: Term ${student.enrollmentTerm.termNumber} (${student.enrollmentTerm.academicCalendar?.term})`);
-        console.log(`   Enrollment Start: ${student.enrollmentTerm.startDate}`);
+      let enrollmentCutoffTermId = student.enrollmentTermId;
+      if (!enrollmentCutoffTermId) {
+        try {
+          const earliestAcademicRecord = await this.studentRepository.query(
+            `SELECT x."termId" FROM (
+               SELECT e."termId"
+               FROM enrollment e
+               WHERE e."studentId"::uuid = $1
+               ${!superAdmin && schoolId ? 'AND e."schoolId"::uuid = $2' : ''}
+               UNION
+               SELECT sar."termId"
+               FROM student_academic_records sar
+               WHERE sar."studentId"::uuid = $1
+               ${!superAdmin && schoolId ? 'AND sar."schoolId"::uuid = $2' : ''}
+               UNION
+               SELECT sah.term_id as "termId"
+               FROM student_academic_history sah
+               WHERE sah.student_id::uuid = $1
+               ${!superAdmin && schoolId ? 'AND sah.school_id::uuid = $2' : ''}
+             ) x
+             INNER JOIN term t ON x."termId" = t.id
+             LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
+             ORDER BY COALESCE(ac."startDate", t."startDate", t."createdAt") ASC, t."termNumber" ASC
+             LIMIT 1`,
+            !superAdmin && schoolId ? [studentId, schoolId] : [studentId],
+          );
+
+          if (earliestAcademicRecord?.length > 0 && earliestAcademicRecord[0]?.termId) {
+            enrollmentCutoffTermId = earliestAcademicRecord[0].termId;
+            console.log(`   ℹ️  Enrollment cutoff inferred from earliest academic record: ${enrollmentCutoffTermId}`);
+          }
+        } catch (error) {
+          console.log(`   ⚠️  Failed to infer enrollment cutoff from academic records: ${error?.message || error}`);
+        }
+      }
+      if (enrollmentCutoffTermId) {
+        if (student.enrollmentTerm) {
+          console.log(`   📅 Enrollment Term: Term ${student.enrollmentTerm.termNumber} (${student.enrollmentTerm.academicCalendar?.term})`);
+          console.log(`   Enrollment Start: ${student.enrollmentTerm.startDate}`);
+        } else {
+          console.log(`   Enrollment Cutoff Term ID: ${enrollmentCutoffTermId}`);
+        }
       } else {
         console.log(`   ⚠️  NO ENROLLMENT TERM SET - Will apply credits to ALL terms (may be incorrect)`);
       }
@@ -3153,17 +3248,43 @@ async getParentPayments(
         order: { startDate: 'ASC' }
       });
 
+      terms = [...terms].sort((a, b) => {
+        const aCalendarStart = a.academicCalendar?.startDate
+          ? new Date(a.academicCalendar.startDate).getTime()
+          : 0;
+        const bCalendarStart = b.academicCalendar?.startDate
+          ? new Date(b.academicCalendar.startDate).getTime()
+          : 0;
+
+        if (aCalendarStart !== bCalendarStart) {
+          return aCalendarStart - bCalendarStart;
+        }
+
+        const aTermNum = Number(a.termNumber || 0);
+        const bTermNum = Number(b.termNumber || 0);
+        if (aTermNum !== bTermNum) {
+          return aTermNum - bTermNum;
+        }
+
+        const aStart = a.startDate ? new Date(a.startDate).getTime() : 0;
+        const bStart = b.startDate ? new Date(b.startDate).getTime() : 0;
+        return aStart - bStart;
+      });
+
       console.log(`   ✅ Fetched ${terms.length} terms before enrollment filter`);
       
-      // Filter terms to only include those from enrollment term onwards
-      if (student.enrollmentTermId && student.enrollmentTerm) {
-        const enrollmentTermStartDate = new Date(student.enrollmentTerm.startDate);
+      // Filter terms to only include those from enrollment term onwards (term sequence)
+      if (enrollmentCutoffTermId) {
         const termsBeforeFilter = terms.length;
-        
-        terms = terms.filter((term: any) => {
-          const termStartDate = new Date(term.startDate);
-          return termStartDate >= enrollmentTermStartDate;
-        });
+
+        const enrollmentTermIndex = terms.findIndex(
+          (term: any) => term.id === enrollmentCutoffTermId,
+        );
+        if (enrollmentTermIndex >= 0) {
+          terms = terms.filter((_: any, index: number) => index >= enrollmentTermIndex);
+        } else {
+          console.log(`   ⚠️  Enrollment cutoff term ${enrollmentCutoffTermId} not found in school term list. Keeping all terms.`);
+        }
         
         console.log(`   🔍 Enrollment Filter Applied:`);
         console.log(`      - Terms before filter: ${termsBeforeFilter}`);
@@ -3172,15 +3293,18 @@ async getParentPayments(
         console.log(`   ✅ Student will ONLY be charged/credited for fees from Term ${student.enrollmentTerm.termNumber} onwards`);
       }
       
-      // For graduated students, also filter out terms after graduation
+      // For graduated students, also filter out terms after graduation (term sequence)
       if (isGraduated && student.graduationTerm) {
-        const graduationTermEndDate = new Date(student.graduationTerm.endDate);
         const termsBeforeGraduationFilter = terms.length;
-        
-        terms = terms.filter((term: any) => {
-          const termEndDate = new Date(term.endDate);
-          return termEndDate <= graduationTermEndDate;
-        });
+
+        const graduationTermIndex = terms.findIndex(
+          (term: any) => term.id === student.graduationTermId,
+        );
+        if (graduationTermIndex >= 0) {
+          terms = terms.filter((_: any, index: number) => index <= graduationTermIndex);
+        } else {
+          console.log(`   ⚠️  Graduation term ${student.graduationTermId} not found in school term list. Keeping post-enrollment terms.`);
+        }
         
         console.log(`   🎓 Graduation Filter Applied:`);
         console.log(`      - Terms before graduation filter: ${termsBeforeGraduationFilter}`);
@@ -3366,12 +3490,16 @@ async getParentPayments(
       // Then apply to current term if there's still credit remaining
       // BUT: Skip current term if student is graduated and current term is after graduation
       if (currentTerm && remainingCredit > 0) {
-        // Check if current term is after graduation for graduated students
+        // Check if current term is after graduation for graduated students (term sequence)
         if (isGraduated && student.graduationTerm) {
-          const currentTermEndDate = new Date(currentTerm.endDate);
-          const graduationTermEndDate = new Date(student.graduationTerm.endDate);
-          
-          if (currentTermEndDate > graduationTermEndDate) {
+          const currentTermIndex = terms.findIndex((term: any) => term.id === currentTerm.id);
+          const graduationTermIndex = terms.findIndex((term: any) => term.id === student.graduationTermId);
+
+          if (
+            currentTermIndex >= 0 &&
+            graduationTermIndex >= 0 &&
+            currentTermIndex > graduationTermIndex
+          ) {
             console.log(`   ⊘ SKIPPING current term - student graduated in Term ${student.graduationTerm.termNumber} of ${student.graduationTerm.academicCalendar?.term}`);
             console.log(`      Current term (Term ${currentTerm.termNumber} of ${currentTerm.academicCalendar?.term}) is after graduation term`);
             console.log(`      Remaining credit: MK ${remainingCredit} will NOT be applied to current term`);

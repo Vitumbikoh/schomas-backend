@@ -721,6 +721,83 @@ export class EnhancedFinanceService {
       const paymentTerm = await this.termRepo.findOne({ where: { id: dto.termId }, relations: ['academicCalendar'] });
       if (!paymentTerm) throw new BadRequestException('Payment term not found');
 
+      // Enforce enrollment/graduation term boundaries for any submitted allocations.
+      // This prevents charging terms before student joined even if client payload is edited.
+      const allTerms = await this.termRepo.find({
+        where: { schoolId: student.schoolId },
+        relations: ['academicCalendar'],
+        order: { startDate: 'ASC' },
+      });
+
+      const orderedTerms = [...allTerms].sort((a, b) => {
+        const aCalendarStart = a.academicCalendar?.startDate
+          ? new Date(a.academicCalendar.startDate).getTime()
+          : 0;
+        const bCalendarStart = b.academicCalendar?.startDate
+          ? new Date(b.academicCalendar.startDate).getTime()
+          : 0;
+        if (aCalendarStart !== bCalendarStart) return aCalendarStart - bCalendarStart;
+
+        const aTermNum = Number(a.termNumber || 0);
+        const bTermNum = Number(b.termNumber || 0);
+        if (aTermNum !== bTermNum) return aTermNum - bTermNum;
+
+        const aStart = a.startDate ? new Date(a.startDate).getTime() : 0;
+        const bStart = b.startDate ? new Date(b.startDate).getTime() : 0;
+        return aStart - bStart;
+      });
+
+      let eligibleTerms = orderedTerms;
+      let enrollmentCutoffTermId = student.enrollmentTermId;
+      if (!enrollmentCutoffTermId) {
+        try {
+          const earliestAcademicRecord = await this.studentRepo.query(
+            `SELECT x."termId" FROM (
+               SELECT e."termId"
+               FROM enrollment e
+               WHERE e."studentId"::uuid = $1
+               ${schoolId ? 'AND e."schoolId"::uuid = $2' : ''}
+               UNION
+               SELECT sar."termId"
+               FROM student_academic_records sar
+               WHERE sar."studentId"::uuid = $1
+               ${schoolId ? 'AND sar."schoolId"::uuid = $2' : ''}
+               UNION
+               SELECT sah.term_id as "termId"
+               FROM student_academic_history sah
+               WHERE sah.student_id::uuid = $1
+               ${schoolId ? 'AND sah.school_id::uuid = $2' : ''}
+             ) x
+             INNER JOIN term t ON x."termId" = t.id
+             LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
+             ORDER BY COALESCE(ac."startDate", t."startDate", t."createdAt") ASC, t."termNumber" ASC
+             LIMIT 1`,
+            schoolId ? [student.id, schoolId] : [student.id],
+          );
+
+          if (earliestAcademicRecord?.length > 0 && earliestAcademicRecord[0]?.termId) {
+            enrollmentCutoffTermId = earliestAcademicRecord[0].termId;
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to infer enrollment cutoff for student ${student.id}: ${error.message}`);
+        }
+      }
+      if (enrollmentCutoffTermId) {
+        const enrollmentIndex = eligibleTerms.findIndex((term) => term.id === enrollmentCutoffTermId);
+        if (enrollmentIndex >= 0) {
+          eligibleTerms = eligibleTerms.filter((_, index) => index >= enrollmentIndex);
+        }
+      }
+
+      if (student.graduationTermId) {
+        const graduationIndex = eligibleTerms.findIndex((term) => term.id === student.graduationTermId);
+        if (graduationIndex >= 0) {
+          eligibleTerms = eligibleTerms.filter((_, index) => index <= graduationIndex);
+        }
+      }
+
+      const eligibleTermIds = new Set(eligibleTerms.map((term) => term.id));
+
       const totalAllocations = (dto.allocations || []).reduce((s, a) => s + Number(a.amount || 0), 0);
       if (totalAllocations > Number(dto.amount)) {
         throw new BadRequestException('Allocations exceed payment amount');
@@ -749,6 +826,13 @@ export class EnhancedFinanceService {
 
       for (let i = 0; i < (dto.allocations || []).length; i++) {
         const a = dto.allocations![i];
+
+        if (!eligibleTermIds.has(a.termId)) {
+          throw new BadRequestException(
+            `Allocation term ${a.termId} is outside the student's enrollment window`,
+          );
+        }
+
         const term = await queryRunner.manager.findOne(Term, { where: { id: a.termId }, relations: ['academicCalendar'] });
         if (!term) throw new BadRequestException(`Allocation term ${a.termId} not found`);
 

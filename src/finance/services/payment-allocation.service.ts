@@ -61,6 +61,7 @@ export class PaymentAllocationService {
 
     try {
       const allocations: PaymentAllocation[] = [];
+      const eligibilityCache = new Map<string, Set<string>>();
 
       for (const request of requests) {
         // Validate payment exists and get details
@@ -81,6 +82,31 @@ export class PaymentAllocationService {
 
         if (!term) {
           throw new BadRequestException(`Term ${request.termId} not found`);
+        }
+
+        // Enforce enrollment/graduation term boundaries for any manual/auto allocation writes
+        let allowedTermIds = eligibilityCache.get(payment.studentId);
+        if (!allowedTermIds) {
+          const studentWithBoundaries = await this.studentRepo.findOne({
+            where: { id: payment.studentId },
+          });
+          if (!studentWithBoundaries) {
+            throw new BadRequestException(`Student ${payment.studentId} not found`);
+          }
+
+          const eligibleTerms = await this.resolveEligibleTermsForStudent(
+            studentWithBoundaries,
+            payment.schoolId,
+            payment.termId,
+          );
+          allowedTermIds = new Set(eligibleTerms.map((t) => t.id));
+          eligibilityCache.set(payment.studentId, allowedTermIds);
+        }
+
+        if (!allowedTermIds.has(request.termId)) {
+          throw new BadRequestException(
+            `Allocation term ${request.termId} is outside the student's enrollment window`,
+          );
         }
 
         // Check if allocation would exceed payment amount
@@ -289,14 +315,7 @@ export class PaymentAllocationService {
 
     this.logger.log(`Found student: ${student.id}, schoolId=${student.schoolId}, enrollmentTermId=${student.enrollmentTermId}`);
 
-    // Get all terms for the student's school
-    const allTerms = await this.termRepo.find({
-      where: { 
-        schoolId: student.schoolId
-      },
-      relations: ['academicCalendar'],
-      order: { startDate: 'ASC' }
-    });
+    const allTerms = await this.getOrderedTermsForSchool(student.schoolId);
 
     if (allTerms.length === 0) {
       this.logger.warn(`No terms found for school ${student.schoolId}`);
@@ -305,30 +324,14 @@ export class PaymentAllocationService {
 
     this.logger.log(`Found ${allTerms.length} total terms for school ${student.schoolId}`);
 
-    // Filter terms based on enrollment
-    let applicableTerms = allTerms;
-    
-    // Filter to only include terms from enrollment onwards
-    if (student.enrollmentTermId && student.enrollmentTerm) {
-      const enrollmentStartDate = new Date(student.enrollmentTerm.startDate);
-      applicableTerms = allTerms.filter(term => {
-        const termStartDate = new Date(term.startDate);
-        return termStartDate >= enrollmentStartDate;
-      });
-      this.logger.log(`Filtered to ${applicableTerms.length} terms from enrollment (Term ${student.enrollmentTerm.termNumber}) onwards`);
-    } else {
-      this.logger.warn(`Student has no enrollment term set. Using all ${allTerms.length} terms.`);
-    }
+    const applicableTerms = await this.resolveEligibleTermsForStudent(
+      student,
+      student.schoolId,
+      currentTermId,
+      allTerms,
+    );
 
-    // Further filter for graduated students
-    if (student.graduationTermId && student.graduationTerm) {
-      const graduationEndDate = new Date(student.graduationTerm.endDate);
-      applicableTerms = applicableTerms.filter(term => {
-        const termEndDate = new Date(term.endDate);
-        return termEndDate <= graduationEndDate;
-      });
-      this.logger.log(`Student is graduated. Filtered to ${applicableTerms.length} terms up to graduation`);
-    }
+    this.logger.log(`Using ${applicableTerms.length} eligible term(s) after enrollment/graduation boundary checks`);
 
     const outstandingTerms = [];
     let priority = 1;
@@ -408,6 +411,110 @@ export class PaymentAllocationService {
     });
     
     return outstandingTerms;
+  }
+
+  private async getOrderedTermsForSchool(schoolId: string): Promise<Term[]> {
+    const allTerms = await this.termRepo.find({
+      where: { schoolId },
+      relations: ['academicCalendar'],
+      order: { startDate: 'ASC' },
+    });
+
+    return [...allTerms].sort((a, b) => {
+      const aCalendarStart = a.academicCalendar?.startDate
+        ? new Date(a.academicCalendar.startDate).getTime()
+        : 0;
+      const bCalendarStart = b.academicCalendar?.startDate
+        ? new Date(b.academicCalendar.startDate).getTime()
+        : 0;
+
+      if (aCalendarStart !== bCalendarStart) {
+        return aCalendarStart - bCalendarStart;
+      }
+
+      const aTermNum = Number(a.termNumber || 0);
+      const bTermNum = Number(b.termNumber || 0);
+      if (aTermNum !== bTermNum) {
+        return aTermNum - bTermNum;
+      }
+
+      const aStart = a.startDate ? new Date(a.startDate).getTime() : 0;
+      const bStart = b.startDate ? new Date(b.startDate).getTime() : 0;
+      return aStart - bStart;
+    });
+  }
+
+  private async resolveEligibleTermsForStudent(
+    student: Student,
+    schoolId?: string,
+    currentTermId?: string,
+    preloadedTerms?: Term[],
+  ): Promise<Term[]> {
+    const terms = preloadedTerms || await this.getOrderedTermsForSchool(student.schoolId);
+    if (terms.length === 0) {
+      return [];
+    }
+
+    let filtered = terms;
+    let enrollmentCutoffTermId = student.enrollmentTermId;
+    if (!enrollmentCutoffTermId) {
+      try {
+        const earliestAcademicRecord = await this.studentRepo.query(
+          `SELECT x."termId" FROM (
+             SELECT e."termId"
+             FROM enrollment e
+             WHERE e."studentId"::uuid = $1
+             ${schoolId ? 'AND e."schoolId"::uuid = $2' : ''}
+             UNION
+             SELECT sar."termId"
+             FROM student_academic_records sar
+             WHERE sar."studentId"::uuid = $1
+             ${schoolId ? 'AND sar."schoolId"::uuid = $2' : ''}
+             UNION
+             SELECT sah.term_id as "termId"
+             FROM student_academic_history sah
+             WHERE sah.student_id::uuid = $1
+             ${schoolId ? 'AND sah.school_id::uuid = $2' : ''}
+           ) x
+           INNER JOIN term t ON x."termId" = t.id
+           LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
+           ORDER BY COALESCE(ac."startDate", t."startDate", t."createdAt") ASC, t."termNumber" ASC
+           LIMIT 1`,
+          schoolId ? [student.id, schoolId] : [student.id],
+        );
+
+        if (earliestAcademicRecord?.length > 0 && earliestAcademicRecord[0]?.termId) {
+          enrollmentCutoffTermId = earliestAcademicRecord[0].termId;
+        }
+      } catch (error) {
+        this.logger.warn(`Failed to infer enrollment cutoff for student ${student.id}: ${error.message}`);
+      }
+    }
+    if (enrollmentCutoffTermId) {
+      const enrollmentTermIndex = filtered.findIndex((term) => term.id === enrollmentCutoffTermId);
+      if (enrollmentTermIndex >= 0) {
+        filtered = filtered.filter((_, index) => index >= enrollmentTermIndex);
+      }
+    }
+
+    if (student.graduationTermId) {
+      const graduationTermIndex = filtered.findIndex((term) => term.id === student.graduationTermId);
+      if (graduationTermIndex >= 0) {
+        filtered = filtered.filter((_, index) => index <= graduationTermIndex);
+      }
+    }
+
+    if (!student.enrollmentTermId && !enrollmentCutoffTermId) {
+      this.logger.warn(
+        `Student ${student.id} has no enrollmentTermId and no inferred enrollment term. Using all terms.`,
+      );
+    }
+
+    if (schoolId && student.schoolId !== schoolId) {
+      this.logger.warn(`Student ${student.id} school mismatch: student.schoolId=${student.schoolId}, request.schoolId=${schoolId}`);
+    }
+
+    return filtered;
   }
 
   /**
