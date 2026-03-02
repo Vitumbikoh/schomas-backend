@@ -1315,6 +1315,7 @@ export class TeacherController {
           action: 'update',
           module: 'grades',
           examId: submitGradesDto.examId,
+          classId: exam.class?.id,
         },
       });
 
@@ -1328,6 +1329,7 @@ export class TeacherController {
           action: 'update',
           module: 'grades',
           examId: submitGradesDto.examId,
+          classId: exam.class?.id,
         },
       });
 

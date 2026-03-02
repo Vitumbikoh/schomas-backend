@@ -9,11 +9,12 @@ export class UserSettings {
   @OneToOne(() => User, (user) => user.settings)
   user: User;
 
-  @Column({ type: 'jsonb', default: () => "'{\"email\": true, \"sms\": false, \"browser\": true, \"weeklySummary\": true}'" })
+  @Column({ type: 'jsonb', default: () => "'{\"email\": true, \"sms\": false, \"browser\": true, \"whatsapp\": false, \"weeklySummary\": false}'" })
   notifications: {
     email: boolean;
     sms: boolean;
     browser: boolean;
+    whatsapp: boolean;
     weeklySummary: boolean;
   };
 

@@ -17,6 +17,8 @@ import { Expense, ExpenseCategory, ExpenseStatus, ExpensePriority } from '../exp
 import { SettingsService } from '../settings/settings.service';
 import { Term } from '../settings/entities/term.entity';
 import { Role } from '../user/enums/role.enum';
+import { NotificationService } from '../notifications/notification.service';
+import { NotificationPriority, NotificationType } from '../notifications/entities/notification.entity';
 import * as PDFDocument from 'pdfkit';
 
 @Injectable()
@@ -34,6 +36,7 @@ export class PayrollService {
     private readonly dataSource: DataSource,
     private readonly logger: SystemLoggingService,
     private readonly settingsService: SettingsService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   private formatDate(date: Date | null | string): string {
@@ -334,6 +337,21 @@ export class PayrollService {
       entityId: finalRun.id,
       entityType: 'SalaryRun',
       newValues: { ...finalRun, staffIds: dto.staffIds },
+    });
+
+    await this.notificationService.createForRoles(['ADMIN'], {
+      schoolId: user.schoolId,
+      title: 'Salary run awaiting approval',
+      message: `A salary run for ${dto.period} has been created and is awaiting approval.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.MEDIUM,
+      metadata: {
+        module: 'payroll',
+        action: 'created',
+        runId: finalRun.id,
+        period: dto.period,
+        staffCount: finalRun.staffCount,
+      },
     });
     
     return finalRun;
@@ -799,6 +817,19 @@ export class PayrollService {
     run.approvedBy = user.sub || user.id;
     await this.runRepo.save(run);
     await this.logger.logAction({ action: 'PAYROLL_RUN_APPROVED', module: 'PAYROLL', level: 'info', schoolId: user.schoolId, entityId: run.id, entityType: 'SalaryRun' });
+    await this.notificationService.createForRoles(['FINANCE'], {
+      schoolId: user.schoolId,
+      title: 'Salary run approved',
+      message: `Salary run ${run.period} has been approved by administration.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.MEDIUM,
+      metadata: {
+        module: 'payroll',
+        action: 'approved',
+        runId: run.id,
+        period: run.period,
+      },
+    });
     try {
       await this.historyRepo.save(this.historyRepo.create({
         runId: run.id,
@@ -819,6 +850,20 @@ export class PayrollService {
     run.status = 'REJECTED';
     await this.runRepo.save(run);
     await this.logger.logAction({ action: 'PAYROLL_RUN_REJECTED', module: 'PAYROLL', level: 'info', schoolId: user.schoolId, entityId: run.id, entityType: 'SalaryRun', metadata: { reason } });
+    await this.notificationService.createForRoles(['FINANCE'], {
+      schoolId: user.schoolId,
+      title: 'Salary run rejected',
+      message: `Salary run ${run.period} was rejected by administration${reason ? `: ${reason}` : '.'}`,
+      type: NotificationType.ALERT,
+      priority: NotificationPriority.HIGH,
+      metadata: {
+        module: 'payroll',
+        action: 'rejected',
+        runId: run.id,
+        period: run.period,
+        reason: reason || null,
+      },
+    });
     try {
       await this.historyRepo.save(this.historyRepo.create({
         runId: run.id,

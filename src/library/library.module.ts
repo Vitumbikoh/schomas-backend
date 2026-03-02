@@ -9,6 +9,7 @@ import { UsersModule } from '../user/users.module';
 import { ConfigModule } from '../config/config.module';
 import { Student } from '../user/entities/student.entity';
 import { Class } from '../classes/entity/class.entity';
+import { NotificationModule } from '../notifications/notification.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { Class } from '../classes/entity/class.entity';
   forwardRef(() => AuthModule),
   forwardRef(() => UsersModule),
   ConfigModule,
+  NotificationModule,
   ],
   controllers: [LibraryController],
   providers: [LibraryService],

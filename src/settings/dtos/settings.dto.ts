@@ -13,6 +13,9 @@ export class NotificationSettingsDto {
   browser: boolean;
 
   @IsBoolean()
+  whatsapp: boolean;
+
+  @IsBoolean()
   weeklySummary: boolean;
 }
 

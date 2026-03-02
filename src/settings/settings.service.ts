@@ -44,6 +44,10 @@ import { SystemLoggingService } from '../logs/system-logging.service';
 @Injectable()
 export class SettingsService {
   private readonly logger = new Logger(SettingsService.name);
+  private readonly weeklySummaryEligibleRoles = new Set<string>([
+    Role.TEACHER,
+    Role.FINANCE,
+  ]);
 
   constructor(
     @InjectRepository(User)
@@ -93,6 +97,28 @@ export class SettingsService {
     }
   }
 
+  private normalizeNotificationSettings(
+    settings: any,
+    role?: string,
+  ): {
+    email: boolean;
+    sms: boolean;
+    browser: boolean;
+    whatsapp: boolean;
+    weeklySummary: boolean;
+  } {
+    const roleKey = String(role || '').toUpperCase();
+    const canReceiveWeeklySummary = this.weeklySummaryEligibleRoles.has(roleKey);
+
+    return {
+      email: settings?.email !== false,
+      sms: settings?.sms === true,
+      browser: settings?.browser !== false,
+      whatsapp: settings?.whatsapp === true,
+      weeklySummary: canReceiveWeeklySummary ? settings?.weeklySummary === true : false,
+    };
+  }
+
   // User Settings Methods
   async getSettings(userId: string): Promise<SettingsResponseDto> {
     if (!userId) {
@@ -116,18 +142,20 @@ export class SettingsService {
       // Initialize default settings if they don't exist
       if (!user.settings) {
         const newSettings = this.userSettingsRepository.create({
-          notifications: {
-            email: true,
-            sms: false,
-            browser: true,
-            weeklySummary: true,
-          },
+          notifications: this.normalizeNotificationSettings(undefined, user.role),
           security: {
             twoFactor: false,
           },
         });
         user.settings = await this.userSettingsRepository.save(newSettings);
         await this.userRepository.save(user);
+      } else {
+        const normalized = this.normalizeNotificationSettings(
+          user.settings.notifications,
+          user.role,
+        );
+        user.settings.notifications = normalized;
+        await this.userSettingsRepository.save(user.settings);
       }
 
       const response: SettingsResponseDto = {
@@ -138,7 +166,10 @@ export class SettingsService {
           role: user.role,
           image: user.image,
           phone: undefined, // Start with undefined, will be set below
-          notifications: user.settings.notifications,
+          notifications: this.normalizeNotificationSettings(
+            user.settings.notifications,
+            user.role,
+          ),
           security: user.settings.security,
         },
       };
@@ -325,15 +356,15 @@ export class SettingsService {
       // Ensure settings object exists (relation is now nullable)
       if (!user.settings) {
         const newSettings = this.userSettingsRepository.create({
-          notifications: {
-            email: true,
-            sms: false,
-            browser: true,
-            weeklySummary: true,
-          },
+          notifications: this.normalizeNotificationSettings(undefined, user.role),
           security: { twoFactor: false },
         });
         user.settings = await queryRunner.manager.save(UserSettings, newSettings);
+      } else {
+        user.settings.notifications = this.normalizeNotificationSettings(
+          user.settings.notifications,
+          user.role,
+        );
       }
 
       // Update phone number
@@ -360,10 +391,13 @@ export class SettingsService {
 
       // Update settings
       if (updateDto.notifications) {
-        user.settings!.notifications = {
-          ...user.settings!.notifications,
-          ...updateDto.notifications,
-        } as any;
+        user.settings!.notifications = this.normalizeNotificationSettings(
+          {
+            ...user.settings!.notifications,
+            ...updateDto.notifications,
+          },
+          user.role,
+        ) as any;
       }
       if (updateDto.security) {
         user.settings!.security = {

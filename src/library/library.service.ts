@@ -7,6 +7,8 @@ import { CreateBookDto, UpdateBookDto } from './dtos/book.dto';
 import { BorrowBookDto, ReturnBookDto } from './dtos/borrowing.dto';
 import { Student } from '../user/entities/student.entity';
 import { Class } from '../classes/entity/class.entity';
+import { NotificationService } from '../notifications/notification.service';
+import { NotificationPriority, NotificationType } from '../notifications/entities/notification.entity';
 
 @Injectable()
 export class LibraryService {
@@ -15,6 +17,7 @@ export class LibraryService {
   @InjectRepository(Borrowing) private borrowRepo: Repository<Borrowing>,
   @InjectRepository(Student) private studentRepo: Repository<Student>,
   @InjectRepository(Class) private classRepo: Repository<Class>,
+  private readonly notificationService: NotificationService,
   ) {}
 
   // Books
@@ -142,7 +145,28 @@ export class LibraryService {
       dueAt: new Date(dto.dueAt),
       fine: '0',
     });
-    return this.borrowRepo.save(borrowing);
+    const savedBorrowing = await this.borrowRepo.save(borrowing);
+
+    const dueDateLabel = new Date(savedBorrowing.dueAt).toLocaleDateString();
+    const borrowedBookName = book?.title || dto.bookName || 'book';
+
+    await this.notificationService.createForRoles(['STUDENT'], {
+      schoolId: actor.schoolId,
+      title: 'Library book due date',
+      message: `You borrowed ${borrowedBookName}. It is due on ${dueDateLabel}.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.MEDIUM,
+      metadata: {
+        module: 'library',
+        action: 'borrowed',
+        borrowingId: savedBorrowing.id,
+        studentId: dto.studentId,
+        bookId: book?.id || null,
+        dueAt: savedBorrowing.dueAt,
+      },
+    });
+
+    return savedBorrowing;
   }
 
   async returnBook(dto: ReturnBookDto, actor: { role: string; schoolId?: string }) {

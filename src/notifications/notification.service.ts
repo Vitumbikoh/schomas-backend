@@ -3,6 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository, SelectQueryBuilder } from 'typeorm';
 import { Notification, NotificationType, NotificationPriority } from './entities/notification.entity';
 import { NotificationRead } from './entities/notification-read.entity';
+import { UserSettings } from '../settings/entities/user-settings.entity';
+import { Student } from '../user/entities/student.entity';
+import { Parent } from '../user/entities/parent.entity';
 
 export interface CreateNotificationDto {
   title: string;
@@ -21,7 +24,96 @@ export class NotificationService {
     private notificationRepository: Repository<Notification>,
     @InjectRepository(NotificationRead)
     private notificationReadRepository: Repository<NotificationRead>,
+    @InjectRepository(UserSettings)
+    private userSettingsRepository: Repository<UserSettings>,
+    @InjectRepository(Student)
+    private studentRepository: Repository<Student>,
+    @InjectRepository(Parent)
+    private parentRepository: Repository<Parent>,
   ) {}
+
+  private async getStudentClassIdByUserId(userId?: string): Promise<string | null> {
+    if (!userId) return null;
+    const student = await this.studentRepository.findOne({
+      where: { userId },
+      select: ['classId'],
+    });
+    return student?.classId ?? null;
+  }
+
+  private async getParentChildrenClassIdsByUserId(userId?: string): Promise<string[]> {
+    if (!userId) return [];
+    const parent = await this.parentRepository
+      .createQueryBuilder('parent')
+      .leftJoinAndSelect('parent.user', 'user')
+      .leftJoinAndSelect('parent.children', 'children')
+      .where('user.id = :userId', { userId })
+      .getOne();
+
+    if (!parent?.children?.length) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(parent.children.map((child) => child.classId).filter(Boolean)),
+    );
+  }
+
+  private async applyContextAudienceFilter(
+    qb: SelectQueryBuilder<Notification>,
+    userRole?: string,
+    userId?: string,
+  ): Promise<void> {
+    if (userId) {
+      qb.andWhere(
+        `(n.metadata->>'targetUserId' IS NULL OR n.metadata->>'targetUserId' = :targetUserId)`,
+        { targetUserId: userId },
+      );
+    }
+
+    const normalizedRole = userRole?.toUpperCase();
+    if (normalizedRole === 'PARENT') {
+      const parentClassIds = await this.getParentChildrenClassIdsByUserId(userId);
+      if (parentClassIds.length) {
+        qb.andWhere(
+          `(n.metadata->>'classId' IS NULL OR n.metadata->>'classId' IN (:...parentClassIds))`,
+          { parentClassIds },
+        );
+        return;
+      }
+
+      qb.andWhere(`n.metadata->>'classId' IS NULL`);
+      return;
+    }
+
+    if (normalizedRole !== 'STUDENT') {
+      return;
+    }
+
+    const studentClassId = await this.getStudentClassIdByUserId(userId);
+    if (studentClassId) {
+      qb.andWhere(
+        `(n.metadata->>'classId' IS NULL OR n.metadata->>'classId' = :studentClassId)`,
+        { studentClassId },
+      );
+      return;
+    }
+
+    qb.andWhere(`n.metadata->>'classId' IS NULL`);
+  }
+
+  private async isBrowserNotificationsEnabled(userId?: string): Promise<boolean> {
+    if (!userId) return true;
+
+    const settings = await this.userSettingsRepository
+      .createQueryBuilder('settings')
+      .leftJoin('settings.user', 'user')
+      .where('user.id = :userId', { userId })
+      .getOne();
+
+    if (!settings?.notifications) return true;
+    return settings.notifications.browser !== false;
+  }
 
   async create(createNotificationDto: CreateNotificationDto): Promise<Notification> {
     console.log('🔔 NotificationService.create called with:', createNotificationDto);
@@ -94,6 +186,10 @@ export class NotificationService {
   ): Promise<{ notifications: Notification[]; total: number }> {
     console.log('🔔 NotificationService.findAll - userRole:', userRole, 'schoolId:', schoolId);
 
+    if (!(await this.isBrowserNotificationsEnabled(userId))) {
+      return { notifications: [], total: 0 };
+    }
+
     // Non-admin roles must have a schoolId
     if (userRole !== 'SUPER_ADMIN' && !schoolId) {
       return { notifications: [], total: 0 };
@@ -107,12 +203,13 @@ export class NotificationService {
       .take(limit);
 
     if (userRole === 'SUPER_ADMIN') {
-      if (schoolId) qb.where('n.schoolId = :schoolId', { schoolId });
+      qb.where('n.schoolId IS NULL');
     } else {
       qb.where('n.schoolId = :schoolId', { schoolId });
     }
 
     this.applyRoleAudienceFilter(qb, userRole);
+    await this.applyContextAudienceFilter(qb, userRole, userId);
 
     const [notifications, total] = await qb.getManyAndCount();
 
@@ -148,6 +245,10 @@ export class NotificationService {
     userRole?: string,
     userId?: string,
   ): Promise<Notification> {
+    if (!(await this.isBrowserNotificationsEnabled(userId))) {
+      return null;
+    }
+
     if (userRole !== 'SUPER_ADMIN' && !schoolId) {
       return null;
     }
@@ -158,12 +259,13 @@ export class NotificationService {
       .where('n.id = :id', { id });
 
     if (userRole === 'SUPER_ADMIN') {
-      if (schoolId) qb.andWhere('n.schoolId = :schoolId', { schoolId });
+      qb.andWhere('n.schoolId IS NULL');
     } else {
       qb.andWhere('n.schoolId = :schoolId', { schoolId });
     }
 
     this.applyRoleAudienceFilter(qb, userRole);
+    await this.applyContextAudienceFilter(qb, userRole, userId);
 
     const notification = await qb.getOne();
     if (!notification || !userId) {
@@ -222,16 +324,18 @@ export class NotificationService {
     userRole?: string,
   ): Promise<void> {
     if (!userId) return;
+    if (!(await this.isBrowserNotificationsEnabled(userId))) return;
     if (userRole !== 'SUPER_ADMIN' && !schoolId) return;
 
     const qb = this.notificationRepository.createQueryBuilder('n').select('n.id', 'id');
     if (userRole === 'SUPER_ADMIN') {
-      if (schoolId) qb.where('n.schoolId = :schoolId', { schoolId });
+      qb.where('n.schoolId IS NULL');
     } else {
       qb.where('n.schoolId = :schoolId', { schoolId });
     }
 
     this.applyRoleAudienceFilter(qb, userRole);
+    await this.applyContextAudienceFilter(qb, userRole, userId);
 
     const rows = await qb.getRawMany<{ id: string }>();
     const ids = rows.map((r) => r.id).filter(Boolean);
@@ -267,6 +371,7 @@ export class NotificationService {
     userRole?: string,
   ): Promise<number> {
     if (!userId) return 0;
+    if (!(await this.isBrowserNotificationsEnabled(userId))) return 0;
     if (userRole !== 'SUPER_ADMIN' && !schoolId) return 0;
 
     const qb = this.notificationRepository
@@ -280,12 +385,13 @@ export class NotificationService {
       .where('nr.id IS NULL');
 
     if (userRole === 'SUPER_ADMIN') {
-      if (schoolId) qb.andWhere('n.schoolId = :schoolId', { schoolId });
+      qb.andWhere('n.schoolId IS NULL');
     } else {
       qb.andWhere('n.schoolId = :schoolId', { schoolId });
     }
 
     this.applyRoleAudienceFilter(qb, userRole);
+    await this.applyContextAudienceFilter(qb, userRole, userId);
 
     return qb.getCount();
   }

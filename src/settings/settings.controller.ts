@@ -1429,7 +1429,7 @@ async createTermPeriod(
             type: NotificationType.ALERT,
             priority: NotificationPriority.MEDIUM,
             schoolId: req.user.schoolId,
-            targetRoles: ['ADMIN'],
+            targetRoles: ['ADMIN', 'TEACHER'],
             metadata: { progressionPeriod: progressionReason, term: `Term ${progressionTerm.termNumber}` }
           });
         } catch (err) {
@@ -1454,6 +1454,53 @@ async createTermPeriod(
         { executionId: currentAcademicCalendar.id, executionAt: new Date(), progressionId }
       );
 
+      const progressionRecords = await this.dataSource.manager.find(StudentClassPromotion, {
+        where: {
+          schoolId: req.user.schoolId,
+          progressionId,
+        },
+        relations: ['fromClass', 'toClass'],
+      });
+
+      const transitionMap = new Map<string, number>();
+      for (const row of progressionRecords) {
+        const fromClass = row.fromClass?.name || 'Unknown class';
+        const toClass = row.toClass?.name || 'Unknown class';
+        const key = `${fromClass} → ${toClass}`;
+        transitionMap.set(key, (transitionMap.get(key) || 0) + 1);
+      }
+      const classBreakdown = Array.from(transitionMap.entries()).map(([transition, count]) => ({
+        transition,
+        count,
+      }));
+
+      const totalActiveStudents = await this.dataSource.manager.count(Student, {
+        where: {
+          schoolId: req.user.schoolId,
+          isActive: true,
+        },
+      });
+
+      const progressedCount =
+        Number(promotionResult.promotedStudents || 0) + Number(promotionResult.graduatedStudents || 0);
+      const retainedCount = Math.max(0, totalActiveStudents - progressedCount);
+      const classTransitionSummary = classBreakdown.length
+        ? classBreakdown.map((x) => `${x.transition} (${x.count})`).join(', ')
+        : 'No class transitions recorded';
+
+      const activeStudents = await this.dataSource.manager.find(Student, {
+        where: {
+          schoolId: req.user.schoolId,
+          isActive: true,
+        },
+        relations: ['user', 'class'],
+      });
+
+      const progressionByStudentId = new Map<string, StudentClassPromotion>();
+      for (const row of progressionRecords) {
+        progressionByStudentId.set(row.studentId, row);
+      }
+
       // Mark progression as executed in the academic calendar
       await this.dataSource.manager.update(
         AcademicCalendar,
@@ -1469,12 +1516,12 @@ async createTermPeriod(
         term: `Term ${progressionTerm.termNumber}`,
         promoted: promotionResult.promotedStudents,
         graduated: promotionResult.graduatedStudents,
-        retained: 0, // This would be calculated based on exam results
+        retained: retainedCount,
         errors: promotionResult.errors.length,
-        totalProcessed: promotionResult.promotedStudents + promotionResult.graduatedStudents,
+        totalProcessed: totalActiveStudents,
         executedAt: new Date(),
         executedBy: req.user.email,
-        classBreakdown: [], // Would need to be populated based on actual promotion results
+        classBreakdown,
         progressionId
       };
 
@@ -1491,15 +1538,69 @@ async createTermPeriod(
       try {
         await this.notificationService.create({
           title: 'Student Progression Completed',
-          message: `Student progression executed successfully for ${result.progressionPeriod}. Promoted: ${result.promoted}, Graduated: ${result.graduated}.`,
+          message: `Student progression executed for ${result.progressionPeriod}. Promoted: ${result.promoted}, Graduated: ${result.graduated}, Not progressed: ${result.retained}. Transitions: ${classTransitionSummary}.`,
           type: NotificationType.SYSTEM,
           priority: NotificationPriority.MEDIUM,
           schoolId: req.user.schoolId,
-          targetRoles: ['ADMIN'],
+          targetRoles: ['ADMIN', 'TEACHER'],
           metadata: { ...result }
         });
       } catch (err) {
         this.logger.error('Failed to create progression-completed notification: ' + err.message);
+      }
+
+      try {
+        await Promise.all(
+          activeStudents
+            .filter((student) => !!student.userId)
+            .map(async (student) => {
+              const progression = progressionByStudentId.get(student.id);
+              if (progression) {
+                const fromClassName = progression.fromClass?.name || 'your previous class';
+                const toClassName = progression.toClass?.name || 'your next class';
+                const progressedMessage =
+                  toClassName.toLowerCase() === 'graduated'
+                    ? `Progression update: You have completed progression from ${fromClassName} to ${toClassName}.`
+                    : `Progression update: You have progressed from ${fromClassName} to ${toClassName}.`;
+
+                await this.notificationService.create({
+                  title: 'Your progression result',
+                  message: progressedMessage,
+                  type: NotificationType.SYSTEM,
+                  priority: NotificationPriority.MEDIUM,
+                  schoolId: req.user.schoolId,
+                  targetRoles: ['STUDENT'],
+                  metadata: {
+                    progressionId,
+                    targetUserId: student.userId,
+                    classId: progression.toClassId,
+                    fromClassId: progression.fromClassId,
+                    toClassId: progression.toClassId,
+                    progressed: true,
+                  },
+                });
+                return;
+              }
+
+              const retainedClassName = student.class?.name || 'your current class';
+              await this.notificationService.create({
+                title: 'Your progression result',
+                message: `Progression update: You have not progressed to the next class and remain in ${retainedClassName}.`,
+                type: NotificationType.ALERT,
+                priority: NotificationPriority.HIGH,
+                schoolId: req.user.schoolId,
+                targetRoles: ['STUDENT'],
+                metadata: {
+                  progressionId,
+                  targetUserId: student.userId,
+                  classId: student.classId,
+                  retained: true,
+                },
+              });
+            }),
+        );
+      } catch (studentNotifyErr) {
+        this.logger.error('Failed to create per-student progression notifications: ' + studentNotifyErr.message);
       }
 
       return result;
@@ -1513,7 +1614,7 @@ async createTermPeriod(
           type: NotificationType.ALERT,
           priority: NotificationPriority.HIGH,
           schoolId: req.user?.schoolId,
-          targetRoles: ['ADMIN'],
+          targetRoles: ['ADMIN', 'TEACHER'],
           metadata: { error: error?.message }
         });
       } catch (notifyErr) {

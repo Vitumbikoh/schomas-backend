@@ -7,6 +7,8 @@ import { CreateExpenseDto, UpdateExpenseDto, ApproveExpenseDto, RejectExpenseDto
 import { User } from 'src/user/entities/user.entity';
 import { Role } from 'src/user/enums/role.enum';
 import { Term } from 'src/settings/entities/term.entity';
+import { NotificationService } from '../notifications/notification.service';
+import { NotificationPriority, NotificationType } from '../notifications/entities/notification.entity';
 
 @Injectable()
 export class ExpenseService {
@@ -19,6 +21,7 @@ export class ExpenseService {
     private userRepository: Repository<User>,
     @InjectRepository(Term)
     private termRepository: Repository<Term>,
+    private readonly notificationService: NotificationService,
   ) {}
 
   private async generateExpenseNumber(): Promise<string> {
@@ -97,6 +100,21 @@ export class ExpenseService {
 
     // Create initial approval history entry
     await this.createApprovalHistory(savedExpense.id, userId, ApprovalAction.SUBMITTED, 'Expense submitted for approval');
+
+    await this.notificationService.createForRoles(['ADMIN'], {
+      schoolId: savedExpense.schoolId || undefined,
+      title: 'Expense awaiting approval',
+      message: `${savedExpense.title} (${savedExpense.expenseNumber}) has been submitted and is awaiting approval.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.MEDIUM,
+      metadata: {
+        module: 'expenses',
+        action: 'submitted',
+        expenseId: savedExpense.id,
+        expenseNumber: savedExpense.expenseNumber,
+        amount: savedExpense.amount,
+      },
+    });
 
     return savedExpense;
   }
@@ -275,6 +293,21 @@ export class ExpenseService {
       `Expense approved. ${approveExpenseDto.comments || ''}`.trim()
     );
 
+    await this.notificationService.createForRoles(['FINANCE'], {
+      schoolId: updatedExpense.schoolId || undefined,
+      title: 'Expense approved',
+      message: `${updatedExpense.title} (${updatedExpense.expenseNumber}) was approved${updatedExpense.approvedAmount ? ` for ${updatedExpense.approvedAmount}` : ''}.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.MEDIUM,
+      metadata: {
+        module: 'expenses',
+        action: 'approved',
+        expenseId: updatedExpense.id,
+        expenseNumber: updatedExpense.expenseNumber,
+        approvedAmount: updatedExpense.approvedAmount,
+      },
+    });
+
     return updatedExpense;
   }
 
@@ -313,6 +346,21 @@ export class ExpenseService {
       ApprovalAction.REJECTED,
       `Expense rejected: ${rejectExpenseDto.reason}. ${rejectExpenseDto.comments || ''}`.trim()
     );
+
+    await this.notificationService.createForRoles(['FINANCE'], {
+      schoolId: updatedExpense.schoolId || undefined,
+      title: 'Expense rejected',
+      message: `${updatedExpense.title} (${updatedExpense.expenseNumber}) was rejected: ${rejectExpenseDto.reason}.`,
+      type: NotificationType.ALERT,
+      priority: NotificationPriority.HIGH,
+      metadata: {
+        module: 'expenses',
+        action: 'rejected',
+        expenseId: updatedExpense.id,
+        expenseNumber: updatedExpense.expenseNumber,
+        reason: rejectExpenseDto.reason,
+      },
+    });
 
     return updatedExpense;
   }

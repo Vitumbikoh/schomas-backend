@@ -286,10 +286,29 @@ export class FinanceController {
             },
           );
 
+          let outstandingBalance: number | null = null;
+          if (payment.studentId && payment.termId) {
+            try {
+              const feeStatus = await this.studentFeeExpectationService.getStudentFeeStatus(
+                payment.studentId,
+                payment.termId,
+                req.user.schoolId,
+                req.user.role === 'SUPER_ADMIN',
+              );
+              outstandingBalance = Number(feeStatus?.outstanding ?? 0);
+            } catch {
+              outstandingBalance = null;
+            }
+          }
+
+          const amountPaid = Number(payment.amount ?? 0).toFixed(2);
+          const outstandingLabel =
+            outstandingBalance === null ? 'N/A' : outstandingBalance.toFixed(2);
+
           await this.notificationService.createForRoles(['STUDENT', 'PARENT'], {
             schoolId: req.user.schoolId,
             title: 'Fee payment received',
-            message: `Your payment of ${payment.amount ?? 0} has been recorded${payment.receiptNumber ? ` (Receipt: ${payment.receiptNumber})` : ''}.`,
+            message: `Payment received: ${amountPaid}${payment.receiptNumber ? ` (Receipt: ${payment.receiptNumber})` : ''}. Outstanding balance: ${outstandingLabel}.`,
             type: NotificationType.SYSTEM,
             priority: NotificationPriority.LOW,
             metadata: {
@@ -298,6 +317,8 @@ export class FinanceController {
               paymentId: payment.id,
               studentId: payment.studentId,
               receiptNumber: payment.receiptNumber,
+              amountPaid: Number(amountPaid),
+              outstandingBalance,
             },
           });
         }

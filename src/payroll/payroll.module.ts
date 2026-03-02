@@ -13,6 +13,7 @@ import { School } from '../school/entities/school.entity';
 import { Log } from '../logs/logs.entity';
 import { LogsModule } from '../logs/logs.module';
 import { SettingsModule } from '../settings/settings.module';
+import { NotificationModule } from '../notifications/notification.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { SettingsModule } from '../settings/settings.module';
     LogsModule,
     // Need settings to resolve current term when posting payroll expenses
     SettingsModule,
+    NotificationModule,
   ],
   controllers: [PayrollController],
   providers: [PayrollService],

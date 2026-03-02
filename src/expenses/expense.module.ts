@@ -8,12 +8,14 @@ import { User } from 'src/user/entities/user.entity';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '../config/config.module';
 import { Term } from 'src/settings/entities/term.entity';
+import { NotificationModule } from '../notifications/notification.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Expense, ExpenseApprovalHistory, User, Term]),
     forwardRef(() => AuthModule),
     ConfigModule,
+    NotificationModule,
   ],
   controllers: [ExpenseController],
   providers: [ExpenseService],
