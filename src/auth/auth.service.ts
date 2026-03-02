@@ -103,7 +103,7 @@ export class AuthService {
               schoolName: school.name,
               schoolStatus: school.status 
             });
-            throw new UnauthorizedException('Your school account has been suspended. Please contact support for assistance.');
+            throw new UnauthorizedException('Login Failed please contact system administrator.');
           }
           
           console.log('[AUTH] School status verified:', { 
@@ -124,6 +124,11 @@ export class AuthService {
       console.log('[AUTH] Login success:', { id: user.id, username: user.username, role: user.role });
       return result;
     } catch (err) {
+      // Preserve explicit unauthorized responses (e.g. suspended schools) instead of falling back to generic auth failure.
+      if (err instanceof UnauthorizedException) {
+        throw err;
+      }
+
       // Catch-all to avoid unhandled exceptions causing 500 without logs
       console.error('[AUTH] Unexpected error in validateUser:', err);
       return null;

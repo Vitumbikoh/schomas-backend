@@ -1151,9 +1151,9 @@ async createTermPeriod(
       });
       const passThreshold = defaultScheme?.passThreshold || 50;
 
-      // Get all students for this school with their classes
+      // Get all active students for this school with their classes (exclude inactive students)
       const students = await this.dataSource.manager.find(Student, {
-        where: { schoolId: req.user.schoolId },
+        where: { schoolId: req.user.schoolId, isActive: true },
         relations: ['class']
       });
 
