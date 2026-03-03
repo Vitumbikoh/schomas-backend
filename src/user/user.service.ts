@@ -17,6 +17,7 @@ import { Role } from './enums/role.enum';
 import * as bcrypt from 'bcrypt';
 import { UpdateUserDto } from 'src/parent/dtos/update-parent.dto';
 import { generateUniqueUsername } from './utils/username.util';
+import { SettingsService } from 'src/settings/settings.service';
 
 @Injectable()
 export class UsersService {
@@ -34,6 +35,8 @@ export class UsersService {
     @InjectRepository(SchoolAdminCredentials)
     @Optional()
     private readonly schoolAdminCredentialsRepository?: Repository<SchoolAdminCredentials>,
+    @Optional()
+    private readonly settingsService?: SettingsService,
   ) {}
 
   // In user.service.ts
@@ -140,12 +143,22 @@ export class UsersService {
       userDto.username = `temp_${Date.now().toString(36)}`;
     }
     const user = await this.createUser(userDto);
+    let enrollmentTermId = createStudentDto.termId || null;
+    if (!enrollmentTermId && this.settingsService) {
+      try {
+        const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
+        enrollmentTermId = currentTerm?.id || null;
+      } catch {
+        enrollmentTermId = null;
+      }
+    }
+
     const student = this.studentRepository.create({
       ...createStudentDto,
       user,
       // Set enrollmentTermId to the term the student is being enrolled in
       // This ensures they're only charged for fees from this term onwards
-      enrollmentTermId: createStudentDto.termId || null,
+      enrollmentTermId: enrollmentTermId,
     });
     return this.studentRepository.save(student);
   }

@@ -2603,17 +2603,11 @@ async getParentPayments(
     const queryParams: any[] = [];
     let hasWhereClause = false;
     
-    // If specific academic calendar requested, filter to that
-    if (academicCalendarId) {
-      termsQuery += ` WHERE t."academicCalendarId"::uuid = $1`;
-      queryParams.push(academicCalendarId);
-      hasWhereClause = true;
-    } else {
-      // Otherwise, get ALL terms across all calendars (we'll filter by enrollment later)
-      // This is important for students who enrolled in previous academic years
-      termsQuery += ` WHERE 1=1`;
-      hasWhereClause = true;
-    }
+    // Always get ALL terms across all calendars (historical view),
+    // then apply enrollment/graduation sequence filters below.
+    // We keep academicCalendarId in metadata only and do not restrict terms here.
+    termsQuery += ` WHERE 1=1`;
+    hasWhereClause = true;
 
     if (!superAdmin && schoolId) {
       termsQuery += hasWhereClause ? ` AND ` : ` WHERE `;
@@ -2625,40 +2619,11 @@ async getParentPayments(
     
     let terms = await this.studentRepository.query(termsQuery, queryParams);
 
+    // Enrollment term is authoritative for fee tracking.
+    // Only infer from historical records when enrollment term is missing.
     let enrollmentCutoffTermId = student.enrollmentTermId;
     if (!enrollmentCutoffTermId) {
-      try {
-        const earliestAcademicRecord = await this.studentRepository.query(
-          `SELECT x."termId" FROM (
-             SELECT e."termId"
-             FROM enrollment e
-             WHERE e."studentId"::uuid = $1
-             ${!superAdmin && schoolId ? 'AND e."schoolId"::uuid = $2' : ''}
-             UNION
-             SELECT sar."termId"
-             FROM student_academic_records sar
-             WHERE sar."studentId"::uuid = $1
-             ${!superAdmin && schoolId ? 'AND sar."schoolId"::uuid = $2' : ''}
-             UNION
-             SELECT sah.term_id as "termId"
-             FROM student_academic_history sah
-             WHERE sah.student_id::uuid = $1
-             ${!superAdmin && schoolId ? 'AND sah.school_id::uuid = $2' : ''}
-           ) x
-           INNER JOIN term t ON x."termId" = t.id
-           LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
-           ORDER BY COALESCE(ac."startDate", t."startDate", t."createdAt") ASC, t."termNumber" ASC
-           LIMIT 1`,
-          !superAdmin && schoolId ? [studentId, schoolId] : [studentId],
-        );
-
-        if (earliestAcademicRecord?.length > 0 && earliestAcademicRecord[0]?.termId) {
-          enrollmentCutoffTermId = earliestAcademicRecord[0].termId;
-          console.log(`ℹ️  Enrollment cutoff inferred from earliest academic record: ${enrollmentCutoffTermId}`);
-        }
-      } catch (error) {
-        console.log(`⚠️  Failed to infer enrollment cutoff from academic records: ${error?.message || error}`);
-      }
+      console.log(`⚠️  Student ${student.firstName} ${student.lastName} has NO admission term set. Including all terms.`);
     }
 
     // Check if student is graduated based on class name
@@ -3004,7 +2969,10 @@ async getParentPayments(
         lastName: student.lastName,
         studentId: student.studentId,
         email: student.user?.email,
-        className: student.class?.name || 'No Class'
+        className: student.class?.name || 'No Class',
+        admissionTermId: student.enrollmentTermId || null,
+        admissionTermNumber: student.enrollmentTerm?.termNumber || null,
+        admissionAcademicYear: student.enrollmentTerm?.academicCalendar?.term || null
       },
       summary: {
         totalExpectedAllTerms,
@@ -3191,40 +3159,10 @@ async getParentPayments(
         console.log(`   ⚠️  Credits will NOT be applied to terms after graduation!`);
       }
       
+      // Enrollment term is authoritative for term-sequenced fee logic.
       let enrollmentCutoffTermId = student.enrollmentTermId;
       if (!enrollmentCutoffTermId) {
-        try {
-          const earliestAcademicRecord = await this.studentRepository.query(
-            `SELECT x."termId" FROM (
-               SELECT e."termId"
-               FROM enrollment e
-               WHERE e."studentId"::uuid = $1
-               ${!superAdmin && schoolId ? 'AND e."schoolId"::uuid = $2' : ''}
-               UNION
-               SELECT sar."termId"
-               FROM student_academic_records sar
-               WHERE sar."studentId"::uuid = $1
-               ${!superAdmin && schoolId ? 'AND sar."schoolId"::uuid = $2' : ''}
-               UNION
-               SELECT sah.term_id as "termId"
-               FROM student_academic_history sah
-               WHERE sah.student_id::uuid = $1
-               ${!superAdmin && schoolId ? 'AND sah.school_id::uuid = $2' : ''}
-             ) x
-             INNER JOIN term t ON x."termId" = t.id
-             LEFT JOIN academic_calendar ac ON t."academicCalendarId" = ac.id
-             ORDER BY COALESCE(ac."startDate", t."startDate", t."createdAt") ASC, t."termNumber" ASC
-             LIMIT 1`,
-            !superAdmin && schoolId ? [studentId, schoolId] : [studentId],
-          );
-
-          if (earliestAcademicRecord?.length > 0 && earliestAcademicRecord[0]?.termId) {
-            enrollmentCutoffTermId = earliestAcademicRecord[0].termId;
-            console.log(`   ℹ️  Enrollment cutoff inferred from earliest academic record: ${enrollmentCutoffTermId}`);
-          }
-        } catch (error) {
-          console.log(`   ⚠️  Failed to infer enrollment cutoff from academic records: ${error?.message || error}`);
-        }
+        console.log(`   ⚠️  NO ADMISSION TERM SET - credit auto-apply will consider all terms.`);
       }
       if (enrollmentCutoffTermId) {
         if (student.enrollmentTerm) {
@@ -3290,7 +3228,8 @@ async getParentPayments(
         console.log(`      - Terms before filter: ${termsBeforeFilter}`);
         console.log(`      - Terms after filter: ${terms.length}`);
         console.log(`      - Filtered out: ${termsBeforeFilter - terms.length} terms (before enrollment)`);
-        console.log(`   ✅ Student will ONLY be charged/credited for fees from Term ${student.enrollmentTerm.termNumber} onwards`);
+        const enrollmentTermNumber = student.enrollmentTerm ? student.enrollmentTerm.termNumber : '(unknown)';
+        console.log(`   ✅ Student will ONLY be charged/credited for fees from Term ${enrollmentTermNumber} onwards`);
       }
       
       // For graduated students, also filter out terms after graduation (term sequence)

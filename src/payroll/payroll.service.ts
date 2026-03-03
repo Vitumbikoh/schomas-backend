@@ -841,7 +841,15 @@ export class PayrollService {
     } catch (e) {
       console.error('Failed to save payroll approval history (APPROVED):', e.message);
     }
-    return run;
+    // After approval, attempt to finalize the run so it is posted to expenses.
+    try {
+      const finalized = await this.finalizeRun(id, user);
+      return finalized;
+    } catch (e) {
+      // If finalization fails, log and still return the approved run so caller knows approval succeeded.
+      console.error('Payroll finalization after approval failed:', e?.message || e);
+      return run;
+    }
   }
 
   async rejectRun(id: string, user: any, reason?: string) {
