@@ -6,6 +6,7 @@ import { NotificationRead } from './entities/notification-read.entity';
 import { UserSettings } from '../settings/entities/user-settings.entity';
 import { Student } from '../user/entities/student.entity';
 import { Parent } from '../user/entities/parent.entity';
+import { NotificationDeliveryService } from './notification-delivery.service';
 
 export interface CreateNotificationDto {
   title: string;
@@ -30,6 +31,7 @@ export class NotificationService {
     private studentRepository: Repository<Student>,
     @InjectRepository(Parent)
     private parentRepository: Repository<Parent>,
+    private notificationDeliveryService: NotificationDeliveryService,
   ) {}
 
   private async getStudentClassIdByUserId(userId?: string): Promise<string | null> {
@@ -120,6 +122,25 @@ export class NotificationService {
     try {
       const notification = this.notificationRepository.create(createNotificationDto);
       const savedNotification = await this.notificationRepository.save(notification);
+      const deliveryReport = await this.notificationDeliveryService.deliver(savedNotification);
+
+      const mergedMetadata = {
+        ...(savedNotification.metadata || {}),
+        deliveryReport,
+        deliveryUpdatedAt: new Date().toISOString(),
+      };
+
+      await this.notificationRepository.update(savedNotification.id, {
+        metadata: mergedMetadata as any,
+      });
+
+      savedNotification.metadata = mergedMetadata;
+      console.log('📨 Notification delivery report:', {
+        notificationId: savedNotification.id,
+        recipientsResolved: deliveryReport.recipientsResolved,
+        email: deliveryReport.email,
+        whatsapp: deliveryReport.whatsapp,
+      });
       console.log('✅ Notification saved successfully:', savedNotification.id);
       return savedNotification;
     } catch (error) {

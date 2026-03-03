@@ -7,11 +7,20 @@ import { NotificationController } from './notification.controller';
 import { UserSettings } from '../settings/entities/user-settings.entity';
 import { Student } from '../user/entities/student.entity';
 import { Parent } from '../user/entities/parent.entity';
+import { User } from '../user/entities/user.entity';
+import { Teacher } from '../user/entities/teacher.entity';
+import { Finance } from '../user/entities/finance.entity';
+import { NotificationDeliveryService } from './notification-delivery.service';
+import { ConfigModule } from '../config/config.module';
+import { SchoolSettings } from '../settings/entities/school-settings.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Notification, NotificationRead, UserSettings, Student, Parent])],
+  imports: [
+    ConfigModule,
+    TypeOrmModule.forFeature([Notification, NotificationRead, UserSettings, Student, Parent, User, Teacher, Finance, SchoolSettings]),
+  ],
   controllers: [NotificationController],
-  providers: [NotificationService],
+  providers: [NotificationService, NotificationDeliveryService],
   exports: [NotificationService],
 })
 export class NotificationModule {}
