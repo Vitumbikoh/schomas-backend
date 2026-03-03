@@ -193,6 +193,13 @@ export class AuthService {
     return { access_token, refresh_token: new_refresh_token };
   }
 
+  async logout(refreshToken?: string) {
+    if (refreshToken) {
+      this.refreshTokens.delete(refreshToken);
+    }
+    return { success: true };
+  }
+
   async validateToken(userId: string): Promise<User> {
     console.log('AuthService.validateToken - Validating userId:', userId);
     const user = await this.usersService.findById(userId);

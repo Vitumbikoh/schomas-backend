@@ -60,4 +60,10 @@ export class AuthController {
     }
     return this.authService.refresh(body.refresh_token);
   }
+
+  @Public()
+  @Post('logout')
+  async logout(@Body() body: { refresh_token?: string }) {
+    return this.authService.logout(body?.refresh_token);
+  }
 }
