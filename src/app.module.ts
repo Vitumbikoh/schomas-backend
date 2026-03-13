@@ -37,6 +37,7 @@ import { RequestContextMiddleware } from './common/request-context/request-conte
 import { PayrollModule } from './payroll/payroll.module';
 import { ExamResultModule } from './exam-results/exam-result.module';
 import { NotificationModule } from './notifications/notification.module';
+import { MessagesModule } from './messages/messages.module';
 
 @Module({
   imports: [
@@ -102,6 +103,7 @@ import { NotificationModule } from './notifications/notification.module';
   PayrollModule,
   ExamResultModule,
   NotificationModule,
+  MessagesModule,
   ],
 })
 export class AppModule implements NestModule {
