@@ -6,7 +6,7 @@ const pool = new Pool({
   port: 5432,
   user: 'postgres',
   password: 'g1Bird fly',
-  database: 'schomas',
+  database: 'edunexus',
 });
 
 async function fixCurrentTermsIssue() {

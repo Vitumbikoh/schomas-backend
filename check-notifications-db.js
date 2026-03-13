@@ -5,7 +5,7 @@ async function checkNotifications() {
   const client = new Client({
     host: 'localhost',
     port: 5432,
-    database: 'schomas',
+    database: 'edunexus',
     user: 'postgres',
     password: 'g1Bird fly',
   });

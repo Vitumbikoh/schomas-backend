@@ -11,7 +11,7 @@ const dbConfig = {
   port: parseInt(process.env.DB_PORT || '5432'),
   user: process.env.DB_USERNAME || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
-  database: process.env.DB_DATABASE || 'schomas',
+  database: process.env.DB_DATABASE || 'edunexus',
 };
 
 async function createTable() {
@@ -65,7 +65,7 @@ async function createTable() {
     console.error('2. Make sure PostgreSQL is running');
     console.error('3. Verify the database exists');
     console.error('\nYou can also run the SQL manually:');
-    console.error('   psql -U postgres -d schomas -f create-student-academic-history-table.sql');
+    console.error('   psql -U postgres -d edunexus -f create-student-academic-history-table.sql');
     process.exit(1);
   } finally {
     await client.end();
@@ -80,6 +80,6 @@ try {
   console.error('❌ The "pg" module is not installed.');
   console.error('Please install it with: npm install pg');
   console.error('\nOr run the SQL file manually:');
-  console.error('   psql -U postgres -d schomas -f create-student-academic-history-table.sql');
+  console.error('   psql -U postgres -d edunexus -f create-student-academic-history-table.sql');
   process.exit(1);
 }

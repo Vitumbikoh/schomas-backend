@@ -5,7 +5,7 @@ const client = new Client({
   port: 5432,
   user: 'postgres',
   password: 'g1Bird fly',
-  database: 'schomas'
+  database: 'edunexus'
 });
 
 async function analyzePaymentIssue() {

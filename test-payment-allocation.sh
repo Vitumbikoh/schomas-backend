@@ -16,7 +16,7 @@ echo ""
 echo "Test 2: Checking Joyce Waithera's financial details..."
 node -e "
 const {Client}=require('pg');
-const c=new Client({host:'localhost',port:5432,user:'postgres',password:'g1Bird fly',database:'schomas'});
+const c=new Client({host:'localhost',port:5432,user:'postgres',password:'g1Bird fly',database:'edunexus'});
 c.connect().then(async()=>{
   const student=await c.query('SELECT id,\"firstName\",\"lastName\",\"studentId\",\"termId\" FROM student WHERE \"firstName\"=\\'Joyce\\' AND \"lastName\"=\\'Waithera\\'');
   if(student.rows.length===0){console.log('Joyce not found');c.end();return}
@@ -75,7 +75,7 @@ echo ""
 echo "Test 3: Check Collins Ongeri (overpayment scenario)..."
 node -e "
 const {Client}=require('pg');
-const c=new Client({host:'localhost',port:5432,user:'postgres',password:'g1Bird fly',database:'schomas'});
+const c=new Client({host:'localhost',port:5432,user:'postgres',password:'g1Bird fly',database:'edunexus'});
 c.connect().then(async()=>{
   const student=await c.query('SELECT id,\"firstName\",\"lastName\",\"studentId\",\"termId\" FROM student WHERE \"firstName\"=\\'Collins\\' AND \"lastName\"=\\'Ongeri\\'');
   if(student.rows.length===0){console.log('Collins not found');c.end();return}

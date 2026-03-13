@@ -7,7 +7,7 @@ async function run() {
     port: parseInt(process.env.DB_PORT || '5432'),
     user: process.env.DB_USERNAME || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres',
-    database: process.env.DB_DATABASE || 'schomas',
+    database: process.env.DB_DATABASE || 'edunexus',
   });
   await client.connect();
   console.log('Connected to DB, starting user_settings repair...');

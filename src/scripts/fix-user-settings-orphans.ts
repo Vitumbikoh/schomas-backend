@@ -12,7 +12,7 @@ async function run() {
     port: parseInt(config.get('DB_PORT') || '5432'),
     username: config.get('DB_USERNAME') || 'postgres',
     password: config.get('DB_PASSWORD') || 'postgres',
-    database: config.get('DB_DATABASE') || 'schomas',
+    database: config.get('DB_DATABASE') || 'edunexus',
     entities: [User, UserSettings],
     synchronize: false,
     logging: false,

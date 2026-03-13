@@ -134,7 +134,7 @@ export class NotificationDeliveryService {
 
   private formatDisplayName(value?: string | null): string {
     const text = String(value || '').trim().replace(/[\r\n"]/g, '');
-    return text || 'Schomas Notifications';
+    return text || 'edunexus Notifications';
   }
 
   private parseEmailAddress(value?: string | null): string | undefined {
@@ -155,10 +155,10 @@ export class NotificationDeliveryService {
     const configuredFromEmail = this.parseEmailAddress(configuredFrom) || smtpUser;
 
     if (!configuredFromEmail) {
-      return { from: 'Schomas Notifications' };
+      return { from: 'edunexus Notifications' };
     }
 
-    const platformName = this.formatDisplayName(this.getOptionalConfig('SMTP_FROM_NAME') || 'Schomas Notifications');
+    const platformName = this.formatDisplayName(this.getOptionalConfig('SMTP_FROM_NAME') || 'edunexus Notifications');
     const defaultIdentity: EmailIdentity = {
       from: `${platformName} <${configuredFromEmail}>`,
     };
@@ -180,7 +180,7 @@ export class NotificationDeliveryService {
     const schoolEmail = this.parseEmailAddress(schoolSettings.schoolEmail);
 
     return {
-      from: `${schoolName} via Schomas <${configuredFromEmail}>`,
+      from: `${schoolName} via edunexus <${configuredFromEmail}>`,
       replyTo: schoolEmail,
     };
   }

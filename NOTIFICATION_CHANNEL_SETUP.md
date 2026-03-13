@@ -9,7 +9,7 @@ In-app/browser notifications still work as before.
 
 ## 1) Configure Email (SMTP)
 
-Add these variables to your `schomas-backend/.env.development` (or `.env.production`):
+Add these variables to your `edunexus-backend/.env.development` (or `.env.production`):
 
 ```env
 SMTP_HOST=smtp.gmail.com
@@ -17,15 +17,15 @@ SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_USER=your-smtp-username
 SMTP_PASS=your-smtp-password
-SMTP_FROM="Schomas Notifications <no-reply@yourdomain.com>"
-SMTP_FROM_NAME="Schomas Notifications"
+SMTP_FROM="edunexus Notifications <no-reply@yourdomain.com>"
+SMTP_FROM_NAME="edunexus Notifications"
 ```
 
 For SaaS multi-school behavior:
 
 - Transport/auth still uses your platform SMTP account (`SMTP_*`).
 - Sender identity is branded per school automatically:
-   - `From`: `{{School Name}} via Schomas <platform-sender@...>`
+   - `From`: `{{School Name}} via edunexus <platform-sender@...>`
    - `Reply-To`: school email from settings (`schoolSettings.schoolEmail`) when present
 
 This gives clear school differentiation without requiring each school to manage SMTP credentials.

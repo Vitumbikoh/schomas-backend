@@ -12,7 +12,7 @@ export const AppDataSource = new DataSource({
   port: parseInt(process.env.DB_PORT || '5432'),
   username: process.env.DB_USERNAME || 'postgres',
   password: process.env.DB_PASSWORD || 'g1Bird fly',
-  database: process.env.DB_DATABASE || 'schomas',
+  database: process.env.DB_DATABASE || 'edunexus',
   entities: [User, Teacher, Course, Student, School],
   synchronize: process.env.NODE_ENV !== 'production',
   // synchronize: false,

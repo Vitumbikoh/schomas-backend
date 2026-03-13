@@ -8,7 +8,7 @@ export const JWT_CONSTANTS = {
     PORT: parseInt(process.env.DB_PORT || '5432', 10),
     USERNAME: process.env.DB_USERNAME || 'postgres',
     PASSWORD: process.env.DB_PASSWORD || 'g1Bird fly',
-    DATABASE: process.env.DB_DATABASE || 'schomas',
+    DATABASE: process.env.DB_DATABASE || 'edunexus',
   };
   
   export enum CacheTTL {

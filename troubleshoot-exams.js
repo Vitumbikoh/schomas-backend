@@ -11,7 +11,7 @@ const execAsync = promisify(exec);
 
 async function runQuery(sql) {
   try {
-    const { stdout, stderr } = await execAsync(`echo "${sql}" | psql -d schomas`);
+    const { stdout, stderr } = await execAsync(`echo "${sql}" | psql -d edunexus`);
     if (stderr) console.error('Query error:', stderr);
     return stdout;
   } catch (error) {

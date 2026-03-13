@@ -1,7 +1,7 @@
 # Term to Term Refactoring Implementation Plan
 
 ## Overview
-This document outlines the comprehensive changes needed to refactor "Term" to "Term" throughout the Schomas backend system.
+This document outlines the comprehensive changes needed to refactor "Term" to "Term" throughout the edunexus backend system.
 
 ## Phase 1: Entity Layer Changes ✅ COMPLETED
 - [x] Created new `Term` entity (`src/settings/entities/term.entity.ts`)

@@ -1,4 +1,4 @@
-E:\Projects\Web Apps\Javascript\schomas\schomas-backend\src>tree /f
+E:\Projects\Web Apps\Javascript\edunexus\edunexus-backend\src>tree /f
 Folder PATH listing for volume G
 Volume serial number is 3CC7-459A
 E:.
@@ -210,4 +210,4 @@ E:.
             role.enum.ts
 
 
-E:\Projects\Web Apps\Javascript\schomas\schomas-backend\src>
+E:\Projects\Web Apps\Javascript\edunexus\edunexus-backend\src>

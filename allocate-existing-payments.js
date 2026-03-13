@@ -8,7 +8,7 @@ const dbConfig = {
   port: parseInt(process.env.DB_PORT || '5432'),
   user: process.env.DB_USERNAME || 'postgres',
   password: process.env.DB_PASSWORD || 'g1Bird fly',
-  database: process.env.DB_DATABASE || 'schomas',
+  database: process.env.DB_DATABASE || 'edunexus',
 };
 
 async function allocatePaymentsToFeeTypes() {

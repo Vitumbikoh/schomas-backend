@@ -8,7 +8,7 @@ async function restoreGraduatedStudents() {
     port: 5432,
     username: 'postgres',
     password: 'g1Bird fly',
-    database: 'schomas',
+    database: 'edunexus',
   });
 
   try {

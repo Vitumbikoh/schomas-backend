@@ -97,7 +97,7 @@ export class Expense extends BaseEntity {
   @Column({ type: 'json', nullable: true })
   attachments: string[];
 
-  /** True when this expense was auto-created from a Schomas billing invoice */
+  /** True when this expense was auto-created from a edunexus billing invoice */
   @Column({ default: false })
   isBillingInvoice: boolean;
 

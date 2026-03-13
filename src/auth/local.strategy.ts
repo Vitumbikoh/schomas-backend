@@ -7,7 +7,7 @@ import { AuthService } from './auth.service';
 @Injectable()
 export class LocalStrategy extends PassportStrategy(Strategy) {
   constructor(private authService: AuthService) {
-    // Primary auth field is `identifier` (used by schomas-app).
+    // Primary auth field is `identifier` (used by edunexus-app).
     // LocalAuthGuard normalizes `username`/`email` into `identifier` for web clients.
     super({ usernameField: 'identifier' });
   }

@@ -114,7 +114,7 @@ console.log(`   Past terms to check: ${pastTerms.length} (${pastTerms.map(t => `
 ### Manual Test
 1. **Restart backend:**
    ```bash
-   cd schomas-backend
+   cd edunexus-backend
    npm run start:dev
    ```
 

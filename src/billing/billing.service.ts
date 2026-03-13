@@ -222,7 +222,7 @@ export class BillingService {
 
       await this.notificationService.create({
         title: 'New Billing Invoice Received',
-        message: `A Schomas platform invoice (${savedInvoice.invoiceNumber}) has been issued for ${periodLabel}. Amount: ${savedInvoice.currency} ${Number(savedInvoice.totalAmount).toLocaleString()}. Please review and approve in Expenses.`,
+        message: `A edunexus platform invoice (${savedInvoice.invoiceNumber}) has been issued for ${periodLabel}. Amount: ${savedInvoice.currency} ${Number(savedInvoice.totalAmount).toLocaleString()}. Please review and approve in Expenses.`,
         type: NotificationType.SYSTEM,
         priority: NotificationPriority.HIGH,
         schoolId,
@@ -283,15 +283,15 @@ export class BillingService {
 
     const expense = this.expenseRepo.create({
       expenseNumber,
-      title: `Schomas Platform Invoice – ${invoice.invoiceNumber}`,
+      title: `edunexus Platform Invoice – ${invoice.invoiceNumber}`,
       description:
-        `Schomas platform subscription invoice for ${invoice.activeStudentsCount} active students ` +
+        `edunexus platform subscription invoice for ${invoice.activeStudentsCount} active students ` +
         `at ${invoice.currency} ${Number(invoice.ratePerStudent).toFixed(2)} per student. ` +
         `Invoice number: ${invoice.invoiceNumber}.`,
       amount: Number(invoice.totalAmount),
       category: ExpenseCategory.ADMINISTRATIVE,
-      department: 'Schomas Billing',
-      requestedBy: 'Schomas System',
+      department: 'edunexus Billing',
+      requestedBy: 'edunexus System',
       requestedByUserId: adminUser?.id ?? null,
       schoolId,
       termId: currentTerm?.id ?? null,
@@ -302,7 +302,7 @@ export class BillingService {
       requestDate: new Date(),
       isBillingInvoice: true,
       billingInvoiceId: invoice.id,
-      notes: `Auto-generated from Schomas billing invoice ${invoice.invoiceNumber}. Please approve to acknowledge receipt.`,
+      notes: `Auto-generated from edunexus billing invoice ${invoice.invoiceNumber}. Please approve to acknowledge receipt.`,
     });
 
     const savedExpense = await this.expenseRepo.save(expense);
@@ -311,7 +311,7 @@ export class BillingService {
     const systemUserId = adminUser?.id ?? null;
     const history = this.approvalHistoryRepo.create({
       expenseId: savedExpense.id,
-      performedBy: 'Schomas System',
+      performedBy: 'edunexus System',
       performedByUserId: systemUserId,
       action: ApprovalAction.SUBMITTED,
       comments: `Invoice ${invoice.invoiceNumber} submitted for school admin review.`,
@@ -434,9 +434,9 @@ export class BillingService {
       margin: 60,
       info: {
         Title: `Invoice ${inv.invoiceNumber}`,
-        Author: 'Schomas Management System',
+        Author: 'edunexus Management System',
         Subject: 'School Billing Invoice',
-        Creator: 'Schomas Billing'
+        Creator: 'edunexus Billing'
       }
     });
     const stream = new PassThrough();
@@ -461,7 +461,7 @@ export class BillingService {
     doc.fill('#ffffff')
        .fontSize(28)
        .font('Helvetica-Bold')
-       .text('SCHOMAS', margin, 35, { align: 'left' });
+       .text('edunexus', margin, 35, { align: 'left' });
     
     doc.fontSize(12)
        .font('Helvetica')
@@ -714,14 +714,14 @@ export class BillingService {
     doc.fontSize(10)
        .font('Helvetica-Bold')
        .fill(textColor)
-       .text('Thank you for choosing Schomas!', 0, footerY + 20, { 
+       .text('Thank you for choosing edunexus!', 0, footerY + 20, { 
          align: 'center', width: pageWidth 
        });
 
     doc.fontSize(9)
        .font('Helvetica')
        .fill('#6b7280')
-       .text('This invoice was generated automatically by Schomas Management System', 
+       .text('This invoice was generated automatically by edunexus Management System', 
               0, footerY + 40, { align: 'center', width: pageWidth });
 
     doc.text(`Generated on ${new Date().toLocaleDateString('en-US', { 

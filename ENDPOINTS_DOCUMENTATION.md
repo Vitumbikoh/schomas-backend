@@ -1,6 +1,6 @@
-# SCHOMAS Backend API Endpoints Documentation
+# edunexus Backend API Endpoints Documentation
 
-This document provides a comprehensive list of all API endpoints in the SCHOMAS (School Management System) backend with detailed descriptions of their functionality.
+This document provides a comprehensive list of all API endpoints in the edunexus (School Management System) backend with detailed descriptions of their functionality.
 
 ## Table of Contents
 1. [Authentication & Authorization](#authentication--authorization)
@@ -616,4 +616,4 @@ The system implements comprehensive role-based access control with the following
 - UUID validation for entity IDs via `ParseUUIDPipe`
 - File upload validation with size limits and type checking
 
-This comprehensive endpoint documentation provides complete coverage of the SCHOMAS backend API, enabling developers to understand system capabilities and integration requirements.
+This comprehensive endpoint documentation provides complete coverage of the edunexus backend API, enabling developers to understand system capabilities and integration requirements.

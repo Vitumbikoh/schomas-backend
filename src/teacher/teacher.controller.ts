@@ -894,9 +894,9 @@ export class TeacherController {
         return {
           success: true,
           isNewTeacher: true,
-          message: "Welcome! Getting started with Schomas",
+          message: "Welcome! Getting started with edunexus",
           welcomeData: {
-            title: "Welcome to Schomas! 🎓",
+            title: "Welcome to edunexus! 🎓",
             content: "Hello! We're excited to have you join our teaching community. Your attendance dashboard will populate as soon as classes are assigned to you. In the meantime, feel free to explore the platform and familiarize yourself with the various features available.",
             helpText: "💡 Need help getting started? Contact your school administrator or check our help center for guidance."
           },

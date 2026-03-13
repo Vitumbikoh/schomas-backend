@@ -9,7 +9,7 @@ The auto-apply credit code changes weren't being executed because the backend wa
 
 **Open a terminal in VS Code and run:**
 ```bash
-cd "e:\Projects\Web Apps\Javascript\schomas\schomas-backend"
+cd "e:\Projects\Web Apps\Javascript\edunexus\edunexus-backend"
 npm run start:dev
 ```
 
@@ -19,7 +19,7 @@ npm run start:dev
 
 **Open another terminal and run the PowerShell test:**
 ```powershell
-cd "e:\Projects\Web Apps\Javascript\schomas\schomas-backend"
+cd "e:\Projects\Web Apps\Javascript\edunexus\edunexus-backend"
 .\test-auto-apply.ps1
 ```
 
@@ -98,7 +98,7 @@ If the new logs don't appear, then either:
 
 3. **Force rebuild:**
    ```bash
-   cd "e:\Projects\Web Apps\Javascript\schomas\schomas-backend"
+   cd "e:\Projects\Web Apps\Javascript\edunexus\edunexus-backend"
    npm run build
    npm run start:dev
    ```
