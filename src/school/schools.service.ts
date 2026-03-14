@@ -11,6 +11,7 @@ import { Role } from '../user/enums/role.enum';
 import { SchoolAdminCredentialsDto, SchoolAdminCredentialsListDto } from './dto/school-admin-credentials.dto';
 import { NotificationService } from '../notifications/notification.service';
 import { NotificationType, NotificationPriority } from '../notifications/entities/notification.entity';
+import { PackageCatalog } from './entities/package-catalog.entity';
 
 interface CreateSchoolDto {
   name: string;
@@ -102,15 +103,55 @@ const BASE_CATALOG: Omit<PackageCatalogItem, 'price'>[] = [
   },
 ];
 
+const DEFAULT_CURRENCY = 'MK';
+
 @Injectable()
 export class SchoolsService {
   constructor(
     @InjectRepository(School) private repo: Repository<School>,
     @InjectRepository(SchoolAdminCredentials) private credentialsRepo: Repository<SchoolAdminCredentials>,
+    @InjectRepository(PackageCatalog) private packageCatalogRepo: Repository<PackageCatalog>,
     private readonly usersService: UsersService,
     private readonly dataSource: DataSource,
     private readonly notificationService: NotificationService,
   ) {}
+
+  private async ensurePackageCatalogSeeded() {
+    const existing = await this.packageCatalogRepo.find();
+    const byPackageId = new Map(existing.map((pkg) => [pkg.packageId, pkg]));
+
+    const missing = BASE_CATALOG.filter((pkg) => !byPackageId.has(pkg.id));
+    if (missing.length === 0) return;
+
+    const rows = missing.map((pkg) =>
+      this.packageCatalogRepo.create({
+        packageId: pkg.id,
+        name: pkg.name,
+        description: pkg.description,
+        modules: pkg.modules,
+        roleAccess: pkg.roleAccess,
+        price: DEFAULT_PRICING[pkg.id],
+        currency: DEFAULT_CURRENCY,
+        isActive: true,
+      }),
+    );
+
+    await this.packageCatalogRepo.save(rows);
+  }
+
+  private async getCatalogRows() {
+    await this.ensurePackageCatalogSeeded();
+    return this.packageCatalogRepo.find({ where: { isActive: true }, order: { createdAt: 'ASC' } });
+  }
+
+  private buildPricingFromRows(rows: PackageCatalog[]): PackagePricing {
+    const mapById = new Map(rows.map((row) => [row.packageId, Number(row.price)]));
+    return {
+      normal: mapById.get('normal') ?? DEFAULT_PRICING.normal,
+      silver: mapById.get('silver') ?? DEFAULT_PRICING.silver,
+      golden: mapById.get('golden') ?? DEFAULT_PRICING.golden,
+    };
+  }
 
   async create(dto: CreateSchoolDto) {
     // Enforce uniqueness of code & name early
@@ -330,38 +371,40 @@ export class SchoolsService {
     return 'normal';
   }
 
-  private buildCatalog(pricing: PackagePricing): PackageCatalogItem[] {
-    return BASE_CATALOG.map((pkg) => ({
-      ...pkg,
-      price: pricing[pkg.id],
+  private buildCatalog(rows: PackageCatalog[]): PackageCatalogItem[] {
+    return rows.map((row) => ({
+      id: row.packageId,
+      name: row.name,
+      description: row.description,
+      modules: row.modules,
+      roleAccess: row.roleAccess,
+      price: Number(row.price),
     }));
   }
 
   async getPackageCatalog() {
-    const anySchool = await this.repo.find({
-      order: { createdAt: 'ASC' },
-      take: 1,
-    }).then((rows) => rows[0]);
-    const pricing = this.extractPricingFromMetadata(anySchool?.metadata);
+    const rows = await this.getCatalogRows();
+    const pricing = this.buildPricingFromRows(rows);
     return {
-      currency: 'MK',
+      currency: DEFAULT_CURRENCY,
       pricing,
-      packages: this.buildCatalog(pricing),
+      packages: this.buildCatalog(rows),
     };
   }
 
   async getSchoolPackageConfig(schoolId: string) {
     const school = await this.findOne(schoolId);
-    const pricing = this.extractPricingFromMetadata(school.metadata);
+    const rows = await this.getCatalogRows();
+    const pricing = this.buildPricingFromRows(rows);
     const assignedPackage = this.extractAssignedPackage(school.metadata);
 
     return {
       schoolId: school.id,
       schoolName: school.name,
       assignedPackage,
-      currency: 'MK',
+      currency: DEFAULT_CURRENCY,
       pricing,
-      packages: this.buildCatalog(pricing),
+      packages: this.buildCatalog(rows),
     };
   }
 
@@ -379,11 +422,12 @@ export class SchoolsService {
   }
 
   async updatePackagePricing(pricingUpdate: Partial<PackagePricing>) {
-    const currentCatalog = await this.getPackageCatalog();
+    const rows = await this.getCatalogRows();
+    const currentPricing = this.buildPricingFromRows(rows);
     const nextPricing: PackagePricing = {
-      normal: Number(pricingUpdate.normal ?? currentCatalog.pricing.normal),
-      silver: Number(pricingUpdate.silver ?? currentCatalog.pricing.silver),
-      golden: Number(pricingUpdate.golden ?? currentCatalog.pricing.golden),
+      normal: Number(pricingUpdate.normal ?? currentPricing.normal),
+      silver: Number(pricingUpdate.silver ?? currentPricing.silver),
+      golden: Number(pricingUpdate.golden ?? currentPricing.golden),
     };
 
     if (
@@ -394,15 +438,16 @@ export class SchoolsService {
       throw new BadRequestException('Invalid package prices');
     }
 
-    const schools = await this.repo.find();
-    if (schools.length === 0) {
-      return {
-        currency: 'MK',
-        pricing: nextPricing,
-        packages: this.buildCatalog(nextPricing),
-      };
+    const rowsById = new Map(rows.map((row) => [row.packageId, row]));
+    for (const packageId of ['normal', 'silver', 'golden'] as PackageId[]) {
+      const row = rowsById.get(packageId);
+      if (!row) continue;
+      row.price = nextPricing[packageId];
     }
+    await this.packageCatalogRepo.save(Array.from(rowsById.values()));
 
+    // Keep school metadata pricing in sync for compatibility with existing billing logic.
+    const schools = await this.repo.find();
     for (const school of schools) {
       school.metadata = {
         ...(school.metadata || {}),
@@ -411,10 +456,11 @@ export class SchoolsService {
     }
     await this.repo.save(schools);
 
+    const refreshedRows = await this.getCatalogRows();
     return {
-      currency: 'MK',
+      currency: DEFAULT_CURRENCY,
       pricing: nextPricing,
-      packages: this.buildCatalog(nextPricing),
+      packages: this.buildCatalog(refreshedRows),
     };
   }
 
