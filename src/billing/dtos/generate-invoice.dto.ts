@@ -3,6 +3,10 @@ import { IsOptional, IsUUID, IsString } from 'class-validator';
 export class GenerateInvoiceDto {
   // One of
   @IsOptional()
+  @IsString()
+  billingMonth?: string; // YYYY-MM
+
+  @IsOptional()
   @IsUUID()
   termId?: string;
 

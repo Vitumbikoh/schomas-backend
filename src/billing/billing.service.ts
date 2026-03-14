@@ -21,6 +21,15 @@ import { NotificationType, NotificationPriority } from '../notifications/entitie
 import PDFDocument = require('pdfkit');
 import { PassThrough } from 'stream';
 
+type PackageId = 'normal' | 'silver' | 'golden';
+type PackagePricing = Record<PackageId, number>;
+
+const DEFAULT_PACKAGE_PRICING: PackagePricing = {
+  normal: 120,
+  silver: 200,
+  golden: 300,
+};
+
 @Injectable()
 export class BillingService {
   constructor(
@@ -39,6 +48,28 @@ export class BillingService {
     private notificationService: NotificationService,
   ) {}
 
+  private normalizePackagePricing(input?: Record<string, any>): PackagePricing {
+    return {
+      normal: Number(input?.normal) || DEFAULT_PACKAGE_PRICING.normal,
+      silver: Number(input?.silver) || DEFAULT_PACKAGE_PRICING.silver,
+      golden: Number(input?.golden) || DEFAULT_PACKAGE_PRICING.golden,
+    };
+  }
+
+  private resolveAssignedPackage(metadata?: Record<string, any>): PackageId {
+    const candidate = metadata?.assignedPackage;
+    if (candidate === 'normal' || candidate === 'silver' || candidate === 'golden') {
+      return candidate;
+    }
+    return 'normal';
+  }
+
+  private getScopeFromDto(dto: GenerateInvoiceDto): 'monthly' | 'term' | 'academic_calendar' {
+    if (dto.billingMonth) return 'monthly';
+    if (dto.termId) return 'term';
+    return 'academic_calendar';
+  }
+
   async setSchoolPlan(dto: SetSchoolBillingPlanDto, actor: { role: string; schoolId?: string }) {
     // For SUPER_ADMIN, schoolId must come from DTO; for ADMIN, it comes from their token
     const resolvedSchoolId = actor.role === 'SUPER_ADMIN' ? dto.schoolId : actor.schoolId;
@@ -52,17 +83,40 @@ export class BillingService {
       throw new ForbiddenException('Not allowed to set plan for another school');
     }
     
-    if (dto.ratePerStudent <= 0) throw new BadRequestException('ratePerStudent must be > 0');
+    const planType = dto.planType || 'per_student';
+    const ratePerStudent = Number(dto.ratePerStudent ?? 0);
+
+    if (planType === 'per_student' && ratePerStudent <= 0) {
+      throw new BadRequestException('ratePerStudent must be > 0 for per-student plans');
+    }
+
+    if (dto.packagePricing) {
+      const pricing = this.normalizePackagePricing(dto.packagePricing as any);
+      if (pricing.normal < 0 || pricing.silver < 0 || pricing.golden < 0) {
+        throw new BadRequestException('Package prices must be non-negative');
+      }
+
+      const school = await this.schoolRepo.findOne({ where: { id: resolvedSchoolId } });
+      if (!school) throw new NotFoundException('School not found');
+      school.metadata = {
+        ...(school.metadata || {}),
+        packagePricing: pricing,
+      };
+      await this.schoolRepo.save(school);
+    }
+
     let plan = await this.planRepo.findOne({ where: { schoolId: resolvedSchoolId, isActive: true } });
     if (plan) {
-      plan.ratePerStudent = dto.ratePerStudent;
+      plan.ratePerStudent = planType === 'per_student' ? ratePerStudent : Number(plan.ratePerStudent || 0);
+      plan.planType = planType;
       plan.currency = dto.currency || plan.currency || 'MWK';
       plan.cadence = (dto.cadence as any) || plan.cadence || 'per_term';
       plan.effectiveFrom = dto.effectiveFrom ? new Date(dto.effectiveFrom) : plan.effectiveFrom;
     } else {
       plan = this.planRepo.create({
         schoolId: resolvedSchoolId,
-        ratePerStudent: dto.ratePerStudent,
+        ratePerStudent: planType === 'per_student' ? ratePerStudent : 0,
+        planType,
         currency: dto.currency || 'MWK',
         cadence: (dto.cadence as any) || 'per_term',
         isActive: true,
@@ -122,49 +176,61 @@ export class BillingService {
     return count;
   }
 
+  private async countAllActiveStudents(schoolId: string) {
+    return this.countActiveStudentsForAcademicCalendar('', schoolId);
+  }
+
   private generateInvoiceNumber(prefix: string) {
     const rand = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
     return `${prefix}-${rand}`;
   }
 
   async generateInvoice(dto: GenerateInvoiceDto, actor: { role: string; schoolId?: string }) {
-  // Resolve target school: prefer explicit dto.schoolId (super admin selects school),
-  // otherwise fall back to actor scope. Non-super admins cannot target another school.
-  const schoolId = (dto as any).schoolId ?? actor.schoolId;
-
-  // Debug logs for visibility during generation
-  // eslint-disable-next-line no-console
-  console.debug('[BillingService.generateInvoice] actor=', actor, ' dto=', dto, ' resolvedSchoolId=', schoolId);
+    const schoolId = (dto as any).schoolId ?? actor.schoolId;
 
     if (!schoolId) {
-      // Super admin must provide a target schoolId; admins must be associated with a school
-  // eslint-disable-next-line no-console
-  console.debug('[BillingService.generateInvoice] Missing schoolId. actor=', actor, ' dto=', dto);
-  throw new ForbiddenException('Missing school scope: provide schoolId or use a scoped account');
+      throw new ForbiddenException('Missing school scope: provide schoolId or use a scoped account');
     }
 
-    // Only enforce cross-school restriction for non-super admins
     if (actor.role !== 'SUPER_ADMIN' && (dto as any).schoolId && (dto as any).schoolId !== actor.schoolId) {
-  // eslint-disable-next-line no-console
-  console.debug('[BillingService.generateInvoice] Cross-school attempt blocked. actor=', actor, ' dto=', dto);
-  throw new ForbiddenException('Not allowed to generate invoice for another school');
+      throw new ForbiddenException('Not allowed to generate invoice for another school');
     }
-    
-    const plan = await this.getActivePlanOrThrow(schoolId);
 
-    if (!dto.termId && !dto.academicCalendarId) {
-      throw new BadRequestException('Provide termId or academicCalendarId');
+    const selectedScopes = [dto.billingMonth, dto.termId, dto.academicCalendarId].filter(Boolean);
+    if (selectedScopes.length !== 1) {
+      throw new BadRequestException('Provide exactly one scope: billingMonth, termId, or academicCalendarId');
     }
+
+    const plan = await this.getActivePlanOrThrow(schoolId);
+    const school = await this.schoolRepo.findOne({ where: { id: schoolId } });
+    if (!school) throw new NotFoundException('School not found');
+
+    const planType = (plan.planType || 'per_student') as 'per_student' | 'package';
+    const billingScope = this.getScopeFromDto(dto);
 
     let activeStudents = 0;
     let invoiceNumberPrefix = `SCH-${schoolId.slice(0, 6)}`;
     let termId: string | undefined;
     let academicCalendarId: string | undefined;
+    let billingMonth: string | undefined;
 
-    if (dto.termId) {
+    if (dto.billingMonth) {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(dto.billingMonth)) {
+        throw new BadRequestException('billingMonth must be in YYYY-MM format');
+      }
+      const existing = await this.invoiceRepo.findOne({
+        where: { schoolId, billingScope: 'monthly', billingMonth: dto.billingMonth },
+      });
+      if (existing) return existing;
+      billingMonth = dto.billingMonth;
+      invoiceNumberPrefix += `-M${billingMonth.replace('-', '')}`;
+      activeStudents = await this.countAllActiveStudents(schoolId);
+    } else if (dto.termId) {
       const term = await this.termRepo.findOne({ where: { id: dto.termId, schoolId } });
       if (!term) throw new NotFoundException('Term not found for school');
-      const existing = await this.invoiceRepo.findOne({ where: { schoolId, termId: term.id } });
+      const existing = await this.invoiceRepo.findOne({
+        where: { schoolId, billingScope: 'term', termId: term.id },
+      });
       if (existing) return existing;
       activeStudents = await this.countActiveStudentsForTerm(term.id, schoolId);
       termId = term.id;
@@ -172,27 +238,42 @@ export class BillingService {
     } else if (dto.academicCalendarId) {
       const cal = await this.calendarRepo.findOne({ where: { id: dto.academicCalendarId, schoolId } });
       if (!cal) throw new NotFoundException('Academic calendar not found for school');
-      const existing = await this.invoiceRepo.findOne({ where: { schoolId, academicCalendarId: cal.id } });
+      const existing = await this.invoiceRepo.findOne({
+        where: { schoolId, billingScope: 'academic_calendar', academicCalendarId: cal.id },
+      });
       if (existing) return existing;
       activeStudents = await this.countActiveStudentsForAcademicCalendar(cal.id, schoolId);
       academicCalendarId = cal.id;
       invoiceNumberPrefix += `-AY`;
     }
 
-    if (!activeStudents || activeStudents <= 0) {
+    if (planType === 'per_student' && (!activeStudents || activeStudents <= 0)) {
       throw new BadRequestException('No active students in the selected scope');
     }
 
-    const subtotal = Number(plan.ratePerStudent) * Number(activeStudents);
+    const packagePricing = this.normalizePackagePricing(school.metadata as any);
+    const assignedPackage = this.resolveAssignedPackage(school.metadata as any);
+    const packageRate = packagePricing[assignedPackage];
+
+    const perStudentRate = Number(plan.ratePerStudent || 0);
+    const subtotal = planType === 'package'
+      ? Number(packageRate)
+      : Number(perStudentRate) * Number(activeStudents);
     const discount = 0;
     const totalAmount = subtotal - discount;
+
     const invoice = this.invoiceRepo.create({
       invoiceNumber: this.generateInvoiceNumber(invoiceNumberPrefix),
       schoolId,
       termId: termId || null,
       academicCalendarId: academicCalendarId || null,
-      activeStudentsCount: activeStudents,
-      ratePerStudent: plan.ratePerStudent,
+      billingMonth: billingMonth || null,
+      billingScope,
+      planType,
+      packageId: planType === 'package' ? assignedPackage : null,
+      packageRate: planType === 'package' ? packageRate : null,
+      activeStudentsCount: Number(activeStudents || 0),
+      ratePerStudent: planType === 'per_student' ? perStudentRate : 0,
       subtotal,
       discount,
       totalAmount,
@@ -214,11 +295,13 @@ export class BillingService {
 
     // Create notification for school admin (school-scoped so school admin sees it)
     try {
-      const periodLabel = termId
-        ? `Term ${(await this.termRepo.findOne({ where: { id: termId } }))?.termNumber ?? ''}`
-        : (academicCalendarId
-            ? (await this.calendarRepo.findOne({ where: { id: academicCalendarId } }))?.term ?? 'Academic Year'
-            : 'Selected Period');
+      const periodLabel = billingMonth
+        ? `Month ${billingMonth}`
+        : termId
+          ? `Term ${(await this.termRepo.findOne({ where: { id: termId } }))?.termNumber ?? ''}`
+          : (academicCalendarId
+              ? (await this.calendarRepo.findOne({ where: { id: academicCalendarId } }))?.term ?? 'Academic Year'
+              : 'Selected Period');
 
       await this.notificationService.create({
         title: 'New Billing Invoice Received',
@@ -281,13 +364,14 @@ export class BillingService {
       ? new Date(invoice.dueDate as any)
       : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d; })();
 
+    const billingDescription = invoice.planType === 'package'
+      ? `edunexus package billing invoice for ${invoice.packageId || 'assigned'} package at ${invoice.currency} ${Number(invoice.packageRate || invoice.totalAmount).toFixed(2)}.`
+      : `edunexus platform subscription invoice for ${invoice.activeStudentsCount} active students at ${invoice.currency} ${Number(invoice.ratePerStudent).toFixed(2)} per student.`;
+
     const expense = this.expenseRepo.create({
       expenseNumber,
       title: `edunexus Platform Invoice – ${invoice.invoiceNumber}`,
-      description:
-        `edunexus platform subscription invoice for ${invoice.activeStudentsCount} active students ` +
-        `at ${invoice.currency} ${Number(invoice.ratePerStudent).toFixed(2)} per student. ` +
-        `Invoice number: ${invoice.invoiceNumber}.`,
+      description: `${billingDescription} Invoice number: ${invoice.invoiceNumber}.`,
       amount: Number(invoice.totalAmount),
       category: ExpenseCategory.ADMINISTRATIVE,
       department: 'edunexus Billing',
@@ -568,6 +652,14 @@ export class BillingService {
          .text('Academic Year:', rightX + 15, periodY)
      .font('Helvetica-Bold')
      .text(calendarInfo.term || calendarInfo.id, rightX + 90, periodY);
+      periodY += 20;
+    }
+
+    if (inv.billingMonth) {
+      doc.font('Helvetica')
+         .text('Month:', rightX + 15, periodY)
+         .font('Helvetica-Bold')
+         .text(inv.billingMonth, rightX + 90, periodY);
     }
 
     doc.y += 50;
@@ -607,26 +699,41 @@ export class BillingService {
        .font('Helvetica');
 
     // Service description
-    const description = termInfo ? 
-      `Educational Services - Term ${termInfo.termNumber}` : 
-      (calendarInfo ? `Educational Services - ${calendarInfo.term}` : 'Educational Services - Academic Period');
+    const periodLabel = inv.billingMonth
+      ? `Month ${inv.billingMonth}`
+      : termInfo
+        ? `Term ${termInfo.termNumber}`
+        : (calendarInfo ? `${calendarInfo.term}` : 'Academic Period');
+    const description = inv.planType === 'package'
+      ? `Package Subscription (${String(inv.packageId || 'assigned').toUpperCase()}) - ${periodLabel}`
+      : `Educational Services - ${periodLabel}`;
     
     doc.text(description, currentX + 10, serviceY + 8, { 
       width: colWidths[0] - 20 
     });
     doc.fontSize(9)
        .fill('#6b7280')
-       .text('Student enrollment and educational platform access', currentX + 10, serviceY + 22, { 
-         width: colWidths[0] - 20 
-       });
+       .text(
+         inv.planType === 'package'
+           ? 'Package billing using assigned school package pricing'
+           : 'Student enrollment and educational platform access',
+         currentX + 10,
+         serviceY + 22,
+         {
+           width: colWidths[0] - 20,
+         },
+       );
 
     currentX += colWidths[0];
 
     // Rate
+    const rateToDisplay = inv.planType === 'package'
+      ? Number(inv.packageRate || inv.totalAmount)
+      : Number(inv.ratePerStudent || 0);
     doc.fill(textColor)
        .fontSize(10)
        .font('Helvetica')
-       .text(`${inv.currency} ${parseFloat(inv.ratePerStudent as any).toFixed(2)}`, 
+       .text(`${inv.currency} ${rateToDisplay.toFixed(2)}`, 
               currentX + 10, serviceY + 12, { 
                 width: colWidths[1] - 20, align: 'center' 
               });
@@ -634,7 +741,8 @@ export class BillingService {
     currentX += colWidths[1];
 
     // Quantity
-    doc.text(inv.activeStudentsCount.toString(), currentX + 10, serviceY + 12, { 
+    const quantityToDisplay = inv.planType === 'package' ? 1 : Number(inv.activeStudentsCount || 0);
+    doc.text(quantityToDisplay.toString(), currentX + 10, serviceY + 12, { 
       width: colWidths[2] - 20, align: 'center' 
     });
 

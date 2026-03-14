@@ -13,15 +13,18 @@ export class SchoolBillingPlan {
   school: School;
 
   // Usage-based price per active student
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   ratePerStudent: number;
+
+  @Column({ type: 'enum', enum: ['per_student', 'package'], default: 'per_student' })
+  planType: 'per_student' | 'package';
 
   @Column({ type: 'enum', enum: ['MWK', 'USD'], default: 'MWK' })
   currency: 'MWK' | 'USD';
 
   // Default billing cadence preference (can still generate per term or per year explicitly)
-  @Column({ type: 'enum', enum: ['per_term', 'per_academic_year'], default: 'per_term' })
-  cadence: 'per_term' | 'per_academic_year';
+  @Column({ type: 'enum', enum: ['monthly', 'per_term', 'per_academic_year'], default: 'per_term' })
+  cadence: 'monthly' | 'per_term' | 'per_academic_year';
 
   @Column({ type: 'boolean', default: true })
   isActive: boolean;

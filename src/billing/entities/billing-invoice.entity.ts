@@ -29,7 +29,22 @@ export class BillingInvoice {
   @JoinColumn({ name: 'academicCalendarId' })
   academicCalendar?: AcademicCalendar | null;
 
+  @Column({ type: 'varchar', length: 7, nullable: true })
+  billingMonth?: string | null;
+
+  @Column({ type: 'enum', enum: ['monthly', 'term', 'academic_calendar'], default: 'term' })
+  billingScope: 'monthly' | 'term' | 'academic_calendar';
+
   // Snapshot of pricing and usage at time of issuance
+  @Column({ type: 'enum', enum: ['per_student', 'package'], default: 'per_student' })
+  planType: 'per_student' | 'package';
+
+  @Column({ type: 'enum', enum: ['normal', 'silver', 'golden'], nullable: true })
+  packageId?: 'normal' | 'silver' | 'golden' | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  packageRate?: number | null;
+
   @Column({ type: 'int' })
   activeStudentsCount: number;
 
