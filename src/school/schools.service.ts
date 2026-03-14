@@ -27,6 +27,81 @@ interface UpdateSchoolDto {
   metadata?: Record<string, any>;
 }
 
+export type PackageId = 'normal' | 'silver' | 'golden';
+
+type PackagePricing = Record<PackageId, number>;
+
+type PackageRoleAccess = {
+  admin: string;
+  teacher: string;
+  student: string;
+  finance: string;
+};
+
+type PackageCatalogItem = {
+  id: PackageId;
+  name: string;
+  description: string;
+  modules: string[];
+  roleAccess: PackageRoleAccess;
+  price: number;
+};
+
+const DEFAULT_PRICING: PackagePricing = {
+  normal: 120,
+  silver: 200,
+  golden: 300,
+};
+
+const NORMAL_MODULES = [
+  'Students',
+  'Teachers',
+  'Courses',
+  'Exams',
+  'Reports',
+  'Class & Schedule Setup',
+  'Notices & Messages',
+];
+
+const BASE_CATALOG: Omit<PackageCatalogItem, 'price'>[] = [
+  {
+    id: 'normal',
+    name: 'Normal Package',
+    description: 'Everything except Finance and Library.',
+    modules: NORMAL_MODULES,
+    roleAccess: {
+      admin: 'All normal modules; no Finance and no Library.',
+      teacher: 'Full teaching modules and reports.',
+      student: 'Full student learning modules and reports.',
+      finance: 'No access in this package.',
+    },
+  },
+  {
+    id: 'silver',
+    name: 'Silver Package',
+    description: 'Normal Package plus Finance.',
+    modules: [...NORMAL_MODULES, 'Finance'],
+    roleAccess: {
+      admin: 'Everything in package except Library.',
+      teacher: 'Full teaching modules and reports.',
+      student: 'Full student learning modules and reports.',
+      finance: 'Full package access including Finance.',
+    },
+  },
+  {
+    id: 'golden',
+    name: 'Golden Package',
+    description: 'Silver Package plus Library.',
+    modules: [...NORMAL_MODULES, 'Finance', 'Library'],
+    roleAccess: {
+      admin: 'Full access including Finance and Library.',
+      teacher: 'Full teaching modules and reports.',
+      student: 'Full student learning modules and reports.',
+      finance: 'Full package access including Finance.',
+    },
+  },
+];
+
 @Injectable()
 export class SchoolsService {
   constructor(
@@ -236,6 +311,111 @@ export class SchoolsService {
     }
 
     return updatedSchool;
+  }
+
+  private extractPricingFromMetadata(metadata?: Record<string, any>): PackagePricing {
+    const candidate = metadata?.packagePricing;
+    return {
+      normal: Number(candidate?.normal) || DEFAULT_PRICING.normal,
+      silver: Number(candidate?.silver) || DEFAULT_PRICING.silver,
+      golden: Number(candidate?.golden) || DEFAULT_PRICING.golden,
+    };
+  }
+
+  private extractAssignedPackage(metadata?: Record<string, any>): PackageId {
+    const raw = metadata?.assignedPackage;
+    if (raw === 'silver' || raw === 'golden' || raw === 'normal') {
+      return raw;
+    }
+    return 'normal';
+  }
+
+  private buildCatalog(pricing: PackagePricing): PackageCatalogItem[] {
+    return BASE_CATALOG.map((pkg) => ({
+      ...pkg,
+      price: pricing[pkg.id],
+    }));
+  }
+
+  async getPackageCatalog() {
+    const anySchool = await this.repo.find({
+      order: { createdAt: 'ASC' },
+      take: 1,
+    }).then((rows) => rows[0]);
+    const pricing = this.extractPricingFromMetadata(anySchool?.metadata);
+    return {
+      currency: 'MK',
+      pricing,
+      packages: this.buildCatalog(pricing),
+    };
+  }
+
+  async getSchoolPackageConfig(schoolId: string) {
+    const school = await this.findOne(schoolId);
+    const pricing = this.extractPricingFromMetadata(school.metadata);
+    const assignedPackage = this.extractAssignedPackage(school.metadata);
+
+    return {
+      schoolId: school.id,
+      schoolName: school.name,
+      assignedPackage,
+      currency: 'MK',
+      pricing,
+      packages: this.buildCatalog(pricing),
+    };
+  }
+
+  async assignPackageToSchool(schoolId: string, packageId: PackageId) {
+    if (!['normal', 'silver', 'golden'].includes(packageId)) {
+      throw new BadRequestException('Invalid package id');
+    }
+    const school = await this.findOne(schoolId);
+    const nextMetadata = {
+      ...(school.metadata || {}),
+      assignedPackage: packageId,
+    };
+    await this.update(schoolId, { metadata: nextMetadata });
+    return this.getSchoolPackageConfig(schoolId);
+  }
+
+  async updatePackagePricing(pricingUpdate: Partial<PackagePricing>) {
+    const currentCatalog = await this.getPackageCatalog();
+    const nextPricing: PackagePricing = {
+      normal: Number(pricingUpdate.normal ?? currentCatalog.pricing.normal),
+      silver: Number(pricingUpdate.silver ?? currentCatalog.pricing.silver),
+      golden: Number(pricingUpdate.golden ?? currentCatalog.pricing.golden),
+    };
+
+    if (
+      !Number.isFinite(nextPricing.normal) || nextPricing.normal < 0 ||
+      !Number.isFinite(nextPricing.silver) || nextPricing.silver < 0 ||
+      !Number.isFinite(nextPricing.golden) || nextPricing.golden < 0
+    ) {
+      throw new BadRequestException('Invalid package prices');
+    }
+
+    const schools = await this.repo.find();
+    if (schools.length === 0) {
+      return {
+        currency: 'MK',
+        pricing: nextPricing,
+        packages: this.buildCatalog(nextPricing),
+      };
+    }
+
+    for (const school of schools) {
+      school.metadata = {
+        ...(school.metadata || {}),
+        packagePricing: nextPricing,
+      };
+    }
+    await this.repo.save(schools);
+
+    return {
+      currency: 'MK',
+      pricing: nextPricing,
+      packages: this.buildCatalog(nextPricing),
+    };
   }
 
   async suspend(id: string) {
