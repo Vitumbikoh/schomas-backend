@@ -426,7 +426,7 @@ export class ExpenseService {
       const totalApprovalTime = expensesWithApprovalTime.reduce((sum, exp) => {
         const createdTime = new Date(exp.createdAt).getTime();
         const approvedTime = new Date(exp.approvedDate).getTime();
-        return sum + (approvedTime - createdTime);
+        return sum + Math.max(0, approvedTime - createdTime);
       }, 0);
       avgApprovalTime = totalApprovalTime / expensesWithApprovalTime.length / (1000 * 60 * 60 * 24); // Convert to days
     }
