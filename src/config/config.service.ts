@@ -12,14 +12,22 @@ export class ConfigService {
       ? '.env.production' 
       : '.env.development';
 
+    let fileConfig: Record<string, string> = {};
     try {
-      this.envConfig = dotenv.parse(fs.readFileSync(envFile));
+      fileConfig = dotenv.parse(fs.readFileSync(envFile));
     } catch (err) {
-      console.warn(`Failed to load ${envFile}, using process.env`);
-      this.envConfig = Object.fromEntries(
-        Object.entries(process.env).filter(([_, value]) => value !== undefined) as [string, string][]
-      );
+      console.warn(`Failed to load ${envFile}, falling back to process.env values.`);
     }
+
+    // Allow runtime environment variables to override file values.
+    const processConfig = Object.fromEntries(
+      Object.entries(process.env).filter(([_, value]) => value !== undefined) as [string, string][],
+    );
+
+    this.envConfig = {
+      ...fileConfig,
+      ...processConfig,
+    };
   }
 
   get(key: string): string {

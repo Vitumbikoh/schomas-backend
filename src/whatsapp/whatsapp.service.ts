@@ -1,565 +1,374 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-  OnModuleInit,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import axios, { AxiosRequestConfig } from 'axios';
 import { Between, Repository } from 'typeorm';
-import qrcode from 'qrcode-terminal';
-import { Client, LocalAuth, Message } from 'whatsapp-web.js';
-import { User } from '../user/entities/user.entity';
+import { ConfigService } from '../config/config.service';
 import { Student } from '../user/entities/student.entity';
 import { Parent } from '../user/entities/parent.entity';
-import { Attendance } from '../attendance/entity/attendance.entity';
-import { ExamResultAggregate } from '../aggregation/entities/exam-result-aggregate.entity';
-import { Notification } from '../notifications/entities/notification.entity';
+import { SendWhatsAppMessageDto } from './dto/send-whatsapp-message.dto';
+import { UserQueryDto } from './dto/user-query.dto';
+import { WhatsAppMessageLog } from './entities/whatsapp-message-log.entity';
 import { FeePayment } from '../finance/entities/fee-payment.entity';
 import { FeeStructure } from '../finance/entities/fee-structure.entity';
-import { ExpectedFee } from '../finance/entities/expected-fee.entity';
+import { ExamResultAggregate } from '../aggregation/entities/exam-result-aggregate.entity';
+import { Attendance } from '../attendance/entity/attendance.entity';
+import { Schedule } from '../schedule/entity/schedule.entity';
 import { Term } from '../settings/entities/term.entity';
-import { ConfigService } from '../config/config.service';
-import { Role } from '../user/enums/role.enum';
+import { Notification } from '../notifications/entities/notification.entity';
 
-type SupportedCommand =
-  | 'hi'
-  | 'help'
-  | 'menu'
-  | 'results'
-  | 'balance'
-  | 'attendance'
-  | 'announcements';
+type CloudApiInboundMessage = {
+  from?: string;
+  type?: string;
+  text?: {
+    body?: string;
+  };
+};
+
+type CloudApiStatusEvent = {
+  id?: string;
+  status?: string;
+  recipient_id?: string;
+};
+
+type StudentIntent = 'balance' | 'results' | 'attendance' | 'timetable' | 'payments' | 'announcements';
+
+type SessionState = {
+  pendingIntent?: StudentIntent;
+  awaitingStudentId: boolean;
+  updatedAt: number;
+};
 
 @Injectable()
-export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
+export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
-  private client: Client | null = null;
-  private clientReady = false;
-  private reconnectTimer: NodeJS.Timeout | null = null;
-  private healthTimer: NodeJS.Timeout | null = null;
-  private pairingCodeRequested = false;
-  private lastKnownState = 'INITIALIZING';
-  private lastEventAt: Date | null = null;
-  private processedMessageIds = new Map<string, number>();
+  private readonly unregisteredNumberReply = 'This number is not registered in EduNexus.';
+  private readonly expiredSessionReply = 'Please send a new message to start a session.';
+  private readonly sessionMap = new Map<string, SessionState>();
+  private readonly webhookQueue: unknown[] = [];
+  private queueProcessing = false;
 
   constructor(
-    @InjectRepository(User)
-    private readonly userRepository: Repository<User>,
     @InjectRepository(Student)
     private readonly studentRepository: Repository<Student>,
     @InjectRepository(Parent)
     private readonly parentRepository: Repository<Parent>,
-    @InjectRepository(Attendance)
-    private readonly attendanceRepository: Repository<Attendance>,
-    @InjectRepository(ExamResultAggregate)
-    private readonly examResultRepository: Repository<ExamResultAggregate>,
-    @InjectRepository(Notification)
-    private readonly notificationRepository: Repository<Notification>,
+    @InjectRepository(WhatsAppMessageLog)
+    private readonly messageLogRepository: Repository<WhatsAppMessageLog>,
     @InjectRepository(FeePayment)
     private readonly feePaymentRepository: Repository<FeePayment>,
     @InjectRepository(FeeStructure)
     private readonly feeStructureRepository: Repository<FeeStructure>,
-    @InjectRepository(ExpectedFee)
-    private readonly expectedFeeRepository: Repository<ExpectedFee>,
+    @InjectRepository(ExamResultAggregate)
+    private readonly examResultRepository: Repository<ExamResultAggregate>,
+    @InjectRepository(Attendance)
+    private readonly attendanceRepository: Repository<Attendance>,
+    @InjectRepository(Schedule)
+    private readonly scheduleRepository: Repository<Schedule>,
     @InjectRepository(Term)
     private readonly termRepository: Repository<Term>,
+    @InjectRepository(Notification)
+    private readonly notificationRepository: Repository<Notification>,
     private readonly configService: ConfigService,
   ) {}
 
-  async onModuleInit(): Promise<void> {
-    if (!this.isFeatureEnabled()) {
-      this.logger.warn('WhatsApp integration is disabled. Set WHATSAPP_ENABLED=true to enable.');
-      return;
-    }
-
-    await this.initializeClient();
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    if (this.healthTimer) {
-      clearInterval(this.healthTimer);
-      this.healthTimer = null;
-    }
-
-    if (this.client) {
-      try {
-        await this.client.destroy();
-      } catch (error) {
-        this.logger.warn(`Failed to destroy WhatsApp client cleanly: ${error?.message || error}`);
-      }
-      this.client = null;
-      this.clientReady = false;
-      this.lastKnownState = 'DESTROYED';
-    }
-  }
-
-  getStatus() {
-    return {
-      enabled: this.isFeatureEnabled(),
-      ready: this.clientReady,
-      hasClient: !!this.client,
-      state: this.lastKnownState,
-      lastEventAt: this.lastEventAt,
-    };
+  verifyWebhookToken(mode?: string, token?: string): boolean {
+    const expectedToken = this.getRequiredConfig('WHATSAPP_VERIFY_TOKEN');
+    return mode === 'subscribe' && token === expectedToken;
   }
 
   isClientReady(): boolean {
-    return this.clientReady;
+    return Boolean(this.getOptionalConfig('WHATSAPP_API_TOKEN') || this.getOptionalConfig('WHATSAPP_ACCESS_TOKEN'));
   }
 
-  async sendWhatsAppMessage(phone: string, message: string): Promise<{ to: string; messageId: string }> {
-    if (!this.client || !this.clientReady) {
-      throw new ServiceUnavailableException('WhatsApp client is not ready. Scan QR and wait for READY state.');
-    }
-
-    const jid = this.toWhatsAppJid(phone);
-    const result = await this.client.sendMessage(jid, message);
+  async sendWhatsAppMessage(phone: string, message: string): Promise<{ to: string; messageId?: string }> {
+    const result = await this.sendMessage({
+      to: phone,
+      text: message,
+      enforceSessionWindow: true,
+    });
 
     return {
-      to: jid,
-      messageId: String(result.id?._serialized || ''),
+      to: this.normalizePhoneDigits(phone),
+      messageId: result.messageId,
     };
   }
 
-  async sendResultsPublishedNotification(phone: string, studentName?: string) {
-    const name = (studentName || 'Student').trim();
-    const text = [
-      'EduNexus Notification',
-      '',
-      `Hello ${name},`,
-      '',
-      'Your exam results are now available on EduNexus.',
-      'Please log in to view your full performance report.',
-    ].join('\n');
-
-    return this.sendWhatsAppMessage(phone, text);
-  }
-
-  async sendFeeReminderNotification(phone: string, studentName?: string, customMessage?: string) {
-    const name = (studentName || 'Student').trim();
-    const text = customMessage?.trim()
-      ? customMessage.trim()
-      : [
-          'EduNexus Fee Reminder',
-          '',
-          `Hello ${name},`,
-          '',
-          'This is a reminder to clear your outstanding school fees balance.',
-          'Contact the finance office for assistance if needed.',
-        ].join('\n');
-
-    return this.sendWhatsAppMessage(phone, text);
-  }
-
-  async sendAttendanceAlertNotification(phone: string, studentName?: string, customMessage?: string) {
-    const name = (studentName || 'Student').trim();
-    const text = customMessage?.trim()
-      ? customMessage.trim()
-      : [
-          'EduNexus Attendance Alert',
-          '',
-          `Hello ${name},`,
-          '',
-          'Your attendance has fallen below the expected threshold.',
-          'Please contact your class teacher for guidance.',
-        ].join('\n');
-
-    return this.sendWhatsAppMessage(phone, text);
-  }
-
-  async sendAnnouncement(message: string, schoolId?: string, targetRoles?: string[]) {
-    const roles = (targetRoles || []).map((role) => role.toUpperCase()).filter(Boolean);
-
-    const qb = this.userRepository
-      .createQueryBuilder('user')
-      .leftJoinAndSelect('user.student', 'student')
-      .leftJoinAndSelect('user.teacher', 'teacher')
-      .leftJoinAndSelect('user.parent', 'parent')
-      .leftJoinAndSelect('user.finance', 'finance')
-      .where('user.isActive = :active', { active: true });
-
-    if (schoolId) {
-      qb.andWhere('user.schoolId = :schoolId', { schoolId });
+  enqueueWebhookPayload(payload: unknown): void {
+    this.webhookQueue.push(payload);
+    if (!this.queueProcessing) {
+      void this.processWebhookQueue();
     }
+  }
 
-    if (roles.length > 0) {
-      qb.andWhere('user.role IN (:...roles)', { roles });
-    }
+  private async processWebhookQueue(): Promise<void> {
+    this.queueProcessing = true;
 
-    const users = await qb.getMany();
-    const recipients = users
-      .map((user) => ({ user, phone: this.extractUserPhone(user) }))
-      .filter((entry) => !!entry.phone);
-
-    let sent = 0;
-    let failed = 0;
-
-    for (const recipient of recipients) {
+    while (this.webhookQueue.length > 0) {
+      const payload = this.webhookQueue.shift();
       try {
-        await this.sendWhatsAppMessage(recipient.phone, `EduNexus Announcement\n\n${message}`);
-        sent += 1;
+        await this.handleWebhookPayload(payload);
       } catch (error) {
-        failed += 1;
-        this.logger.warn(`Failed to send broadcast to ${recipient.user.id}: ${error?.message || error}`);
+        const details = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Webhook queue worker failed: ${details}`);
       }
     }
 
-    return {
-      totalRecipients: recipients.length,
-      sent,
-      failed,
-    };
+    this.queueProcessing = false;
   }
 
-  private async initializeClient(): Promise<void> {
-    const authPath = this.getOptionalConfig('WHATSAPP_AUTH_PATH') || '.wwebjs_auth';
-    const clientId = this.getOptionalConfig('WHATSAPP_CLIENT_ID') || 'edunexus';
-    const isHeadless = this.getOptionalConfig('WHATSAPP_HEADLESS') !== 'false';
+  async handleWebhookPayload(payload: unknown): Promise<void> {
+    const messages = this.extractIncomingMessages(payload);
+    const statuses = this.extractStatusEvents(payload);
 
-    this.client = new Client({
-      authStrategy: new LocalAuth({
-        clientId,
-        dataPath: authPath,
-      }),
-      puppeteer: {
-        headless: isHeadless,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      },
-    });
-
-    this.logger.log('Registering WhatsApp client event listeners...');
-
-    this.client.on('qr', async (qr: string) => {
-      this.touchEvent('QR');
-      this.logger.warn('WhatsApp QR generated. Scan with your phone to authenticate.');
-      this.renderQr(qr);
-
-      const pairingPhone = this.normalizePhoneDigits(this.getOptionalConfig('WHATSAPP_PAIRING_NUMBER') || '');
-      if (pairingPhone && !this.pairingCodeRequested) {
-        this.pairingCodeRequested = true;
-        try {
-          const code = await (this.client as any)?.requestPairingCode?.(pairingPhone);
-          if (code) {
-            this.logger.warn(`WhatsApp pairing code (alternative to QR): ${code}`);
-          }
-        } catch (error) {
-          this.logger.warn(`Failed to generate pairing code: ${error?.message || error}`);
-        }
+    if (messages.length === 0) {
+      if (statuses.length > 0) {
+        const statusSummary = statuses
+          .map((status) => `${status.status || 'unknown'}:${status.recipient_id || 'unknown'}`)
+          .join(', ');
+        this.logger.log(`Webhook status update(s): ${statusSummary}`);
+      } else {
+        this.logger.log('Webhook received without inbound user messages (non-message event).');
       }
-    });
-
-    this.client.on('ready', () => {
-      this.touchEvent('READY');
-      this.clientReady = true;
-      this.lastKnownState = 'CONNECTED';
-      this.logger.log('WhatsApp client is ready.');
-      this.startHealthChecks();
-    });
-
-    this.client.on('authenticated', () => {
-      this.touchEvent('AUTHENTICATED');
-      this.logger.log('WhatsApp client authenticated successfully.');
-    });
-
-    this.client.on('auth_failure', (msg: string) => {
-      this.touchEvent('AUTH_FAILURE');
-      this.clientReady = false;
-      this.lastKnownState = 'AUTH_FAILURE';
-      this.logger.error(`WhatsApp authentication failed: ${msg}`);
-    });
-
-    this.client.on('change_state', (state: string) => {
-      this.touchEvent(`STATE_${state}`);
-      this.lastKnownState = state;
-      this.logger.log(`WhatsApp state changed: ${state}`);
-    });
-
-    this.client.on('disconnected', (reason: string) => {
-      this.touchEvent('DISCONNECTED');
-      this.clientReady = false;
-      this.lastKnownState = 'DISCONNECTED';
-      this.logger.warn(`WhatsApp disconnected: ${reason}`);
-      this.scheduleReconnect();
-    });
-
-    this.client.on('message', async (message: Message) => {
-      try {
-        await this.handleIncomingMessage(message, 'message');
-      } catch (error) {
-        this.logger.error(`Failed handling incoming WhatsApp command: ${error?.message || error}`);
-      }
-    });
-
-    this.client.on('message_create', async (message: Message) => {
-      try {
-        await this.handleIncomingMessage(message, 'message_create');
-      } catch (error) {
-        this.logger.error(`Failed handling incoming WhatsApp command via message_create: ${error?.message || error}`);
-      }
-    });
-
-    await this.client.initialize();
-  }
-
-  private scheduleReconnect() {
-    if (this.reconnectTimer) {
       return;
     }
 
-    this.reconnectTimer = setTimeout(async () => {
-      this.reconnectTimer = null;
-      this.logger.log('Attempting WhatsApp reconnect...');
-      await this.onModuleDestroy();
-      await this.initializeClient();
-    }, 7000);
-  }
+    this.logger.log(`Webhook received ${messages.length} inbound WhatsApp message(s).`);
 
-  private startHealthChecks(): void {
-    if (this.healthTimer) {
-      clearInterval(this.healthTimer);
+    for (const item of messages) {
+      const from = this.normalizePhoneDigits(item.from || '');
+      if (!from) {
+        this.logger.warn('Skipping webhook message with missing sender phone.');
+        continue;
+      }
+
+      const query: UserQueryDto = {
+        from,
+        text: String(item.text?.body || '').trim(),
+        messageType: String(item.type || 'unknown').toLowerCase(),
+      };
+
+      this.logger.log(`Processing inbound message from ${from} of type ${query.messageType}.`);
+      await this.handleIncomingUserQuery(query);
     }
-
-    this.healthTimer = setInterval(async () => {
-      if (!this.client) {
-        return;
-      }
-
-      try {
-        const state = await (this.client as any).getState?.();
-        if (state) {
-          this.lastKnownState = String(state);
-        }
-        this.logger.log(`WhatsApp heartbeat: ready=${this.clientReady} state=${this.lastKnownState}`);
-      } catch (error) {
-        this.logger.warn(`WhatsApp heartbeat failed: ${error?.message || error}`);
-      }
-    }, 60_000);
   }
 
-  private touchEvent(eventName: string): void {
-    this.lastEventAt = new Date();
-    this.logger.debug(`WhatsApp event: ${eventName}`);
-  }
+  async handleIncomingUserQuery(query: UserQueryDto): Promise<void> {
+    const senderPhone = this.normalizePhoneDigits(query.from);
+    const messageType = query.messageType || 'unknown';
+    const text = query.text || '';
 
-  private renderQr(qr: string): void {
-    const small = this.getOptionalConfig('WHATSAPP_QR_SMALL') !== 'false';
+    await this.logMessage(senderPhone, this.toMessageType(messageType, 'incoming'), text || '[non-text-message]');
 
-    qrcode.generate(qr, { small }, (qrText: string) => {
-      // eslint-disable-next-line no-console
-      console.log(`\n${qrText}\n`);
-    });
-
-    this.logger.warn('If QR appears wrapped, increase terminal width or use WHATSAPP_PAIRING_NUMBER for pairing code mode.');
-  }
-
-  private async handleIncomingMessage(message: Message, source: 'message' | 'message_create'): Promise<void> {
-    this.touchEvent(`INBOUND_${source}`);
-
-    this.logger.debug(
-      `[${source}] inbound envelope from=${message.from} to=${message.to} fromMe=${message.fromMe} type=${(message as any)?.type || 'unknown'} body=${JSON.stringify(String(message.body || ''))}`,
-    );
-
-    const allowSelfMessages = this.getOptionalConfig('WHATSAPP_ALLOW_SELF_MESSAGES') === 'true';
-
-    const messageId = String(message.id?._serialized || '');
-    if (messageId) {
-      const seenAt = this.processedMessageIds.get(messageId);
-      if (seenAt && Date.now() - seenAt < 5 * 60 * 1000) {
-        this.logger.debug(`[${source}] skipped duplicate message id=${messageId}`);
-        return;
-      }
-      this.processedMessageIds.set(messageId, Date.now());
-    }
-
-    if (this.processedMessageIds.size > 5000) {
-      const cutoff = Date.now() - 10 * 60 * 1000;
-      for (const [id, ts] of this.processedMessageIds.entries()) {
-        if (ts < cutoff) {
-          this.processedMessageIds.delete(id);
-        }
-      }
-    }
-
-    if (message.fromMe && !allowSelfMessages) {
-      this.logger.debug(`[${source}] ignored fromMe message (set WHATSAPP_ALLOW_SELF_MESSAGES=true to test self-chat).`);
+    const registered = await this.isRegisteredPhoneNumber(senderPhone);
+    if (!registered) {
+      this.logger.warn(`Inbound sender ${senderPhone} is not registered in student/parent records.`);
+      await this.sendPlainTextReply(senderPhone, this.unregisteredNumberReply, false);
       return;
     }
 
-    if (!this.isSupportedPersonalAddress(message.from)) {
-      this.logger.debug(`[${source}] ignored non-personal chat: ${message.from}`);
+    const hasActiveSession = await this.hasActiveSessionWindow(senderPhone);
+    if (!hasActiveSession) {
+      this.logger.warn(`Inbound sender ${senderPhone} is outside the 24-hour active session.`);
+      await this.sendPlainTextReply(senderPhone, this.expiredSessionReply, false);
       return;
     }
 
-    const senderIdentifiers = await this.extractSenderIdentifiers(message);
-    this.logger.debug(`[${source}] sender identifiers: ${senderIdentifiers.join(', ')}`);
-
-    const incomingPhone = senderIdentifiers[0] || message.from.split('@')[0] || '';
-    this.logger.log(`[${source}] Incoming WhatsApp message from ${incomingPhone}: ${String(message.body || '').trim()}`);
-
-    const user = await this.resolveUserByIdentifiers(senderIdentifiers);
-
-    if (!user) {
-      this.logger.warn(`No registered EduNexus user matched incoming number: ${incomingPhone}`);
-      await message.reply('This number is not registered in EduNexus.');
-      return;
-    }
-
-    const command = this.parseCommand(message.body);
-
-    let reply = '';
-    switch (command) {
-      case 'hi':
-      case 'help':
-      case 'menu':
-        reply = this.buildMenuMessage(user);
-        break;
-      case 'results':
-        reply = await this.buildResultsMessage(user);
-        break;
-      case 'balance':
-        reply = await this.buildBalanceMessage(user);
-        break;
-      case 'attendance':
-        reply = await this.buildAttendanceMessage(user);
-        break;
-      case 'announcements':
-        reply = await this.buildAnnouncementsMessage(user);
-        break;
-      default:
-        reply = ['Unknown command.', '', this.buildMenuMessage(user)].join('\n');
-    }
-
-    await message.reply(reply);
+    const reply = await this.routeStudentMessage(senderPhone, text);
+    await this.sendPlainTextReply(senderPhone, reply, false);
   }
 
-  private parseCommand(raw: string): SupportedCommand | '' {
-    const command = String(raw || '').trim().toLowerCase();
-    if (['1', 'results'].includes(command)) return 'results';
-    if (['2', 'balance'].includes(command)) return 'balance';
-    if (['3', 'attendance'].includes(command)) return 'attendance';
-    if (['4', 'announcements'].includes(command)) return 'announcements';
-    if (['hi', 'hello', 'hie'].includes(command)) return 'hi';
-    if (['help'].includes(command)) return 'help';
-    if (['menu'].includes(command)) return 'menu';
-    return '';
-  }
+  async sendMessage(dto: SendWhatsAppMessageDto): Promise<{ success: boolean; messageId?: string }> {
+    const to = this.normalizePhoneDigits(dto.to);
+    const enforceWindow = dto.enforceSessionWindow !== false;
 
-  private isSupportedPersonalAddress(address: string): boolean {
-    return address.endsWith('@c.us') || address.endsWith('@lid');
-  }
-
-  private async extractSenderIdentifiers(message: Message): Promise<string[]> {
-    const set = new Set<string>();
-
-    const fromId = String(message.from || '').split('@')[0] || '';
-    if (fromId) {
-      set.add(fromId);
+    if (!to) {
+      throw new Error('A valid destination phone number is required.');
     }
 
-    // For @lid addresses, contact.number often carries the original phone number.
+    if (enforceWindow) {
+      const hasSession = await this.hasActiveSessionWindow(to);
+      if (!hasSession) {
+        await this.logMessage(to, 'outbound_failed', this.expiredSessionReply);
+        return { success: false };
+      }
+    }
+
+    const payload = this.buildOutboundPayload(dto, to);
+    this.logger.log(`Sending outbound WhatsApp ${dto.templateName ? 'template' : 'text'} message to ${to}.`);
+
     try {
-      const contact: any = await (message as any).getContact?.();
-      const possibleValues = [
-        contact?.number,
-        contact?.phoneNumber,
-        contact?.id?.user,
-        contact?.userid,
-      ];
+      const response = await this.postToCloudApi(payload);
+      const messageId = response?.messages?.[0]?.id as string | undefined;
+      this.logger.log(`Outbound WhatsApp send succeeded for ${to}. Message ID: ${messageId || 'n/a'}`);
 
-      for (const value of possibleValues) {
-        const normalized = String(value || '').trim();
-        if (normalized) {
-          set.add(normalized);
-        }
-      }
+      await this.logMessage(to, 'outgoing_api', dto.text || dto.templateName || '[template-message]');
+      return { success: true, messageId };
     } catch (error) {
-      this.logger.debug(`Failed to read contact details for sender resolution: ${error?.message || error}`);
-    }
+      const details = axios.isAxiosError(error)
+        ? `HTTP ${error.response?.status || 'n/a'} ${JSON.stringify(error.response?.data || {})}`
+        : error instanceof Error
+          ? error.message
+          : String(error);
 
-    return Array.from(set);
+      this.logger.error(`Outbound WhatsApp send failed for ${to}: ${details}`);
+      await this.logMessage(to, 'outbound_failed', details.slice(0, 1000));
+      throw error;
+    }
   }
 
-  private async resolveUserByIdentifiers(identifiers: string[]): Promise<User | null> {
-    for (const candidate of identifiers) {
-      const user = await this.resolveUserByPhone(candidate);
-      if (user) {
-        return user;
+  private async routeStudentMessage(senderPhone: string, incomingText: string): Promise<string> {
+    this.cleanupStaleSession(senderPhone);
+
+    const text = String(incomingText || '').trim();
+    const normalized = text.toLowerCase();
+    const context = this.sessionMap.get(senderPhone);
+
+    if (this.isMenuRequest(normalized)) {
+      this.clearSession(senderPhone);
+      return this.buildMenuMessage();
+    }
+
+    const numericIntent = this.parseNumericIntent(normalized);
+    if (numericIntent) {
+      return this.resolveIntentForSender(senderPhone, numericIntent);
+    }
+
+    if (context?.awaitingStudentId && context.pendingIntent) {
+      const student = await this.resolveStudentForSenderByStudentId(senderPhone, text);
+      if (!student) {
+        return 'Student ID not found for this phone number. Reply with a valid student ID exactly as registered (for example: STU1001).';
       }
-    }
-    return null;
-  }
 
-  private buildMenuMessage(user: User): string {
-    const name = this.getUserDisplayName(user);
+      this.clearSession(senderPhone);
+      return this.buildIntentResponse(context.pendingIntent, student);
+    }
+
     return [
-      'Welcome to EduNexus WhatsApp Assistant',
+      'Please use the numeric menu options.',
       '',
-      `Hello ${name}`,
-      '',
-      'Reply with a command:',
-      '1 results',
-      '2 balance',
-      '3 attendance',
-      '4 announcements',
+      this.buildMenuMessage(),
     ].join('\n');
   }
 
-  private async buildResultsMessage(user: User): Promise<string> {
-    const student = await this.resolveStudentForUser(user);
-    if (!student) {
-      return 'Results are available for student-linked accounts only.';
+  private async resolveIntentForSender(senderPhone: string, intent: StudentIntent): Promise<string> {
+    const students = await this.resolveStudentsForSender(senderPhone);
+
+    if (students.length === 0) {
+      return this.unregisteredNumberReply;
     }
 
-    const results = await this.examResultRepository
-      .createQueryBuilder('result')
-      .leftJoinAndSelect('result.course', 'course')
-      .leftJoinAndSelect('result.term', 'term')
-      .where('result.studentId = :studentId', { studentId: student.id })
-      .andWhere('result.schoolId = :schoolId', { schoolId: student.schoolId })
-      .andWhere('term.resultsPublished = true')
-      .orderBy('term.endDate', 'DESC')
-      .addOrderBy('course.name', 'ASC')
-      .take(8)
+    if (students.length === 1) {
+      return this.buildIntentResponse(intent, students[0]);
+    }
+
+    this.sessionMap.set(senderPhone, {
+      pendingIntent: intent,
+      awaitingStudentId: true,
+      updatedAt: Date.now(),
+    });
+
+    const listed = students
+      .slice(0, 10)
+      .map((student, index) => `${index + 1}. ${student.studentId} - ${student.firstName} ${student.lastName}`)
+      .join('\n');
+
+    return [
+      'Multiple students are linked to this number.',
+      'Reply with the Student ID to continue.',
+      '',
+      listed,
+    ].join('\n');
+  }
+
+  private async buildIntentResponse(intent: StudentIntent, student: Student): Promise<string> {
+    switch (intent) {
+      case 'balance':
+        return this.buildOutstandingBalanceMessage(student);
+      case 'results':
+        return this.buildExamResultsMessage(student);
+      case 'attendance':
+        return this.buildAttendanceMessage(student);
+      case 'timetable':
+        return this.buildTimetableMessage(student);
+      case 'payments':
+        return this.buildPaymentHistoryMessage(student);
+      case 'announcements':
+        return this.buildAnnouncementsMessage(student);
+      default:
+        return this.buildMenuMessage();
+    }
+  }
+
+  private async buildPaymentHistoryMessage(student: Student): Promise<string> {
+    const payments = await this.feePaymentRepository
+      .createQueryBuilder('payment')
+      .leftJoinAndSelect('payment.term', 'term')
+      .where('payment.studentId = :studentId', { studentId: student.id })
+      .andWhere('payment.schoolId = :schoolId', { schoolId: student.schoolId || null })
+      .andWhere('payment.status = :status', { status: 'completed' })
+      .orderBy('payment.paymentDate', 'DESC')
+      .take(5)
       .getMany();
 
-    if (!results.length) {
+    if (!payments.length) {
       return [
-        'EduNexus Results',
+        'Payment History',
         '',
-        `Hello ${student.firstName},`,
-        '',
-        'No published results are available yet.',
+        `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
+        'No completed payment records found.',
       ].join('\n');
     }
 
-    const lines = results.map((row) => {
-      const score = row.finalPercentage ? Number(row.finalPercentage).toFixed(0) : 'N/A';
-      return `${row.course?.name || 'Course'}: ${score}`;
+    const lines = payments.map((payment) => {
+      const amount = Number(payment.amount || 0).toLocaleString();
+      const date = payment.paymentDate ? new Date(payment.paymentDate).toISOString().slice(0, 10) : 'n/a';
+      const termLabel = payment.term?.termNumber ? `T${payment.term.termNumber}` : 'Term';
+      const method = payment.paymentMethod || 'payment';
+      return `${date} ${termLabel}: MWK ${amount} via ${method}`;
     });
 
     return [
-      'EduNexus Notification',
+      'Payment History (Latest 5)',
       '',
-      `Hello ${student.firstName} ${student.lastName}`,
-      '',
-      'Your latest results:',
+      `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
       ...lines,
     ].join('\n');
   }
 
-  private async buildBalanceMessage(user: User): Promise<string> {
-    const student = await this.resolveStudentForUser(user);
-    if (!student) {
-      return 'Balance lookup is available for student-linked accounts only.';
+  private async buildAnnouncementsMessage(student: Student): Promise<string> {
+    const announcements = await this.notificationRepository
+      .createQueryBuilder('n')
+      .where('n.schoolId = :schoolId', { schoolId: student.schoolId || null })
+      .andWhere(`(n.targetRoles IS NULL OR n.targetRoles @> :studentRole::jsonb OR n.targetRoles @> :parentRole::jsonb)`, {
+        studentRole: JSON.stringify(['STUDENT']),
+        parentRole: JSON.stringify(['PARENT']),
+      })
+      .orderBy('n.createdAt', 'DESC')
+      .take(3)
+      .getMany();
+
+    if (!announcements.length) {
+      return [
+        'Latest Announcements',
+        '',
+        'No announcements are available right now.',
+      ].join('\n');
     }
 
-    // Prefer historical rollup totals used by financial details screens.
+    const lines = announcements.map((item, index) => {
+      const message = String(item.message || '').trim();
+      const compact = message.length > 100 ? `${message.slice(0, 97)}...` : message;
+      return `${index + 1}. ${item.title}${compact ? ` - ${compact}` : ''}`;
+    });
+
+    return [
+      'Latest Announcements',
+      '',
+      ...lines,
+    ].join('\n');
+  }
+
+  private async buildOutstandingBalanceMessage(student: Student): Promise<string> {
     try {
       const hist = await this.studentRepository.query(
         `
@@ -574,75 +383,40 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
         [student.id, student.schoolId || null],
       );
 
-      const histRow = hist?.[0] || {};
-      const histExpected = Number(histRow.total_expected || 0);
-      const histPaid = Number(histRow.total_paid || 0);
-      const histOutstanding = Number(histRow.total_outstanding || 0);
+      const row = hist?.[0] || {};
+      const expected = Number(row.total_expected || 0);
+      const paid = Number(row.total_paid || 0);
+      const outstanding = Number(row.total_outstanding || 0);
 
-      if (histExpected > 0 || histPaid > 0 || histOutstanding > 0) {
+      if (expected > 0 || paid > 0 || outstanding > 0) {
         return [
-          'EduNexus Fee Status',
+          'Outstanding Balance',
           '',
-          `Hello ${student.firstName} ${student.lastName},`,
-          '',
-          `Your current school fees balance is MK ${Math.max(histOutstanding, 0).toLocaleString()}.`,
+          `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
+          `Total Expected: MWK ${Math.max(expected, 0).toLocaleString()}`,
+          `Total Paid: MWK ${Math.max(paid, 0).toLocaleString()}`,
+          `Outstanding: MWK ${Math.max(outstanding, 0).toLocaleString()}`,
         ].join('\n');
       }
     } catch (error) {
-      this.logger.warn(`Historical balance lookup failed, falling back to term-only calculation: ${error?.message || error}`);
+      this.logger.warn(
+        `Historical balance lookup failed, using computed fallback: ${error instanceof Error ? error.message : error}`,
+      );
     }
 
-    // If historical snapshots are missing/stale, compute overall outstanding using
-    // term-filtered expected fees (from enrollment onwards) minus total completed payments.
-    const allTermOutstanding = await this.computeAllTermOutstanding(student);
-    if (allTermOutstanding !== null) {
-      return [
-        'EduNexus Fee Status',
-        '',
-        `Hello ${student.firstName} ${student.lastName},`,
-        '',
-        `Your current school fees balance is MK ${allTermOutstanding.toLocaleString()}.`,
-      ].join('\n');
-    }
-
-    const term = await this.resolveReferenceTerm(student.schoolId);
-    if (!term) {
-      return 'No active or historical term was found for your school.';
-    }
-
-    const expectedRaw = await this.expectedFeeRepository
-      .createQueryBuilder('fee')
-      .select('COALESCE(SUM(fee.amount), 0)', 'totalExpected')
-      .where('fee.schoolId = :schoolId', { schoolId: student.schoolId })
-      .andWhere('fee.termId = :termId', { termId: term.id })
-      .andWhere('fee.isActive = :isActive', { isActive: true })
-      .andWhere('(fee.classId IS NULL OR fee.classId = :classId)', { classId: student.classId || null })
-      .getRawOne<{ totalExpected: string }>();
-
-    const paidRaw = await this.feePaymentRepository
-      .createQueryBuilder('payment')
-      .select('COALESCE(SUM(payment.amount), 0)', 'totalPaid')
-      .where('payment.studentId = :studentId', { studentId: student.id })
-      .andWhere('payment.termId = :termId', { termId: term.id })
-      .andWhere('payment.status = :status', { status: 'completed' })
-      .getRawOne<{ totalPaid: string }>();
-
-    const totalExpected = Number(expectedRaw?.totalExpected || 0);
-    const totalPaid = Number(paidRaw?.totalPaid || 0);
-    const outstanding = Math.max(totalExpected - totalPaid, 0);
+    const computedOutstanding = await this.computeAllTermOutstanding(student);
 
     return [
-      'EduNexus Fee Status',
+      'Outstanding Balance',
       '',
-      `Hello ${student.firstName} ${student.lastName},`,
-      '',
-      `Your current school fees balance is MK ${outstanding.toLocaleString()}.`,
+      `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
+      `Outstanding: MWK ${Math.max(computedOutstanding, 0).toLocaleString()}`,
     ].join('\n');
   }
 
-  private async computeAllTermOutstanding(student: Student): Promise<number | null> {
+  private async computeAllTermOutstanding(student: Student): Promise<number> {
     if (!student.schoolId) {
-      return null;
+      return 0;
     }
 
     const terms = await this.termRepository
@@ -654,7 +428,7 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
       .getMany();
 
     if (!terms.length) {
-      return null;
+      return 0;
     }
 
     let filteredTerms = terms;
@@ -673,11 +447,10 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    if (!filteredTerms.length) {
-      return null;
-    }
-
     const termIds = filteredTerms.map((term) => term.id);
+    if (!termIds.length) {
+      return 0;
+    }
 
     const expectedRaw = await this.feeStructureRepository
       .createQueryBuilder('fee')
@@ -699,16 +472,48 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
 
     const totalExpected = Number(expectedRaw?.totalExpected || 0);
     const totalPaid = Number(paidRaw?.totalPaid || 0);
-    const outstanding = Math.max(totalExpected - totalPaid, 0);
 
-    this.logger.debug(
-      `All-term balance fallback student=${student.id} expected=${totalExpected} paid=${totalPaid} outstanding=${outstanding} terms=${termIds.length}`,
-    );
-
-    return outstanding;
+    return Math.max(totalExpected - totalPaid, 0);
   }
 
-  private async buildAttendanceMessage(user: User): Promise<string> {
+  private async buildExamResultsMessage(student: Student): Promise<string> {
+    const results = await this.examResultRepository
+      .createQueryBuilder('result')
+      .leftJoinAndSelect('result.course', 'course')
+      .leftJoinAndSelect('result.term', 'term')
+      .where('result.studentId = :studentId', { studentId: student.id })
+      .andWhere('result.schoolId = :schoolId', { schoolId: student.schoolId || null })
+      .andWhere('term.resultsPublished = true')
+      .orderBy('term.endDate', 'DESC')
+      .addOrderBy('course.name', 'ASC')
+      .take(8)
+      .getMany();
+
+    if (!results.length) {
+      return [
+        'Exam Results',
+        '',
+        `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
+        'No published results found yet.',
+      ].join('\n');
+    }
+
+    const lines = results.map((row) => {
+      const score = row.finalPercentage ? Number(row.finalPercentage).toFixed(0) : 'N/A';
+      const grade = row.finalGradeCode || '-';
+      const term = row.term?.termNumber ? `T${row.term.termNumber}` : 'Term';
+      return `${term} ${row.course?.name || 'Course'}: ${score}% (${grade})`;
+    });
+
+    return [
+      'Exam Results',
+      '',
+      `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
+      ...lines,
+    ].join('\n');
+  }
+
+  private async buildAttendanceMessage(student: Student): Promise<string> {
     const fromDate = new Date();
     fromDate.setDate(1);
     fromDate.setHours(0, 0, 0, 0);
@@ -718,213 +523,341 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
 
     const records = await this.attendanceRepository.find({
       where: {
-        student: { id: user.id },
+        student: { id: student.userId },
         date: Between(fromDate, toDate),
       },
       order: { date: 'DESC' },
     });
 
     if (!records.length) {
-      return 'No attendance records found for this month.';
+      return [
+        'Attendance',
+        '',
+        `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
+        'No attendance records found for this month.',
+      ].join('\n');
     }
 
     const present = records.filter((entry) => entry.isPresent).length;
     const total = records.length;
+    const percentage = Math.round((present / total) * 100);
 
-    return ['EduNexus Attendance', '', `You attended ${present} out of ${total} classes this month.`].join('\n');
+    return [
+      'Attendance',
+      '',
+      `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
+      `Present: ${present}/${total} (${percentage}%)`,
+    ].join('\n');
   }
 
-  private async buildAnnouncementsMessage(user: User): Promise<string> {
-    const role = String(user.role || '').toUpperCase();
-    const announcements = await this.notificationRepository
-      .createQueryBuilder('n')
-      .where('n.schoolId = :schoolId', { schoolId: user.schoolId })
-      .andWhere('(n.targetRoles IS NULL OR n.targetRoles @> :role::jsonb)', {
-        role: JSON.stringify([role]),
-      })
-      .orderBy('n.createdAt', 'DESC')
-      .take(3)
+  private async buildTimetableMessage(student: Student): Promise<string> {
+    if (!student.classId) {
+      return [
+        'Timetable',
+        '',
+        `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
+        'No class is currently assigned for this student.',
+      ].join('\n');
+    }
+
+    const rows = await this.scheduleRepository
+      .createQueryBuilder('schedule')
+      .leftJoinAndSelect('schedule.course', 'course')
+      .leftJoinAndSelect('schedule.class', 'class')
+      .where('class.id = :classId', { classId: student.classId })
+      .andWhere('schedule.isActive = :active', { active: true })
+      .orderBy('schedule.day', 'ASC')
+      .addOrderBy('schedule.startTime', 'ASC')
+      .take(8)
       .getMany();
 
-    if (!announcements.length) {
-      return 'No announcements are available right now.';
+    if (!rows.length) {
+      return [
+        'Timetable',
+        '',
+        `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
+        'No active timetable entries found.',
+      ].join('\n');
     }
 
-    const lines = announcements.map((item, index) => `${index + 1}. ${item.title}`);
-    return ['EduNexus Announcements', '', ...lines].join('\n');
+    const lines = rows.map((row) => `${row.day} ${row.startTime}-${row.endTime}: ${row.course?.name || 'Course'}`);
+
+    return [
+      'Timetable',
+      '',
+      `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
+      ...lines,
+    ].join('\n');
   }
 
-  private async resolveUserByPhone(incomingPhone: string): Promise<User | null> {
-    const normalized = this.normalizePhoneDigits(incomingPhone);
-    if (!normalized) {
-      return null;
+  private isMenuRequest(normalized: string): boolean {
+    return ['hi', 'hello', 'help', 'menu', '?'].includes(normalized);
+  }
+
+  private parseNumericIntent(normalized: string): StudentIntent | null {
+    if (normalized === '1') return 'balance';
+    if (normalized === '2') return 'results';
+    if (normalized === '3') return 'attendance';
+    if (normalized === '4') return 'timetable';
+    if (normalized === '5') return 'payments';
+    if (normalized === '6') return 'announcements';
+    return null;
+  }
+
+  private buildMenuMessage(): string {
+    return [
+      'EduNexus Student Menu',
+      '',
+      'Reply with a number only:',
+      '1. Outstanding balance (all terms)',
+      '2. Exam results',
+      '3. Attendance',
+      '4. Timetable',
+      '5. Payment history',
+      '6. Latest announcements',
+    ].join('\n');
+  }
+
+  private clearSession(senderPhone: string): void {
+    this.sessionMap.delete(senderPhone);
+  }
+
+  private cleanupStaleSession(senderPhone: string): void {
+    const state = this.sessionMap.get(senderPhone);
+    if (!state) {
+      return;
     }
 
-    const candidates = this.expandPhoneCandidates(normalized);
-
-    const userByDirectFields = await this.userRepository
-      .createQueryBuilder('user')
-      .leftJoinAndSelect('user.student', 'student')
-      .leftJoinAndSelect('user.parent', 'parent')
-      .leftJoinAndSelect('user.teacher', 'teacher')
-      .leftJoinAndSelect('user.finance', 'finance')
-      .where('user.isActive = :active', { active: true })
-      .andWhere(
-        `(
-          REGEXP_REPLACE(COALESCE(user.phone, ''), '[^0-9]', '', 'g') IN (:...phones)
-          OR REGEXP_REPLACE(COALESCE(student.phoneNumber, ''), '[^0-9]', '', 'g') IN (:...phones)
-          OR REGEXP_REPLACE(COALESCE(parent.phoneNumber, ''), '[^0-9]', '', 'g') IN (:...phones)
-          OR REGEXP_REPLACE(COALESCE(teacher.phoneNumber, ''), '[^0-9]', '', 'g') IN (:...phones)
-          OR REGEXP_REPLACE(COALESCE(finance.phoneNumber, ''), '[^0-9]', '', 'g') IN (:...phones)
-        )`,
-        { phones: candidates },
-      )
-      .getOne();
-
-    if (userByDirectFields) {
-      return userByDirectFields;
+    const ageMs = Date.now() - state.updatedAt;
+    if (ageMs > 30 * 60 * 1000) {
+      this.sessionMap.delete(senderPhone);
     }
+  }
 
-    const studentByPhone = await this.studentRepository
+  private async resolveStudentsForSender(phone: string): Promise<Student[]> {
+    const candidates = this.expandPhoneCandidates(phone);
+
+    const directStudents = await this.studentRepository
       .createQueryBuilder('student')
-      .leftJoinAndSelect('student.user', 'user')
+      .leftJoinAndSelect('student.class', 'class')
       .where(`REGEXP_REPLACE(COALESCE(student.phoneNumber, ''), '[^0-9]', '', 'g') IN (:...phones)`, {
         phones: candidates,
       })
-      .andWhere('user.isActive = :active', { active: true })
-      .getOne();
+      .getMany();
 
-    if (studentByPhone?.user?.id) {
-      return this.userRepository.findOne({
-        where: { id: studentByPhone.user.id },
-        relations: ['student', 'parent', 'teacher', 'finance'],
-      });
-    }
-
-    const parentByPhone = await this.parentRepository
-      .createQueryBuilder('parent')
-      .leftJoinAndSelect('parent.user', 'user')
+    const parentLinkedStudents = await this.studentRepository
+      .createQueryBuilder('student')
+      .leftJoinAndSelect('student.parent', 'parent')
+      .leftJoinAndSelect('student.class', 'class')
       .where(`REGEXP_REPLACE(COALESCE(parent.phoneNumber, ''), '[^0-9]', '', 'g') IN (:...phones)`, {
         phones: candidates,
       })
-      .andWhere('user.isActive = :active', { active: true })
-      .getOne();
+      .getMany();
 
-    if (parentByPhone?.user?.id) {
-      return this.userRepository.findOne({
-        where: { id: parentByPhone.user.id },
-        relations: ['student', 'parent', 'teacher', 'finance'],
-      });
+    const unique = new Map<string, Student>();
+    for (const student of [...directStudents, ...parentLinkedStudents]) {
+      unique.set(student.id, student);
+    }
+
+    return Array.from(unique.values());
+  }
+
+  private async resolveStudentForSenderByStudentId(phone: string, studentIdInput: string): Promise<Student | null> {
+    const students = await this.resolveStudentsForSender(phone);
+    const target = String(studentIdInput || '').trim().toUpperCase();
+
+    for (const student of students) {
+      if (String(student.studentId || '').trim().toUpperCase() === target) {
+        return student;
+      }
     }
 
     return null;
   }
 
-  private async resolveStudentForUser(user: User): Promise<Student | null> {
-    if (String(user.role) === Role.STUDENT) {
-      if (user.student?.id) {
-        return user.student;
-      }
+  private buildOutboundPayload(dto: SendWhatsAppMessageDto, to: string): Record<string, unknown> {
+    const messagingProduct = 'whatsapp';
 
-      // Fallback for records where one-to-one relation is not hydrated correctly.
-      const studentByUserId = await this.studentRepository.findOne({
-        where: { userId: user.id },
-      });
-      if (studentByUserId) {
-        return studentByUserId;
-      }
+    if (dto.templateName) {
+      const templateVariables = (dto.templateVariables || []).map((value) => ({
+        type: 'text',
+        text: value,
+      }));
 
-      const directPhone = this.normalizePhoneDigits(this.extractUserPhone(user));
-      if (directPhone) {
-        const studentByPhone = await this.studentRepository
-          .createQueryBuilder('student')
-          .where(`REGEXP_REPLACE(COALESCE(student.phoneNumber, ''), '[^0-9]', '', 'g') IN (:...phones)`, {
-            phones: this.expandPhoneCandidates(directPhone),
-          })
-          .andWhere('student.schoolId = :schoolId', { schoolId: user.schoolId || null })
-          .getOne();
+      return {
+        messaging_product: messagingProduct,
+        to,
+        type: 'template',
+        template: {
+          name: dto.templateName,
+          language: {
+            code: dto.languageCode || 'en_US',
+          },
+          components: templateVariables.length
+            ? [
+                {
+                  type: 'body',
+                  parameters: templateVariables,
+                },
+              ]
+            : [],
+        },
+      };
+    }
 
-        if (studentByPhone) {
-          return studentByPhone;
+    if (!dto.text || !dto.text.trim()) {
+      throw new Error('Either text or templateName must be provided.');
+    }
+
+    return {
+      messaging_product: messagingProduct,
+      to,
+      type: 'text',
+      text: {
+        body: dto.text.trim(),
+      },
+    };
+  }
+
+  private async sendPlainTextReply(to: string, message: string, enforceSessionWindow: boolean): Promise<void> {
+    await this.sendMessage({
+      to,
+      text: message,
+      enforceSessionWindow,
+    });
+  }
+
+  private async postToCloudApi(payload: Record<string, unknown>): Promise<any> {
+    const url = this.buildCloudApiUrl();
+    const token = this.getApiToken();
+
+    const config: AxiosRequestConfig<Record<string, unknown>> = {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15_000,
+    };
+
+    const response = await axios.post(url, payload, config);
+    return response.data;
+  }
+
+  private buildCloudApiUrl(): string {
+    const baseUrl = this.getOptionalConfig('WHATSAPP_API_URL') || this.getLegacyApiBaseUrl();
+    const normalizedBase = baseUrl.replace(/\/$/, '');
+    const phoneId =
+      this.getOptionalConfig('WHATSAPP_PHONE_ID') || this.getOptionalConfig('WHATSAPP_PHONE_NUMBER_ID');
+
+    if (!phoneId) {
+      throw new Error('Missing WhatsApp phone id. Set WHATSAPP_PHONE_ID.');
+    }
+
+    return `${normalizedBase}/${phoneId}/messages`;
+  }
+
+  private getApiToken(): string {
+    return this.getOptionalConfig('WHATSAPP_API_TOKEN') || this.getRequiredConfig('WHATSAPP_ACCESS_TOKEN');
+  }
+
+  private getLegacyApiBaseUrl(): string {
+    const legacyBase = this.getOptionalConfig('WHATSAPP_API_BASE_URL') || 'https://graph.facebook.com';
+    const legacyVersion = this.getOptionalConfig('WHATSAPP_API_VERSION') || 'v22.0';
+    return `${legacyBase.replace(/\/$/, '')}/${legacyVersion}`;
+  }
+
+  private extractIncomingMessages(payload: unknown): CloudApiInboundMessage[] {
+    const body = payload as any;
+    const entries = Array.isArray(body?.entry) ? body.entry : [];
+    const results: CloudApiInboundMessage[] = [];
+
+    for (const entry of entries) {
+      const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+      for (const change of changes) {
+        const messages = Array.isArray(change?.value?.messages) ? change.value.messages : [];
+        for (const message of messages) {
+          results.push(message as CloudApiInboundMessage);
         }
       }
-
-      this.logger.warn(`Student role user ${user.id} has no resolvable Student profile link.`);
-      return null;
     }
 
-    if (String(user.role) === Role.PARENT) {
-      const parent = await this.parentRepository.findOne({
-        where: { user: { id: user.id } },
-        relations: ['children'],
-      });
-      if (parent?.children?.length) {
-        return parent.children[0];
+    return results;
+  }
+
+  private extractStatusEvents(payload: unknown): CloudApiStatusEvent[] {
+    const body = payload as any;
+    const entries = Array.isArray(body?.entry) ? body.entry : [];
+    const results: CloudApiStatusEvent[] = [];
+
+    for (const entry of entries) {
+      const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+      for (const change of changes) {
+        const statuses = Array.isArray(change?.value?.statuses) ? change.value.statuses : [];
+        for (const status of statuses) {
+          results.push(status as CloudApiStatusEvent);
+        }
       }
     }
 
-    if (user.student?.id) {
-      return this.studentRepository.findOne({ where: { id: user.student.id } });
-    }
-
-    const studentByUserId = await this.studentRepository.findOne({
-      where: { userId: user.id },
-    });
-    if (studentByUserId) {
-      return studentByUserId;
-    }
-
-    return null;
+    return results;
   }
 
-  private async resolveReferenceTerm(schoolId?: string): Promise<Term | null> {
-    if (!schoolId) {
-      return null;
+  private async isRegisteredPhoneNumber(phone: string): Promise<boolean> {
+    const candidates = this.expandPhoneCandidates(phone);
+
+    const studentCount = await this.studentRepository
+      .createQueryBuilder('student')
+      .where(`REGEXP_REPLACE(COALESCE(student.phoneNumber, ''), '[^0-9]', '', 'g') IN (:...phones)`, {
+        phones: candidates,
+      })
+      .getCount();
+
+    if (studentCount > 0) {
+      return true;
     }
 
-    const currentTerm = await this.termRepository.findOne({
-      where: { schoolId, isCurrent: true },
-      order: { endDate: 'DESC' },
-    });
+    const parentCount = await this.parentRepository
+      .createQueryBuilder('parent')
+      .where(`REGEXP_REPLACE(COALESCE(parent.phoneNumber, ''), '[^0-9]', '', 'g') IN (:...phones)`, {
+        phones: candidates,
+      })
+      .getCount();
 
-    if (currentTerm) {
-      return currentTerm;
+    return parentCount > 0;
+  }
+
+  private async hasActiveSessionWindow(phone: string): Promise<boolean> {
+    const lastIncoming = await this.messageLogRepository
+      .createQueryBuilder('log')
+      .where('log.sender_phone = :phone', { phone })
+      .andWhere("log.message_type LIKE 'incoming_%'")
+      .orderBy('log.timestamp', 'DESC')
+      .getOne();
+
+    if (!lastIncoming) {
+      return true;
     }
 
-    return this.termRepository.findOne({
-      where: { schoolId },
-      order: { endDate: 'DESC' },
-    });
+    const ageMs = Date.now() - new Date(lastIncoming.timestamp).getTime();
+    return ageMs <= 24 * 60 * 60 * 1000;
   }
 
-  private extractUserPhone(user: User): string {
-    return (
-      user.phone ||
-      user.student?.phoneNumber ||
-      user.teacher?.phoneNumber ||
-      user.parent?.phoneNumber ||
-      user.finance?.phoneNumber ||
-      ''
-    );
+  private toMessageType(sourceType: string, direction: 'incoming' | 'outgoing'): string {
+    const normalized = sourceType || 'unknown';
+    return `${direction}_${normalized}`.slice(0, 20);
   }
 
-  private getUserDisplayName(user: User): string {
-    return (
-      [user.student?.firstName, user.student?.lastName].filter(Boolean).join(' ') ||
-      [user.parent?.firstName, user.parent?.lastName].filter(Boolean).join(' ') ||
-      [user.teacher?.firstName, user.teacher?.lastName].filter(Boolean).join(' ') ||
-      [user.finance?.firstName, user.finance?.lastName].filter(Boolean).join(' ') ||
-      user.username ||
-      'User'
-    );
-  }
-
-  private toWhatsAppJid(phone: string): string {
-    const normalized = this.normalizePhoneDigits(phone);
-    if (!normalized) {
-      throw new Error('Invalid phone number.');
+  private async logMessage(senderPhone: string, messageType: string, messageBody: string): Promise<void> {
+    try {
+      const record = this.messageLogRepository.create({
+        senderPhone,
+        messageType: messageType.slice(0, 20),
+        messageBody,
+      });
+      await this.messageLogRepository.save(record);
+    } catch (error) {
+      this.logger.error(`Failed to write WhatsApp message log: ${error instanceof Error ? error.message : error}`);
     }
-    return `${normalized}@c.us`;
   }
 
   private normalizePhoneDigits(phone: string): string {
@@ -934,43 +867,45 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (digits.startsWith('0')) {
-      const countryCode = (this.getOptionalConfig('WHATSAPP_DEFAULT_COUNTRY_CODE') || '265').replace(/\D/g, '');
-      return `${countryCode}${digits.slice(1)}`;
+      const code = (this.getOptionalConfig('WHATSAPP_DEFAULT_COUNTRY_CODE') || '254').replace(/\D/g, '');
+      return `${code}${digits.slice(1)}`;
     }
 
     return digits;
   }
 
-  private expandPhoneCandidates(digits: string): string[] {
+  private expandPhoneCandidates(phoneDigits: string): string[] {
     const set = new Set<string>();
-    set.add(digits);
+    set.add(phoneDigits);
 
-    const countryCode = (this.getOptionalConfig('WHATSAPP_DEFAULT_COUNTRY_CODE') || '265').replace(/\D/g, '');
-    if (digits.startsWith(countryCode) && digits.length > countryCode.length) {
-      set.add(`0${digits.slice(countryCode.length)}`);
-      set.add(digits.slice(countryCode.length));
+    const countryCode = (this.getOptionalConfig('WHATSAPP_DEFAULT_COUNTRY_CODE') || '254').replace(/\D/g, '');
+
+    if (phoneDigits.startsWith(countryCode) && phoneDigits.length > countryCode.length) {
+      const local = phoneDigits.slice(countryCode.length);
+      set.add(local);
+      set.add(`0${local}`);
     }
 
-    if (digits.startsWith('0')) {
-      set.add(`${countryCode}${digits.slice(1)}`);
-      set.add(digits.slice(1));
+    if (phoneDigits.startsWith('0')) {
+      const withoutZero = phoneDigits.slice(1);
+      set.add(withoutZero);
+      set.add(`${countryCode}${withoutZero}`);
     }
 
     return Array.from(set);
   }
 
-  private isFeatureEnabled(): boolean {
-    const value = this.getOptionalConfig('WHATSAPP_ENABLED');
-    if (!value) {
-      return true;
-    }
-    return String(value).toLowerCase() === 'true';
+  private getRequiredConfig(key: string): string {
+    return this.configService.get(key);
   }
 
   private getOptionalConfig(key: string): string | undefined {
     try {
       const value = this.configService.get(key);
-      return value === undefined || value === null || value === '' ? undefined : value;
+      if (!value) {
+        return undefined;
+      }
+      return value;
     } catch {
       return undefined;
     }

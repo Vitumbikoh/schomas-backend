@@ -1,12 +1,41 @@
-import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
 
 export class SendWhatsAppMessageDto {
   @IsString()
   @IsNotEmpty()
-  phone: string;
+  to: string;
+
+  @ValidateIf((dto: SendWhatsAppMessageDto) => !dto.templateName)
+  @IsString()
+  @IsOptional()
+  @MaxLength(2000)
+  text?: string;
+
+  @ValidateIf((dto: SendWhatsAppMessageDto) => !dto.text)
+  @IsString()
+  @IsOptional()
+  templateName?: string;
 
   @IsString()
-  @IsNotEmpty()
-  @MaxLength(2000)
-  message: string;
+  @IsOptional()
+  languageCode?: string;
+
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @IsOptional()
+  templateVariables?: string[];
+
+  @IsBoolean()
+  @IsOptional()
+  enforceSessionWindow?: boolean;
 }
