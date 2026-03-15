@@ -13,10 +13,12 @@ import { Finance } from '../user/entities/finance.entity';
 import { NotificationDeliveryService } from './notification-delivery.service';
 import { ConfigModule } from '../config/config.module';
 import { SchoolSettings } from '../settings/entities/school-settings.entity';
+import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 
 @Module({
   imports: [
     ConfigModule,
+    WhatsAppModule,
     TypeOrmModule.forFeature([Notification, NotificationRead, UserSettings, Student, Parent, User, Teacher, Finance, SchoolSettings]),
   ],
   controllers: [NotificationController],

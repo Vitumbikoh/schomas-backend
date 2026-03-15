@@ -1,0 +1,14 @@
+2026/03/15-12:33:45.393 b48 Reusing MANIFEST E:\Projects\Web Apps\Javascript\EduNexus\edunexus-backend\.wwebjs_auth\session-edunexus\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/03/15-12:33:45.394 b48 Recovering log #64
+2026/03/15-12:33:46.437 b48 Reusing old log E:\Projects\Web Apps\Javascript\EduNexus\edunexus-backend\.wwebjs_auth\session-edunexus\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000064.log 
+2026/03/15-12:57:32.649 b48 Level-0 table #70: started
+2026/03/15-12:57:34.167 b48 Level-0 table #70: 1480271 bytes OK
+2026/03/15-12:57:34.734 b48 Delete type=0 #64
+2026/03/15-12:59:50.684 3e08 Compacting 1@1 + 2@2 files
+2026/03/15-12:59:52.332 3e08 Generated table #71@1: 51467 keys, 2228068 bytes
+2026/03/15-12:59:52.459 3e08 Generated table #72@1: 6392 keys, 390608 bytes
+2026/03/15-12:59:52.459 3e08 Compacted 1@1 + 2@2 files => 2618676 bytes
+2026/03/15-12:59:52.485 3e08 compacted to: files[ 0 0 2 0 0 0 0 ]
+2026/03/15-12:59:52.486 3e08 Delete type=2 #66
+2026/03/15-12:59:52.486 3e08 Delete type=2 #67
+2026/03/15-12:59:52.486 3e08 Delete type=2 #70

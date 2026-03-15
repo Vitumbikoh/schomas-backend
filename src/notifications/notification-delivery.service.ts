@@ -6,6 +6,7 @@ import { Notification } from './entities/notification.entity';
 import { User } from '../user/entities/user.entity';
 import { ConfigService } from '../config/config.service';
 import { SchoolSettings } from '../settings/entities/school-settings.entity';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
 interface EmailIdentity {
   from: string;
@@ -36,6 +37,7 @@ export class NotificationDeliveryService {
     @InjectRepository(SchoolSettings)
     private readonly schoolSettingsRepository: Repository<SchoolSettings>,
     private readonly configService: ConfigService,
+    private readonly whatsAppService: WhatsAppService,
   ) {}
 
   private getOptionalConfig(key: string): string | undefined {
@@ -64,13 +66,13 @@ export class NotificationDeliveryService {
     }
 
     const emailProviderConfigured = this.isEmailProviderConfigured();
-    const whatsappProviderConfigured = this.isWhatsappProviderConfigured();
+    const whatsappProviderConfigured = this.whatsAppService.isClientReady();
 
     if (!emailProviderConfigured) {
       report.notes.push('Email provider not configured (missing SMTP_* variables).');
     }
     if (!whatsappProviderConfigured) {
-      report.notes.push('WhatsApp provider not configured (missing WHATSAPP_* variables).');
+      report.notes.push('WhatsApp provider not configured (web client not ready/authenticated).');
     }
 
     await Promise.all(
@@ -272,13 +274,6 @@ export class NotificationDeliveryService {
     );
   }
 
-  private isWhatsappProviderConfigured(): boolean {
-    return !!(
-      this.getOptionalConfig('WHATSAPP_ACCESS_TOKEN') &&
-      this.getOptionalConfig('WHATSAPP_PHONE_NUMBER_ID')
-    );
-  }
-
   private getOrCreateMailTransporter(): nodemailer.Transporter | null {
     if (this.mailTransporter) {
       return this.mailTransporter;
@@ -332,61 +327,9 @@ export class NotificationDeliveryService {
   }
 
   private async sendWhatsapp(phone: string, notification: Notification): Promise<void> {
-    const token = this.getOptionalConfig('WHATSAPP_ACCESS_TOKEN');
-    const phoneNumberId = this.getOptionalConfig('WHATSAPP_PHONE_NUMBER_ID');
-
-    if (!token || !phoneNumberId) {
-      throw new Error('WhatsApp provider not configured.');
-    }
-
-    const normalizedPhone = this.normalizePhone(phone);
-    if (!normalizedPhone) {
-      throw new Error('Invalid phone number for WhatsApp delivery.');
-    }
-
-    const apiVersion = this.getOptionalConfig('WHATSAPP_API_VERSION') || 'v20.0';
-    const apiBase = this.getOptionalConfig('WHATSAPP_API_BASE_URL') || 'https://graph.facebook.com';
-    const url = `${apiBase}/${apiVersion}/${phoneNumberId}/messages`;
-
-    const body = {
-      messaging_product: 'whatsapp',
-      to: normalizedPhone,
-      type: 'text',
-      text: {
-        body: `${notification.title}\n${notification.message || ''}`.trim(),
-      },
-    };
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const responseText = await response.text();
-      throw new Error(`HTTP ${response.status}: ${responseText}`);
-    }
-  }
-
-  private normalizePhone(phone: string): string | null {
-    const digitsOnly = String(phone || '').replace(/[^\d+]/g, '');
-    if (!digitsOnly) {
-      return null;
-    }
-
-    if (digitsOnly.startsWith('+')) {
-      return digitsOnly.slice(1);
-    }
-
-    if (digitsOnly.startsWith('0')) {
-      const defaultCountryCode = (this.getOptionalConfig('WHATSAPP_DEFAULT_COUNTRY_CODE') || '254').replace(/\D/g, '');
-      return `${defaultCountryCode}${digitsOnly.slice(1)}`;
-    }
-
-    return digitsOnly.replace(/\D/g, '');
+    await this.whatsAppService.sendWhatsAppMessage(
+      phone,
+      `${notification.title}\n${notification.message || ''}`.trim(),
+    );
   }
 }
