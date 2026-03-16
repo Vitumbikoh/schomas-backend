@@ -224,6 +224,7 @@ export class ReportsController {
     @Query('gender') gender?: string,
     @Query('class') className?: string,
     @Query('classId') classId?: string,
+    @Query('joinedTermId') joinedTermId?: string,
   ) {
     const user = req.user;
     const superAdmin = user.role === Role.SUPER_ADMIN;
@@ -232,6 +233,7 @@ export class ReportsController {
     const where: any = {};
     if (gender) where.gender = gender;
     if (className) where.gradeLevel = className;
+    if (joinedTermId) where.enrollmentTermId = joinedTermId;
   const students = await this.studentsService.findAll({ where }, targetSchoolId, superAdmin);
     const filtered = students.filter((s: any) =>
       (s.isActive !== false) &&
