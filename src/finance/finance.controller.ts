@@ -179,11 +179,28 @@ export class FinanceController {
     const user = req.user;
     const superAdmin = user.role === 'SUPER_ADMIN';
     const months = req.query.months ? parseInt(req.query.months) : 6;
-    return this.financeService.getRevenueTrends(
-      superAdmin ? req.query.schoolId : user.schoolId,
+    const schoolId = superAdmin ? req.query.schoolId : user.schoolId;
+    const data = await this.financeService.getRevenueTrends(
+      schoolId,
       superAdmin,
       months,
     );
+
+    const debugEnabled =
+      String(req.query.debug || '').toLowerCase() === '1' ||
+      String(req.query.debug || '').toLowerCase() === 'true';
+
+    if (!debugEnabled) {
+      return data;
+    }
+
+    const debug = await this.financeService.getRevenueTrendsDebug(
+      schoolId,
+      superAdmin,
+      months,
+    );
+
+    return { data, debug };
   }
 
   @Get('expense-trends')

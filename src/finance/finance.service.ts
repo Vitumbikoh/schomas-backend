@@ -71,20 +71,166 @@ export class FinanceService {
       return [];
     }
 
-    const qb = this.paymentRepository.createQueryBuilder('p')
-      .select("to_char(date_trunc('month', p.paymentDate), 'YYYY-MM')", 'month')
-      .addSelect('SUM(p.amount)', 'total')
-      .where('p.status = :status', { status: 'completed' })
-      .andWhere("p.paymentDate >= NOW() - INTERVAL :months", { months: `${months} months` })
-      .groupBy("date_trunc('month', p.paymentDate)")
-      .orderBy("date_trunc('month', p.paymentDate)", 'ASC');
+    const safeMonths = Number.isFinite(Number(months))
+      ? Math.min(24, Math.max(1, Number(months)))
+      : 6;
+    const cutoffDate = new Date();
+    cutoffDate.setMonth(cutoffDate.getMonth() - safeMonths);
 
-    if (schoolId && !superAdmin) {
-      qb.andWhere('p.schoolId = :schoolId', { schoolId });
+    const completedStatuses = ['completed', 'success', 'successful'];
+
+    const applySchoolScope = (qb: any, alias: string) => {
+      if (schoolId) {
+        qb.andWhere(`(${alias}."schoolId" = :schoolId OR s."schoolId" = :schoolId)`, { schoolId });
+      }
+      return qb;
+    };
+
+    const queryRecentFromPayments = () => {
+      const qb = this.paymentCaptureRepository
+        .createQueryBuilder('p')
+        .leftJoin('p.student', 's')
+        .select("to_char(date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\")), 'YYYY-MM')", 'month')
+        .addSelect('SUM(p.amount)', 'total')
+        .where('LOWER(CAST(p.status AS text)) IN (:...completedStatuses)', { completedStatuses })
+        .andWhere("COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\") >= :cutoffDate", {
+          cutoffDate,
+        })
+        .groupBy("date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\"))")
+        .orderBy("date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\"))", 'ASC');
+      return applySchoolScope(qb, 'p');
+    };
+
+    const queryRecentFromFeePayments = () => {
+      const qb = this.paymentRepository
+        .createQueryBuilder('p')
+        .leftJoin('p.student', 's')
+        .select("to_char(date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\")), 'YYYY-MM')", 'month')
+        .addSelect('SUM(p.amount)', 'total')
+        .where('LOWER(CAST(p.status AS text)) IN (:...completedStatuses)', { completedStatuses })
+        .andWhere("COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\") >= :cutoffDate", {
+          cutoffDate,
+        })
+        .groupBy("date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\"))")
+        .orderBy("date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\"))", 'ASC');
+      return applySchoolScope(qb, 'p');
+    };
+
+    const queryHistoricalFromPayments = () => {
+      const qb = this.paymentCaptureRepository
+        .createQueryBuilder('p')
+        .leftJoin('p.student', 's')
+        .select("to_char(date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\")), 'YYYY-MM')", 'month')
+        .addSelect('SUM(p.amount)', 'total')
+        .where('LOWER(CAST(p.status AS text)) IN (:...completedStatuses)', { completedStatuses })
+        .groupBy("date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\"))")
+        .orderBy("date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\"))", 'DESC')
+        .limit(safeMonths);
+      return applySchoolScope(qb, 'p');
+    };
+
+    const queryHistoricalFromFeePayments = () => {
+      const qb = this.paymentRepository
+        .createQueryBuilder('p')
+        .leftJoin('p.student', 's')
+        .select("to_char(date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\")), 'YYYY-MM')", 'month')
+        .addSelect('SUM(p.amount)', 'total')
+        .where('LOWER(CAST(p.status AS text)) IN (:...completedStatuses)', { completedStatuses })
+        .groupBy("date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\"))")
+        .orderBy("date_trunc('month', COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\"))", 'DESC')
+        .limit(safeMonths);
+      return applySchoolScope(qb, 'p');
+    };
+
+    // Priority order avoids double-counting when both tables contain mirrored writes:
+    // payments -> fee_payment, recent window first, then historical fallback.
+    let rows = await queryRecentFromPayments().getRawMany();
+    if (rows.length === 0) rows = await queryRecentFromFeePayments().getRawMany();
+    if (rows.length === 0) rows = (await queryHistoricalFromPayments().getRawMany()).reverse();
+    if (rows.length === 0) rows = (await queryHistoricalFromFeePayments().getRawMany()).reverse();
+
+    return rows.map(r => ({ month: r.month, total: Number(r.total || 0) }));
+  }
+
+  async getRevenueTrendsDebug(schoolId?: string, superAdmin: boolean = false, months: number = 6) {
+    const safeMonths = Number.isFinite(Number(months))
+      ? Math.min(24, Math.max(1, Number(months)))
+      : 6;
+    const cutoffDate = new Date();
+    cutoffDate.setMonth(cutoffDate.getMonth() - safeMonths);
+
+    const completedStatuses = ['completed', 'success', 'successful'];
+
+    const paymentsRecentQb = this.paymentCaptureRepository
+      .createQueryBuilder('p')
+      .leftJoin('p.student', 's')
+      .select('COUNT(*)', 'count')
+      .addSelect('COALESCE(SUM(p.amount), 0)', 'sum')
+      .where('LOWER(CAST(p.status AS text)) IN (:...completedStatuses)', { completedStatuses })
+      .andWhere("COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\") >= :cutoffDate", {
+        cutoffDate,
+      });
+
+    if (!superAdmin && schoolId) {
+      paymentsRecentQb.andWhere('(p."schoolId" = :schoolId OR s."schoolId" = :schoolId)', { schoolId });
+    } else if (superAdmin && schoolId) {
+      paymentsRecentQb.andWhere('(p."schoolId" = :schoolId OR s."schoolId" = :schoolId)', { schoolId });
     }
 
-    const rows = await qb.getRawMany();
-    return rows.map(r => ({ month: r.month, total: Number(r.total || 0) }));
+    const feePaymentsRecentQb = this.paymentRepository
+      .createQueryBuilder('p')
+      .leftJoin('p.student', 's')
+      .select('COUNT(*)', 'count')
+      .addSelect('COALESCE(SUM(p.amount), 0)', 'sum')
+      .where('LOWER(CAST(p.status AS text)) IN (:...completedStatuses)', { completedStatuses })
+      .andWhere("COALESCE(p.\"paymentDate\"::timestamp, p.\"createdAt\") >= :cutoffDate", {
+        cutoffDate,
+      });
+
+    if (!superAdmin && schoolId) {
+      feePaymentsRecentQb.andWhere('(p."schoolId" = :schoolId OR s."schoolId" = :schoolId)', { schoolId });
+    } else if (superAdmin && schoolId) {
+      feePaymentsRecentQb.andWhere('(p."schoolId" = :schoolId OR s."schoolId" = :schoolId)', { schoolId });
+    }
+
+    const paymentsSchoolNullQb = this.paymentCaptureRepository
+      .createQueryBuilder('p')
+      .select('COUNT(*)', 'count')
+      .where('p."schoolId" IS NULL');
+
+    const feePaymentsSchoolNullQb = this.paymentRepository
+      .createQueryBuilder('p')
+      .select('COUNT(*)', 'count')
+      .where('p."schoolId" IS NULL');
+
+    const [paymentsRecentRaw, feePaymentsRecentRaw, paymentsNullRaw, feePaymentsNullRaw] = await Promise.all([
+      paymentsRecentQb.getRawOne(),
+      feePaymentsRecentQb.getRawOne(),
+      paymentsSchoolNullQb.getRawOne(),
+      feePaymentsSchoolNullQb.getRawOne(),
+    ]);
+
+    return {
+      scope: {
+        schoolId: schoolId || null,
+        superAdmin,
+        months: safeMonths,
+      },
+      sources: {
+        paymentsRecent: {
+          count: Number(paymentsRecentRaw?.count || 0),
+          sum: Number(paymentsRecentRaw?.sum || 0),
+        },
+        feePaymentRecent: {
+          count: Number(feePaymentsRecentRaw?.count || 0),
+          sum: Number(feePaymentsRecentRaw?.sum || 0),
+        },
+      },
+      dataQuality: {
+        paymentsSchoolIdNullCount: Number(paymentsNullRaw?.count || 0),
+        feePaymentSchoolIdNullCount: Number(feePaymentsNullRaw?.count || 0),
+      },
+    };
   }
 
   /**

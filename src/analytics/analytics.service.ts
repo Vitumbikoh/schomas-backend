@@ -371,62 +371,74 @@ export class AnalyticsService {
    *  - gradeCount: Total grade records
    * Optional filtering by term (current term if not provided) and school (multi-tenant scope).
    */
-  async getTeacherPerformance(options: { termId?: string; schoolId?: string; superAdmin?: boolean; passThreshold?: number; limit?: number } = {}) {
-    const { termId, schoolId, superAdmin = false, passThreshold = 50, limit } = options;
+  async getTeacherPerformance(options: { termId?: string; schoolId?: string; superAdmin?: boolean; passThreshold?: number; limit?: number; months?: number } = {}) {
+    const { termId, schoolId, superAdmin = false, passThreshold = 50, limit, months = 6 } = options;
 
-    // Resolve term (current if none supplied)
+    // Resolve term only when explicitly provided. Default scope is rolling month window.
     let effectiveTermId = termId;
-    if (!effectiveTermId) {
-      const current = await this.getCurrentTermDetails();
-      effectiveTermId = current?.id;
-    }
+    const effectiveMonths = Number.isFinite(Number(months)) ? Math.min(24, Math.max(1, Number(months))) : 6;
 
-    // Base query – join teacher via exam.teacher relation
-    const qb = this.examGradeRepo.createQueryBuilder('egr')
-      .leftJoin('egr.exam', 'exam')
-      .leftJoin('exam.teacher', 't')
-      .leftJoin('egr.student', 's')
-      .select('t.id', 'teacherId')
-      .addSelect('t.firstName', 'firstName')
-      .addSelect('t.lastName', 'lastName')
-      .addSelect('COUNT(egr.id)', 'gradeCount')
-      .addSelect('COUNT(DISTINCT s.id)', 'studentCount')
-      .addSelect('AVG(CAST(egr.percentage as float))', 'avgGrade')
-      .addSelect(`SUM(CASE WHEN CAST(egr.percentage as float) >= :passThreshold THEN 1 ELSE 0 END)`, 'passCount')
-      .groupBy('t.id');
+    const buildQuery = (termFilter?: string) => {
+      const qb = this.examGradeRepo.createQueryBuilder('egr')
+        .leftJoin('egr.exam', 'exam')
+        .leftJoin('exam.teacher', 't')
+        .leftJoin('egr.student', 's')
+        .select('t.id', 'teacherId')
+        .addSelect('t.firstName', 'firstName')
+        .addSelect('t.lastName', 'lastName')
+        .addSelect('COUNT(egr.id)', 'gradeCount')
+        .addSelect('COUNT(DISTINCT s.id)', 'studentCount')
+        .addSelect('AVG(CAST(egr.percentage as float))', 'avgGrade')
+        .addSelect(`SUM(CASE WHEN CAST(egr.percentage as float) >= :passThreshold THEN 1 ELSE 0 END)`, 'passCount')
+        .groupBy('t.id');
 
-    // School scoping via examGradeRecord.schoolId
-    if (!superAdmin) {
-      if (!schoolId) {
-        console.log('No schoolId provided for non-super-admin user, returning empty results');
-        return {
-          metadata: {
-            termId: effectiveTermId || null,
-            total: 0,
-            generatedAt: new Date().toISOString(),
-            passThreshold,
-          },
-          topPerformer: null,
-          teachers: [],
-        };
-      } else {
-        qb.where('egr.schoolId = :schoolId', { schoolId });
+      // School scoping via examGradeRecord.schoolId
+      if (!superAdmin) {
+        if (!schoolId) {
+          return null;
+        }
+        // Enforce scope using both teacher and student school memberships.
+        // egr.schoolId can be historically inconsistent, so treat it as optional consistency check.
+        qb.where('t.schoolId = :schoolId', { schoolId })
+          .andWhere('s.schoolId = :schoolId', { schoolId })
+          .andWhere('(egr.schoolId = :schoolId OR egr.schoolId IS NULL)', { schoolId });
+      } else if (schoolId) {
+        qb.where('t.schoolId = :schoolId', { schoolId })
+          .andWhere('s.schoolId = :schoolId', { schoolId })
+          .andWhere('(egr.schoolId = :schoolId OR egr.schoolId IS NULL)', { schoolId });
       }
-    } else if (schoolId) {
-      qb.where('egr.schoolId = :schoolId', { schoolId });
+
+      if (termFilter) {
+        qb.andWhere('egr.termId = :termId', { termId: termFilter });
+      } else {
+        qb.andWhere("COALESCE(exam.date::date, egr.\"createdAt\"::date) >= (CURRENT_DATE - (:months * INTERVAL '1 month'))", {
+          months: effectiveMonths,
+        });
+      }
+
+      qb.setParameter('passThreshold', passThreshold);
+      return qb;
+    };
+
+    const scopedTermQuery = buildQuery(effectiveTermId);
+    if (!scopedTermQuery) {
+      console.log('No schoolId provided for non-super-admin user, returning empty results');
+      return {
+        metadata: {
+          termId: effectiveTermId || null,
+          total: 0,
+          generatedAt: new Date().toISOString(),
+          passThreshold,
+          fallbackAllTime: false,
+          months: effectiveMonths,
+        },
+        topPerformer: null,
+        teachers: [],
+      };
     }
 
-    if (effectiveTermId) {
-      qb.andWhere('egr.termId = :termId', { termId: effectiveTermId });
-    }
-
-    qb.setParameter('passThreshold', passThreshold);
-
-    console.log('Teacher performance query:', qb.getQuery());
-    console.log('Teacher performance params:', qb.getParameters());
-
-    const raw = await qb.getRawMany();
-    console.log('Raw teacher performance results:', raw);
+    const raw = await scopedTermQuery.getRawMany();
+    const fallbackAllTime = false;
     const teachers = raw.map(r => {
       const avg = parseFloat(parseFloat(r.avgGrade || '0').toFixed(2));
       const gradeCount = parseInt(r.gradeCount, 10) || 0;
@@ -453,10 +465,12 @@ export class AnalyticsService {
 
     return {
       metadata: {
-        termId: effectiveTermId || null,
+        termId: fallbackAllTime ? null : (effectiveTermId || null),
         total: teachers.length,
         generatedAt: new Date().toISOString(),
         passThreshold,
+        fallbackAllTime,
+        months: effectiveMonths,
       },
       topPerformer,
       teachers: limited,

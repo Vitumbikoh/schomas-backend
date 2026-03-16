@@ -97,6 +97,7 @@ export class AnalyticsController {
   async teacherPerformance(
     @Request() req,
     @Query('termId') termId?: string,
+    @Query('months') months?: string,
     @Query('schoolId') schoolIdFilter?: string,
     @Query('limit') limit?: string,
     @Query('passThreshold') passThreshold?: string,
@@ -107,6 +108,7 @@ export class AnalyticsController {
       termId,
       schoolId: effectiveSchoolId,
       superAdmin: isSuper,
+      months: months ? parseInt(months, 10) : undefined,
       passThreshold: passThreshold ? parseFloat(passThreshold) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
     });
