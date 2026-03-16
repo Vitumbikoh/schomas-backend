@@ -16,11 +16,12 @@ export class AnalyticsController {
     @Request() req,
     @Query('classId') classId: string, 
     @Query('TermId') TermId?: string,
+    @Query('termId') termId?: string,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
-    return this.analyticsService.getClassPerformance(classId, TermId, effectiveSchoolId, isSuper);
+    return this.analyticsService.getClassPerformance(classId, termId || TermId, effectiveSchoolId, isSuper);
   }
 
   @Get('course-averages')
@@ -28,12 +29,13 @@ export class AnalyticsController {
   async courseAverages(
     @Request() req,
     @Query('TermId') TermId?: string,
+    @Query('termId') termId?: string,
     @Query('scope') scope: 'current-year' | 'all' = 'current-year',
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
-    return this.analyticsService.getCourseAverages(TermId, scope, effectiveSchoolId, isSuper);
+    return this.analyticsService.getCourseAverages(termId || TermId, scope, effectiveSchoolId, isSuper);
   }
 
   @Get('attendance-overview')
@@ -41,33 +43,36 @@ export class AnalyticsController {
   async attendanceOverview(
     @Request() req,
     @Query('TermId') TermId?: string,
+    @Query('termId') termId?: string,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
-    return this.analyticsService.getAttendanceOverview(TermId, effectiveSchoolId, isSuper);
+    return this.analyticsService.getAttendanceOverview(termId || TermId, effectiveSchoolId, isSuper);
   }
 
   @Get('attendance-by-class')
   async attendanceByClass(
     @Request() req,
     @Query('TermId') TermId?: string,
+    @Query('termId') termId?: string,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
-    return this.analyticsService.getAttendanceByClass(TermId, effectiveSchoolId, isSuper);
+    return this.analyticsService.getAttendanceByClass(termId || TermId, effectiveSchoolId, isSuper);
   }
 
   @Get('fee-collection-status')
   async feeCollectionStatus(
     @Request() req,
     @Query('TermId') TermId?: string,
+    @Query('termId') termId?: string,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin
   ) {
     const isSuper = req.user?.role === 'SUPER_ADMIN';
     const effectiveSchoolId = isSuper ? (schoolIdFilter || req.user?.schoolId) : req.user?.schoolId;
-    return this.analyticsService.getFeeCollectionStatus(TermId, effectiveSchoolId, isSuper);
+    return this.analyticsService.getFeeCollectionStatus(termId || TermId, effectiveSchoolId, isSuper);
   }
 
   @Get('current-term')

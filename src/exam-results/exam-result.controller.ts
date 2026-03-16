@@ -54,11 +54,13 @@ export class ExamResultController {
     @Request() req?: any,
   ) {
     try {
+      const isSuper = req.user?.role === 'SUPER_ADMIN';
+      const effectiveSchoolId = isSuper ? (schoolId || req.user?.schoolId) : req.user?.schoolId;
       console.log('[ExamResults] Getting class results:', { classId, schoolId, termId, academicCalendarId });
       const results = await this.examResultService.getClassResults(
         classId,
         req.user?.userId || req.user?.sub || req.user?.id,
-        schoolId,
+        effectiveSchoolId,
         termId,
         academicCalendarId,
       );

@@ -50,9 +50,15 @@ export class ExamResultService {
       throw new UnauthorizedException('User not found');
     }
 
+    const isSuper = user.role === 'SUPER_ADMIN';
+    const effectiveSchoolId = isSuper ? undefined : user.schoolId;
+
     // Get student details
     const student = await this.studentRepository.findOne({
-      where: { id: studentId },
+      where: {
+        id: studentId,
+        ...(effectiveSchoolId ? { schoolId: effectiveSchoolId } : {}),
+      },
       relations: ['class'],
     });
 
@@ -67,6 +73,10 @@ export class ExamResultService {
       throw new NotFoundException('Student not found');
     }
 
+    if (effectiveSchoolId && studentRecord.schoolId !== effectiveSchoolId) {
+      throw new NotFoundException('Student not found');
+    }
+
     // Query by the student's studentId to handle cases where there might be multiple records
     let query = this.examResultRepository
       .createQueryBuilder('er')
@@ -77,7 +87,9 @@ export class ExamResultService {
       .andWhere('er.status IN (:...statuses)', { statuses: ['COMPLETE', 'PENDING'] });
 
     // Add filtering conditions
-    if (student.schoolId) {
+    if (effectiveSchoolId) {
+      query = query.andWhere('er.schoolId = :schoolId', { schoolId: effectiveSchoolId });
+    } else if (student.schoolId) {
       query = query.andWhere('er.schoolId = :schoolId', { schoolId: student.schoolId });
     }
 
@@ -195,9 +207,15 @@ export class ExamResultService {
       throw new UnauthorizedException('User not found');
     }
 
+    const isSuper = user.role === 'SUPER_ADMIN';
+    const effectiveSchoolId = isSuper ? schoolId : (user.schoolId || schoolId);
+
     // Get class details with students
     const classEntity = await this.classRepository.findOne({
-      where: { id: classId },
+      where: {
+        id: classId,
+        ...(effectiveSchoolId ? { schoolId: effectiveSchoolId } : {}),
+      },
       relations: ['students'],
     });
 
@@ -293,8 +311,8 @@ export class ExamResultService {
       .andWhere('er.status IN (:...statuses)', { statuses: ['COMPLETE', 'PENDING'] });
 
     // Add filtering conditions
-    if (schoolId) {
-      query = query.andWhere('er.schoolId = :schoolId', { schoolId });
+    if (effectiveSchoolId) {
+      query = query.andWhere('er.schoolId = :schoolId', { schoolId: effectiveSchoolId });
     }
 
     // For students, only show results if they are published

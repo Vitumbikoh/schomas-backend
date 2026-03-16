@@ -67,6 +67,10 @@ export class FinanceService {
    * Monthly revenue trends for the last N months (defaults to 6)
    */
   async getRevenueTrends(schoolId?: string, superAdmin: boolean = false, months: number = 6): Promise<Array<{ month: string; total: number }>> {
+    if (!superAdmin && !schoolId) {
+      return [];
+    }
+
     const qb = this.paymentRepository.createQueryBuilder('p')
       .select("to_char(date_trunc('month', p.paymentDate), 'YYYY-MM')", 'month')
       .addSelect('SUM(p.amount)', 'total')
@@ -87,6 +91,10 @@ export class FinanceService {
    * Monthly expense trends for the last N months (defaults to 6)
    */
   async getExpenseTrends(schoolId?: string, superAdmin: boolean = false, months: number = 6): Promise<Array<{ month: string; total: number }>> {
+    if (!superAdmin && !schoolId) {
+      return [];
+    }
+
     const qb = this.expenseRepository.createQueryBuilder('e')
       .select("to_char(date_trunc('month', COALESCE(e.paidDate, e.approvedDate, e.requestDate)), 'YYYY-MM')", 'month')
       .addSelect('SUM(e.amount)', 'total')
@@ -2258,6 +2266,16 @@ async getParentPayments(
   }
 
   async getDashboardCalculations(schoolId?: string, superAdmin = false) {
+    if (!superAdmin && !schoolId) {
+      return {
+        monthlyRevenue: 0,
+        monthlyRevenueLastMonth: 0,
+        outstandingFees: 0,
+        paymentsToday: 0,
+        collectionRate: 0,
+      };
+    }
+
     // Get current term for filtering
     const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
     const termFilter = currentTerm ? { termId: currentTerm.id } : {};
@@ -2384,6 +2402,10 @@ async getParentPayments(
   }
 
   async getPaymentMethodDistribution(schoolId?: string, superAdmin = false) {
+    if (!superAdmin && !schoolId) {
+      return [];
+    }
+
     // Get current term for filtering
     const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
     const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
@@ -2410,6 +2432,10 @@ async getParentPayments(
   }
 
   async getOutstandingFeesBreakdown(schoolId?: string, superAdmin = false) {
+    if (!superAdmin && !schoolId) {
+      return [];
+    }
+
     // Get current term for filtering
     const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
     const termFilter = currentTerm ? { termId: currentTerm.id } : {};
@@ -2492,6 +2518,10 @@ async getParentPayments(
   }
 
   async getOutstandingFeesLastMonth(schoolId?: string, superAdmin = false) {
+    if (!superAdmin && !schoolId) {
+      return 0;
+    }
+
     // Get current term for filtering
     const currentTerm = await this.settingsService.getCurrentTerm(schoolId);
     const schoolScope = !superAdmin ? (schoolId ? { schoolId } : { schoolId: undefined }) : (schoolId ? { schoolId } : {});
