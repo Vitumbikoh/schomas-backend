@@ -32,9 +32,12 @@ type CloudApiStatusEvent = {
 
 type StudentIntent = 'balance' | 'results' | 'attendance' | 'timetable' | 'payments' | 'announcements';
 
+type ConversationStage = 'awaiting_student_id' | 'awaiting_student_selection' | 'awaiting_menu';
+
 type SessionState = {
-  pendingIntent?: StudentIntent;
-  awaitingStudentId: boolean;
+  stage: ConversationStage;
+  selectedStudentId?: string;
+  candidateStudentIds?: string[];
   updatedAt: number;
 };
 
@@ -173,7 +176,7 @@ export class WhatsAppService {
       return;
     }
 
-    const reply = await this.routeStudentMessage(senderPhone, text);
+    const reply = await this.routeConversation(senderPhone, text);
     await this.sendPlainTextReply(senderPhone, reply, false);
   }
 
@@ -216,68 +219,208 @@ export class WhatsAppService {
     }
   }
 
-  private async routeStudentMessage(senderPhone: string, incomingText: string): Promise<string> {
+  private async routeConversation(senderPhone: string, incomingText: string): Promise<string> {
     this.cleanupStaleSession(senderPhone);
 
     const text = String(incomingText || '').trim();
     const normalized = text.toLowerCase();
-    const context = this.sessionMap.get(senderPhone);
+    const linkedStudents = await this.resolveStudentsForSender(senderPhone);
 
-    if (this.isMenuRequest(normalized)) {
-      this.clearSession(senderPhone);
-      return this.buildMenuMessage();
+    if (!linkedStudents.length) {
+      return this.unregisteredNumberReply;
     }
 
-    const numericIntent = this.parseNumericIntent(normalized);
-    if (numericIntent) {
-      return this.resolveIntentForSender(senderPhone, numericIntent);
+    if (this.isGreeting(normalized)) {
+      this.sessionMap.set(senderPhone, {
+        stage: 'awaiting_student_id',
+        updatedAt: Date.now(),
+      });
+      return this.buildStudentIdPrompt();
     }
 
-    if (context?.awaitingStudentId && context.pendingIntent) {
-      const student = await this.resolveStudentForSenderByStudentId(senderPhone, text);
-      if (!student) {
-        return 'Student ID not found for this phone number. Reply with a valid student ID exactly as registered (for example: STU1001).';
+    const session = this.sessionMap.get(senderPhone);
+
+    if (normalized === '0') {
+      if (session?.selectedStudentId) {
+        this.sessionMap.set(senderPhone, {
+          stage: 'awaiting_menu',
+          selectedStudentId: session.selectedStudentId,
+          updatedAt: Date.now(),
+        });
+        return this.buildMenuMessage();
       }
 
-      this.clearSession(senderPhone);
-      return this.buildIntentResponse(context.pendingIntent, student);
+      this.sessionMap.set(senderPhone, {
+        stage: 'awaiting_student_id',
+        updatedAt: Date.now(),
+      });
+      return this.buildStudentIdPrompt();
     }
 
+    if (!session) {
+      this.sessionMap.set(senderPhone, {
+        stage: 'awaiting_student_id',
+        updatedAt: Date.now(),
+      });
+      return this.buildStudentIdPrompt();
+    }
+
+    if (session.stage === 'awaiting_student_selection') {
+      return this.handleStudentSelectionStep(senderPhone, text, linkedStudents, session);
+    }
+
+    if (session.stage === 'awaiting_student_id') {
+      return this.handleStudentIdStep(senderPhone, text, linkedStudents);
+    }
+
+    return this.handleMenuStep(senderPhone, normalized, linkedStudents, session);
+  }
+
+  private async handleStudentIdStep(senderPhone: string, text: string, linkedStudents: Student[]): Promise<string> {
+    const student = this.findStudentByStudentId(text, linkedStudents);
+
+    if (!student) {
+      if (linkedStudents.length > 1) {
+        const candidateIds = linkedStudents.map((item) => item.id);
+        this.sessionMap.set(senderPhone, {
+          stage: 'awaiting_student_selection',
+          candidateStudentIds: candidateIds,
+          updatedAt: Date.now(),
+        });
+
+        return [
+          'The Student ID you entered is invalid. Please try again.',
+          '',
+          'Multiple students found for this phone number. Please select:',
+          ...linkedStudents.map((item, index) => `${index + 1}. ${item.firstName} ${item.lastName} (${item.studentId})`),
+          '',
+          'Reply with the number or enter Student ID again.',
+        ].join('\n');
+      }
+
+      return 'The Student ID you entered is invalid. Please try again.';
+    }
+
+    this.sessionMap.set(senderPhone, {
+      stage: 'awaiting_menu',
+      selectedStudentId: student.id,
+      updatedAt: Date.now(),
+    });
+
     return [
-      'Please use the numeric menu options.',
+      this.buildPersonalizedWelcome(student),
       '',
       this.buildMenuMessage(),
     ].join('\n');
   }
 
-  private async resolveIntentForSender(senderPhone: string, intent: StudentIntent): Promise<string> {
-    const students = await this.resolveStudentsForSender(senderPhone);
+  private async handleStudentSelectionStep(
+    senderPhone: string,
+    text: string,
+    linkedStudents: Student[],
+    session: SessionState,
+  ): Promise<string> {
+    const selectedByIndex = this.findStudentBySelectionNumber(text, linkedStudents, session.candidateStudentIds || []);
+    const selectedById = this.findStudentByStudentId(text, linkedStudents);
+    const selectedStudent = selectedByIndex || selectedById;
 
-    if (students.length === 0) {
-      return this.unregisteredNumberReply;
-    }
-
-    if (students.length === 1) {
-      return this.buildIntentResponse(intent, students[0]);
+    if (!selectedStudent) {
+      return [
+        'Invalid selection. Please choose a valid student.',
+        ...linkedStudents.map((item, index) => `${index + 1}. ${item.firstName} ${item.lastName} (${item.studentId})`),
+        '',
+        'Reply with the number or enter Student ID again.',
+      ].join('\n');
     }
 
     this.sessionMap.set(senderPhone, {
-      pendingIntent: intent,
-      awaitingStudentId: true,
+      stage: 'awaiting_menu',
+      selectedStudentId: selectedStudent.id,
       updatedAt: Date.now(),
     });
 
-    const listed = students
-      .slice(0, 10)
-      .map((student, index) => `${index + 1}. ${student.studentId} - ${student.firstName} ${student.lastName}`)
-      .join('\n');
-
     return [
-      'Multiple students are linked to this number.',
-      'Reply with the Student ID to continue.',
+      this.buildPersonalizedWelcome(selectedStudent),
       '',
-      listed,
+      this.buildMenuMessage(),
     ].join('\n');
+  }
+
+  private async handleMenuStep(
+    senderPhone: string,
+    normalizedText: string,
+    linkedStudents: Student[],
+    session: SessionState,
+  ): Promise<string> {
+    const student = linkedStudents.find((item) => item.id === session.selectedStudentId);
+
+    if (!student) {
+      this.sessionMap.set(senderPhone, {
+        stage: 'awaiting_student_id',
+        updatedAt: Date.now(),
+      });
+      return this.buildStudentIdPrompt();
+    }
+
+    const intent = this.parseNumericIntent(normalizedText);
+    if (!intent) {
+      return [
+        'Invalid option. Please reply with a number between 1 and 6.',
+        '',
+        this.buildMenuMessage(),
+      ].join('\n');
+    }
+
+    this.sessionMap.set(senderPhone, {
+      stage: 'awaiting_menu',
+      selectedStudentId: student.id,
+      updatedAt: Date.now(),
+    });
+
+    const response = await this.buildIntentResponse(intent, student);
+    return this.appendExitToMainMenuHint(response);
+  }
+
+  private findStudentByStudentId(input: string, students: Student[]): Student | null {
+    const target = String(input || '').trim().toUpperCase();
+    if (!target) {
+      return null;
+    }
+
+    for (const student of students) {
+      if (String(student.studentId || '').trim().toUpperCase() === target) {
+        return student;
+      }
+    }
+
+    return null;
+  }
+
+  private findStudentBySelectionNumber(input: string, students: Student[], candidateStudentIds: string[]): Student | null {
+    const selectedIndex = Number.parseInt(String(input || '').trim(), 10);
+    if (!Number.isInteger(selectedIndex) || selectedIndex < 1) {
+      return null;
+    }
+
+    const ordered = students.filter((item) => candidateStudentIds.includes(item.id));
+    return ordered[selectedIndex - 1] || null;
+  }
+
+  private buildStudentIdPrompt(): string {
+    return [
+      'Welcome to EduNexus Smart School System',
+      'Please enter your Student ID to proceed.',
+    ].join('\n');
+  }
+
+  private buildPersonalizedWelcome(student: Student): string {
+    const schoolName = student.school?.name || 'EduNexus School';
+    const studentName = `${student.firstName} ${student.lastName}`.trim();
+    return `Welcome to ${schoolName}, ${studentName}`;
+  }
+
+  private isGreeting(normalized: string): boolean {
+    return ['hi', 'hello', 'hie', 'hey', 'menu', 'help'].includes(normalized);
   }
 
   private async buildIntentResponse(intent: StudentIntent, student: Student): Promise<string> {
@@ -339,7 +482,7 @@ export class WhatsAppService {
     const announcements = await this.notificationRepository
       .createQueryBuilder('n')
       .where('n.schoolId = :schoolId', { schoolId: student.schoolId || null })
-      .andWhere(`(n.targetRoles IS NULL OR n.targetRoles @> :studentRole::jsonb OR n.targetRoles @> :parentRole::jsonb)`, {
+      .andWhere('(n.targetRoles IS NULL OR n.targetRoles @> :studentRole::jsonb OR n.targetRoles @> :parentRole::jsonb)', {
         studentRole: JSON.stringify(['STUDENT']),
         parentRole: JSON.stringify(['PARENT']),
       })
@@ -348,11 +491,7 @@ export class WhatsAppService {
       .getMany();
 
     if (!announcements.length) {
-      return [
-        'Latest Announcements',
-        '',
-        'No announcements are available right now.',
-      ].join('\n');
+      return ['Latest Announcements', '', 'No announcements are available right now.'].join('\n');
     }
 
     const lines = announcements.map((item, index) => {
@@ -361,11 +500,7 @@ export class WhatsAppService {
       return `${index + 1}. ${item.title}${compact ? ` - ${compact}` : ''}`;
     });
 
-    return [
-      'Latest Announcements',
-      '',
-      ...lines,
-    ].join('\n');
+    return ['Latest Announcements', '', ...lines].join('\n');
   }
 
   private async buildOutstandingBalanceMessage(student: Student): Promise<string> {
@@ -505,12 +640,9 @@ export class WhatsAppService {
       return `${term} ${row.course?.name || 'Course'}: ${score}% (${grade})`;
     });
 
-    return [
-      'Exam Results',
-      '',
-      `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
-      ...lines,
-    ].join('\n');
+    return ['Exam Results', '', `Student: ${student.firstName} ${student.lastName} (${student.studentId})`, ...lines].join(
+      '\n',
+    );
   }
 
   private async buildAttendanceMessage(student: Student): Promise<string> {
@@ -582,16 +714,7 @@ export class WhatsAppService {
 
     const lines = rows.map((row) => `${row.day} ${row.startTime}-${row.endTime}: ${row.course?.name || 'Course'}`);
 
-    return [
-      'Timetable',
-      '',
-      `Student: ${student.firstName} ${student.lastName} (${student.studentId})`,
-      ...lines,
-    ].join('\n');
-  }
-
-  private isMenuRequest(normalized: string): boolean {
-    return ['hi', 'hello', 'help', 'menu', '?'].includes(normalized);
+    return ['Timetable', '', `Student: ${student.firstName} ${student.lastName} (${student.studentId})`, ...lines].join('\n');
   }
 
   private parseNumericIntent(normalized: string): StudentIntent | null {
@@ -606,8 +729,6 @@ export class WhatsAppService {
 
   private buildMenuMessage(): string {
     return [
-      'EduNexus Student Menu',
-      '',
       'Reply with a number only:',
       '1. Outstanding balance (all terms)',
       '2. Exam results',
@@ -615,11 +736,13 @@ export class WhatsAppService {
       '4. Timetable',
       '5. Payment history',
       '6. Latest announcements',
+      '',
+      'Reply 0 at any time to return to this main menu.',
     ].join('\n');
   }
 
-  private clearSession(senderPhone: string): void {
-    this.sessionMap.delete(senderPhone);
+  private appendExitToMainMenuHint(message: string): string {
+    return [message, '', 'Reply 0 to return to the main menu.'].join('\n');
   }
 
   private cleanupStaleSession(senderPhone: string): void {
@@ -640,18 +763,22 @@ export class WhatsAppService {
     const directStudents = await this.studentRepository
       .createQueryBuilder('student')
       .leftJoinAndSelect('student.class', 'class')
+      .leftJoinAndSelect('student.school', 'school')
       .where(`REGEXP_REPLACE(COALESCE(student.phoneNumber, ''), '[^0-9]', '', 'g') IN (:...phones)`, {
         phones: candidates,
       })
+      .andWhere('student.isActive = :isActive', { isActive: true })
       .getMany();
 
     const parentLinkedStudents = await this.studentRepository
       .createQueryBuilder('student')
       .leftJoinAndSelect('student.parent', 'parent')
       .leftJoinAndSelect('student.class', 'class')
+      .leftJoinAndSelect('student.school', 'school')
       .where(`REGEXP_REPLACE(COALESCE(parent.phoneNumber, ''), '[^0-9]', '', 'g') IN (:...phones)`, {
         phones: candidates,
       })
+      .andWhere('student.isActive = :isActive', { isActive: true })
       .getMany();
 
     const unique = new Map<string, Student>();
@@ -660,19 +787,6 @@ export class WhatsAppService {
     }
 
     return Array.from(unique.values());
-  }
-
-  private async resolveStudentForSenderByStudentId(phone: string, studentIdInput: string): Promise<Student | null> {
-    const students = await this.resolveStudentsForSender(phone);
-    const target = String(studentIdInput || '').trim().toUpperCase();
-
-    for (const student of students) {
-      if (String(student.studentId || '').trim().toUpperCase() === target) {
-        return student;
-      }
-    }
-
-    return null;
   }
 
   private buildOutboundPayload(dto: SendWhatsAppMessageDto, to: string): Record<string, unknown> {
@@ -746,8 +860,7 @@ export class WhatsAppService {
   private buildCloudApiUrl(): string {
     const baseUrl = this.getOptionalConfig('WHATSAPP_API_URL') || this.getLegacyApiBaseUrl();
     const normalizedBase = baseUrl.replace(/\/$/, '');
-    const phoneId =
-      this.getOptionalConfig('WHATSAPP_PHONE_ID') || this.getOptionalConfig('WHATSAPP_PHONE_NUMBER_ID');
+    const phoneId = this.getOptionalConfig('WHATSAPP_PHONE_ID') || this.getOptionalConfig('WHATSAPP_PHONE_NUMBER_ID');
 
     if (!phoneId) {
       throw new Error('Missing WhatsApp phone id. Set WHATSAPP_PHONE_ID.');
