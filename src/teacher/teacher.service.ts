@@ -1024,6 +1024,7 @@ export class TeachersService {
       email: validatedDto.email,
       password: hashedPassword,
       role: Role.TEACHER,
+      forcePasswordReset: true,
       schoolId: createTeacherDto.schoolId || undefined,
     });
     await this.userRepository.save(user);

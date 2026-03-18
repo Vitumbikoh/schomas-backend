@@ -2158,6 +2158,7 @@ async getParentPayments(
       password: hashedPassword,
       role: Role.FINANCE,
       isActive: true,
+      forcePasswordReset: true,
       schoolId: schoolId || undefined,
     });
 

@@ -95,12 +95,14 @@ export class UsersService {
   async createUser(createUserDto: CreateUserDto): Promise<User> {
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
     const userSettings = new UserSettings();
+    const shouldForcePasswordReset = createUserDto.role !== Role.SUPER_ADMIN;
     const user = this.userRepository.create({
       username: createUserDto.username,
   email: createUserDto.email ?? null,
       password: hashedPassword,
       role: createUserDto.role as Role,
       isActive: true,
+      forcePasswordReset: shouldForcePasswordReset,
       schoolId: createUserDto.schoolId ?? null,
       settings: userSettings,
     });
