@@ -8,6 +8,7 @@ import {
     ParseUUIDPipe,
     Request,
     Patch,
+  Query,
   } from '@nestjs/common';
   import { CreateTeacherDto } from './dtos/create-teacher.dto';
   import { CreateStudentDto } from './dtos/create-student.dto';
@@ -97,6 +98,68 @@ import { SystemLoggingService } from '../logs/system-logging.service';
     ) {
       const userId = req.user?.sub;
       return this.usersService.changePassword(userId, body.newPassword, body.oldPassword);
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(Role.ADMIN)
+    @Get('password-management')
+    async listUsersForPasswordManagement(
+      @Request() req,
+      @Query('page') page = 1,
+      @Query('limit') limit = 10,
+      @Query('search') search?: string,
+      @Query('role') role?: string,
+      @Query('status') status?: string,
+    ) {
+      return this.usersService.listUsersForPasswordManagement(req.user, {
+        page: Number(page),
+        limit: Number(limit),
+        search,
+        role,
+        status,
+      });
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(Role.ADMIN)
+    @Patch(':id/admin-reset-password')
+    async adminResetPassword(
+      @Param('id', ParseUUIDPipe) id: string,
+      @Request() req,
+      @Body() body: { newTemporaryPassword: string; forceResetOnNextLogin?: boolean; reason?: string },
+    ) {
+      const result = await this.usersService.adminResetPassword(
+        req.user,
+        id,
+        body.newTemporaryPassword,
+        body.forceResetOnNextLogin !== false,
+      );
+
+      await this.systemLoggingService.logAction({
+        action: 'admin_reset_user_password',
+        module: 'users',
+        level: 'warn',
+        performedBy: {
+          id: req.user?.sub,
+          email: req.user?.email || 'unknown',
+          role: req.user?.role || 'admin',
+          name: req.user?.username || req.user?.email || 'Admin User',
+        },
+        entityId: id,
+        entityType: 'User',
+        metadata: {
+          reason: body.reason || 'password forgotten',
+          forceResetOnNextLogin: body.forceResetOnNextLogin !== false,
+          targetRole: result.targetRole,
+          targetSchoolId: result.targetSchoolId,
+          resetAt: new Date().toISOString(),
+        },
+      });
+
+      return {
+        success: true,
+        message: 'Password reset successfully. User must change password on next login.',
+      };
     }
   
     @UseGuards(JwtAuthGuard, RolesGuard)

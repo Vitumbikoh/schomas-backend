@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOneOptions, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
@@ -293,6 +293,121 @@ export class UsersService {
       .leftJoinAndSelect('finance.user', 'user')
       .where('user.schoolId = :schoolId', { schoolId })
       .getMany();
+  }
+
+  async listUsersForPasswordManagement(
+    requester: { role?: string; schoolId?: string; sub?: string },
+    filters: { page: number; limit: number; search?: string; role?: string; status?: string },
+  ) {
+    const page = Number.isFinite(filters.page) && filters.page > 0 ? filters.page : 1;
+    const limit = Number.isFinite(filters.limit) && filters.limit > 0 ? Math.min(filters.limit, 100) : 10;
+    const offset = (page - 1) * limit;
+    const requesterRole = (requester?.role || '').toUpperCase();
+    const isSuperAdmin = requesterRole === Role.SUPER_ADMIN;
+
+    const qb = this.userRepository
+      .createQueryBuilder('user')
+      .leftJoinAndSelect('user.teacher', 'teacher')
+      .leftJoinAndSelect('user.student', 'student')
+      .leftJoinAndSelect('user.parent', 'parent')
+      .leftJoinAndSelect('user.finance', 'finance');
+
+    if (!isSuperAdmin) {
+      if (!requester?.schoolId) {
+        throw new ForbiddenException('School scope not found for this admin account');
+      }
+      qb.andWhere('user.schoolId = :schoolId', { schoolId: requester.schoolId });
+      qb.andWhere('user.role != :superRole', { superRole: Role.SUPER_ADMIN });
+    }
+
+    if (filters.role && filters.role !== 'all') {
+      qb.andWhere('user.role = :role', { role: String(filters.role).toUpperCase() });
+    }
+
+    if (filters.status && filters.status !== 'all') {
+      if (filters.status === 'active') qb.andWhere('user.isActive = true');
+      if (filters.status === 'inactive') qb.andWhere('user.isActive = false');
+    }
+
+    if (filters.search && filters.search.trim()) {
+      const term = `%${filters.search.trim()}%`;
+      qb.andWhere(
+        '(user.username ILIKE :term OR user.email ILIKE :term OR teacher.firstName ILIKE :term OR teacher.lastName ILIKE :term OR student.firstName ILIKE :term OR student.lastName ILIKE :term OR parent.firstName ILIKE :term OR parent.lastName ILIKE :term OR finance.firstName ILIKE :term OR finance.lastName ILIKE :term)',
+        { term },
+      );
+    }
+
+    qb.orderBy('user.createdAt', 'DESC').skip(offset).take(limit);
+
+    const [users, totalItems] = await qb.getManyAndCount();
+
+    const mapped = users.map((u) => {
+      const profile = u.teacher || u.student || u.parent || u.finance;
+      const firstName = (profile as any)?.firstName || '';
+      const lastName = (profile as any)?.lastName || '';
+      return {
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        role: u.role,
+        isActive: u.isActive,
+        forcePasswordReset: u.forcePasswordReset,
+        schoolId: u.schoolId,
+        firstName,
+        lastName,
+        displayName: `${firstName} ${lastName}`.trim() || u.username,
+        lastLoginAt: u.lastLoginAt,
+      };
+    });
+
+    return {
+      users: mapped,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.max(1, Math.ceil(totalItems / limit)),
+        totalItems,
+        itemsPerPage: limit,
+      },
+    };
+  }
+
+  async adminResetPassword(
+    requester: { role?: string; schoolId?: string; sub?: string },
+    targetUserId: string,
+    newTemporaryPassword: string,
+    forceResetOnNextLogin = true,
+  ) {
+    if (!newTemporaryPassword || newTemporaryPassword.length < 8) {
+      throw new BadRequestException('Temporary password must be at least 8 characters long');
+    }
+
+    const requesterRole = (requester?.role || '').toUpperCase();
+    const isSuperAdmin = requesterRole === Role.SUPER_ADMIN;
+
+    const targetUser = await this.userRepository.findOne({ where: { id: targetUserId } });
+    if (!targetUser) {
+      throw new NotFoundException('Target user not found');
+    }
+
+    if (!isSuperAdmin) {
+      if (!requester?.schoolId || !targetUser.schoolId || requester.schoolId !== targetUser.schoolId) {
+        throw new ForbiddenException('You can only reset passwords for users in your school');
+      }
+      if (targetUser.role === Role.SUPER_ADMIN) {
+        throw new ForbiddenException('Admin cannot reset super admin passwords');
+      }
+    }
+
+    targetUser.password = await bcrypt.hash(newTemporaryPassword, 10);
+    targetUser.forcePasswordReset = forceResetOnNextLogin as any;
+    targetUser.updatedAt = new Date();
+    await this.userRepository.save(targetUser);
+
+    return {
+      ok: true,
+      targetRole: targetUser.role,
+      targetSchoolId: targetUser.schoolId,
+    };
   }
 
   // Count users by SUPER_ADMIN role (bootstrap logic)
