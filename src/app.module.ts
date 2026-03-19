@@ -39,6 +39,7 @@ import { ExamResultModule } from './exam-results/exam-result.module';
 import { NotificationModule } from './notifications/notification.module';
 import { MessagesModule } from './messages/messages.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { HostelModule } from './hostel/hostel.module';
 
 @Module({
   imports: [
@@ -106,6 +107,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
   NotificationModule,
   MessagesModule,
   WhatsAppModule,
+  HostelModule,
   ],
 })
 export class AppModule implements NestModule {
