@@ -44,11 +44,14 @@ import { CreateTermHolidayDto, UpdateTermHolidayDto } from './dtos/term-holiday.
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
+import { randomUUID } from 'crypto';
 import type { Multer } from 'multer';
 import { StudentPromotionService } from '../student/services/student-promotion.service';
 import { NotificationService } from '../notifications/notification.service';
 import { NotificationType, NotificationPriority } from '../notifications/entities/notification.entity';
 import { StudentClassPromotion } from '../student/entities/student-class-promotion.entity';
+
+type ProgressionExecutionScope = 'whole_school' | 'class';
 
 @ApiTags('settings')
 @Controller('settings')
@@ -1061,10 +1064,16 @@ async createTermPeriod(
   @UseGuards(JwtAuthGuard)
   @Get('student-promotion/preview')
   @ApiOperation({ summary: 'Preview student promotion statistics for term 3 or term 3 holiday' })
+  @ApiQuery({ name: 'executionScope', required: false, enum: ['whole_school', 'class'] })
+  @ApiQuery({ name: 'classId', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Student promotion statistics generated successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 400, description: 'Not in progression period - only available during Term 3 or Term 3 holiday' })
-  async previewStudentPromotion(@Request() req) {
+  async previewStudentPromotion(
+    @Request() req,
+    @Query('executionScope') executionScopeQuery?: ProgressionExecutionScope,
+    @Query('classId') classId?: string,
+  ) {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can preview student promotions');
     }
@@ -1129,15 +1138,48 @@ async createTermPeriod(
         };
       }
 
+      const executionScope: ProgressionExecutionScope = executionScopeQuery === 'class' ? 'class' : 'whole_school';
+      let selectedClass: Class | null = null;
+      if (executionScope === 'class') {
+        if (!classId) {
+          throw new BadRequestException('classId is required when executionScope is class');
+        }
+
+        selectedClass = await this.dataSource.manager.findOne(Class, {
+          where: {
+            id: classId,
+            schoolId: req.user.schoolId,
+          },
+        });
+
+        if (!selectedClass) {
+          throw new BadRequestException('Selected class not found for this school');
+        }
+      }
+
       // Check if progression has already been executed for this academic year
       if (currentAcademicCalendar.studentProgressionExecuted) {
+        let executedForClassName: string | undefined;
+        if (currentAcademicCalendar.studentProgressionExecutionClassId) {
+          const executedClass = await this.dataSource.manager.findOne(Class, {
+            where: {
+              id: currentAcademicCalendar.studentProgressionExecutionClassId,
+              schoolId: req.user.schoolId,
+            },
+          });
+          executedForClassName = executedClass?.name;
+        }
+
         return {
           success: false,
           message: 'Student progression has already been executed for this academic year',
           isProgressionPeriod: false,
           progressionPeriod: progressionTerm.termNumber === 3 && progressionTerm.isCompleted ? 'Term 3 completed (holiday period)' : 'Current term is Term 3',
           term: `Term ${progressionTerm.termNumber}`,
-          executed: true
+          executed: true,
+          executionScope: currentAcademicCalendar.studentProgressionExecutionScope || 'whole_school',
+          executionClassId: currentAcademicCalendar.studentProgressionExecutionClassId,
+          executionClassName: executedForClassName,
         };
       }
 
@@ -1157,12 +1199,20 @@ async createTermPeriod(
         relations: ['class']
       });
 
-      if (!students || students.length === 0) {
+      const scopedStudents = executionScope === 'class'
+        ? students.filter((s) => s.classId === classId)
+        : students;
+
+      if (!scopedStudents || scopedStudents.length === 0) {
         return {
           success: true,
-          message: 'No students found in school',
+          message: executionScope === 'class'
+            ? `No active students found in ${selectedClass?.name || 'selected class'}`
+            : 'No students found in school',
           isProgressionPeriod: true,
           currentTerm: 'Term 3',
+          executionScope,
+          selectedClass: selectedClass ? { id: selectedClass.id, name: selectedClass.name } : undefined,
           statistics: {
             total: 0,
             promote: 0,
@@ -1196,7 +1246,7 @@ async createTermPeriod(
 
       // First, count students per class to ensure accurate totals
       const studentCountByClass = new Map<string, number>();
-      for (const student of students) {
+      for (const student of scopedStudents) {
         if (!student.class) continue;
         const className = student.class.name;
         studentCountByClass.set(className, (studentCountByClass.get(className) || 0) + 1);
@@ -1289,6 +1339,8 @@ async createTermPeriod(
         isProgressionPeriod: true,
         progressionPeriod: progressionTerm.termNumber === 3 && progressionTerm.isCompleted ? 'Term 3 completed (holiday period)' : 'Current term is Term 3',
         term: `Term ${progressionTerm.termNumber}`,
+        executionScope,
+        selectedClass: selectedClass ? { id: selectedClass.id, name: selectedClass.name } : undefined,
         progressionMode,
         passThreshold,
         statistics: {
@@ -1356,7 +1408,10 @@ async createTermPeriod(
   @ApiResponse({ status: 200, description: 'Student promotions executed successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 400, description: 'Not in progression period - only available during Term 3 or Term 3 holiday' })
-  async executeStudentPromotion(@Request() req) {
+  async executeStudentPromotion(
+    @Request() req,
+    @Body() body?: { executionScope?: ProgressionExecutionScope; classId?: string },
+  ) {
     if (req.user.role !== 'ADMIN') {
       throw new UnauthorizedException('Only admins can execute student promotions');
     }
@@ -1420,17 +1475,58 @@ async createTermPeriod(
         throw new BadRequestException('No active academic calendar found');
       }
 
+      const executionScope: ProgressionExecutionScope = body?.executionScope === 'class' ? 'class' : 'whole_school';
+      let selectedClass: Class | null = null;
+
+      if (executionScope === 'class') {
+        if (!body?.classId) {
+          throw new BadRequestException('classId is required when executionScope is class');
+        }
+
+        selectedClass = await this.dataSource.manager.findOne(Class, {
+          where: {
+            id: body.classId,
+            schoolId: req.user.schoolId,
+          },
+        });
+
+        if (!selectedClass) {
+          throw new BadRequestException('Selected class not found for this school');
+        }
+      }
+
       if (currentAcademicCalendar.studentProgressionExecuted) {
+        let executedForClassName: string | undefined;
+        if (currentAcademicCalendar.studentProgressionExecutionClassId) {
+          const executedClass = await this.dataSource.manager.findOne(Class, {
+            where: {
+              id: currentAcademicCalendar.studentProgressionExecutionClassId,
+              schoolId: req.user.schoolId,
+            },
+          });
+          executedForClassName = executedClass?.name;
+        }
+
+        const executedScopeLabel = currentAcademicCalendar.studentProgressionExecutionScope === 'class'
+          ? `Class progression${executedForClassName ? ` (${executedForClassName})` : ''}`
+          : 'Whole school progression';
+
         // Notify admins that progression has already been run
         try {
           await this.notificationService.create({
             title: 'Progression Already Completed',
-            message: `Student progression has already been executed for this academic year.\nExecuted during: ${progressionReason}\nTerm: Term ${progressionTerm.termNumber}`,
+            message: `Student progression has already been executed for this academic year.\nExecution scope: ${executedScopeLabel}\nExecuted during: ${progressionReason}\nTerm: Term ${progressionTerm.termNumber}`,
             type: NotificationType.ALERT,
             priority: NotificationPriority.MEDIUM,
             schoolId: req.user.schoolId,
             targetRoles: ['ADMIN', 'TEACHER'],
-            metadata: { progressionPeriod: progressionReason, term: `Term ${progressionTerm.termNumber}` }
+            metadata: {
+              progressionPeriod: progressionReason,
+              term: `Term ${progressionTerm.termNumber}`,
+              executionScope: currentAcademicCalendar.studentProgressionExecutionScope || 'whole_school',
+              executionClassId: currentAcademicCalendar.studentProgressionExecutionClassId,
+              executionClassName: executedForClassName,
+            }
           });
         } catch (err) {
           this.logger.error('Failed to create progression-completed notification: ' + err.message);
@@ -1441,17 +1537,27 @@ async createTermPeriod(
           message: 'Student progression has already been executed for this academic year',
           isProgressionPeriod: true,
           progressionPeriod: progressionReason,
-          term: `Term ${progressionTerm.termNumber}`
+          term: `Term ${progressionTerm.termNumber}`,
+          executionScope: currentAcademicCalendar.studentProgressionExecutionScope || 'whole_school',
+          executionClassId: currentAcademicCalendar.studentProgressionExecutionClassId,
+          executionClassName: executedForClassName,
         };
       }
 
       // Execute the actual student promotions (record execution metadata for revert)
       // Generate a unique progressionId for this run
-      const progressionId = require('crypto').randomUUID();
+      const progressionId = randomUUID();
       const promotionResult = await this.studentPromotionService.promoteStudentsToNextClass(
         req.user.schoolId,
         undefined,
-        { executionId: currentAcademicCalendar.id, executionAt: new Date(), progressionId }
+        {
+          executionId: currentAcademicCalendar.id,
+          executionAt: new Date(),
+          progressionId,
+          targetClassId: selectedClass?.id,
+          executionScope,
+          executionScopeClassName: selectedClass?.name,
+        }
       );
 
       const progressionRecords = await this.dataSource.manager.find(StudentClassPromotion, {
@@ -1477,6 +1583,7 @@ async createTermPeriod(
       const totalActiveStudents = await this.dataSource.manager.count(Student, {
         where: {
           schoolId: req.user.schoolId,
+          ...(selectedClass?.id ? { classId: selectedClass.id } : {}),
           isActive: true,
         },
       });
@@ -1505,7 +1612,12 @@ async createTermPeriod(
       await this.dataSource.manager.update(
         AcademicCalendar,
         { id: currentAcademicCalendar.id },
-        { studentProgressionExecuted: true, updatedAt: new Date() }
+        {
+          studentProgressionExecuted: true,
+          studentProgressionExecutionScope: executionScope,
+          studentProgressionExecutionClassId: selectedClass?.id || null,
+          updatedAt: new Date(),
+        }
       );
 
       const result = {
@@ -1517,6 +1629,9 @@ async createTermPeriod(
         promoted: promotionResult.promotedStudents,
         graduated: promotionResult.graduatedStudents,
         retained: retainedCount,
+        executionScope,
+        executionClassId: selectedClass?.id,
+        executionClassName: selectedClass?.name,
         errors: promotionResult.errors.length,
         totalProcessed: totalActiveStudents,
         executedAt: new Date(),
@@ -1677,10 +1792,25 @@ async createTermPeriod(
           term: '',
           transitions: {} as Record<string, number>,
           note: '',
+          executionScope: 'whole_school' as ProgressionExecutionScope,
+          executionClassId: null as string | null,
+          executionClassName: null as string | null,
         });
       }
 
       const item = grouped.get(executionKey);
+      if (row.note && typeof row.note === 'string') {
+        const scopeMatch = row.note.match(/scope:(whole_school|class)/);
+        const classIdMatch = row.note.match(/classId:([^;]+)/);
+        const classNameMatch = row.note.match(/className:([^;]+)/);
+
+        if (scopeMatch?.[1] === 'class') {
+          item.executionScope = 'class';
+          item.executionClassId = classIdMatch?.[1] || null;
+          item.executionClassName = classNameMatch?.[1] || null;
+        }
+      }
+
       const fromName = row.fromClass?.name || 'Unknown';
       const toName = row.toClass?.name || 'Unknown';
       const transitionKey = `${fromName} -> ${toName}`;
@@ -1807,7 +1937,12 @@ async createTermPeriod(
         await this.dataSource.manager.update(
           AcademicCalendar,
           { id: currentAcademicCalendar.id },
-          { studentProgressionExecuted: false, updatedAt: new Date() }
+          {
+            studentProgressionExecuted: false,
+            studentProgressionExecutionScope: null,
+            studentProgressionExecutionClassId: null,
+            updatedAt: new Date(),
+          }
         );
       }
 

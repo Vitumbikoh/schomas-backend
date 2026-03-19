@@ -33,6 +33,12 @@ export class AcademicCalendar {
   @Column({ default: false })
   studentProgressionExecuted: boolean;
 
+  @Column({ type: 'enum', enum: ['whole_school', 'class'], nullable: true })
+  studentProgressionExecutionScope: 'whole_school' | 'class' | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  studentProgressionExecutionClassId: string | null;
+
   @Column({ type: 'int', default: 0 })
   completedYearsCount: number;
 

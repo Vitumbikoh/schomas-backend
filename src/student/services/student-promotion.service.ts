@@ -248,7 +248,14 @@ export class StudentPromotionService {
   async promoteStudentsToNextClass(
     schoolId: string,
     queryRunner?: QueryRunner,
-    options?: { executionId?: string; executionAt?: Date; progressionId?: string }
+    options?: {
+      executionId?: string;
+      executionAt?: Date;
+      progressionId?: string;
+      targetClassId?: string;
+      executionScope?: 'whole_school' | 'class';
+      executionScopeClassName?: string;
+    }
   ): Promise<{
     promotedStudents: number;
     graduatedStudents: number;
@@ -258,6 +265,9 @@ export class StudentPromotionService {
     const executionId = options?.executionId;
     const executionAt = options?.executionAt;
     const progressionId = options?.progressionId;
+    const targetClassId = options?.targetClassId;
+    const executionScope = options?.executionScope || 'whole_school';
+    const executionScopeClassName = options?.executionScopeClassName;
     const isExternalTransaction = !!queryRunner;
     if (!queryRunner) {
       queryRunner = this.dataSource.createQueryRunner();
@@ -341,6 +351,10 @@ export class StudentPromotionService {
       // Exclude inactive students from progression
       students = students.filter(s => s.isActive);
 
+      if (targetClassId) {
+        students = students.filter((s) => s.classId === targetClassId);
+      }
+
       // Fallback: if no students returned (some legacy rows might have null schoolId but class belongs to school)
       if (students.length === 0) {
         const classIds = (await queryRunner.manager.find(Class, { where: { schoolId }, select: ['id'] })).map(c => c.id);
@@ -409,6 +423,10 @@ export class StudentPromotionService {
               targetClassId: nextClassId,
               schoolId,
               manager: queryRunner.manager,
+              note:
+                executionScope === 'class'
+                  ? `scope:class;classId:${targetClassId};className:${executionScopeClassName || ''}`
+                  : 'scope:whole_school',
               executionId: executionId,
               executionAt: executionAt,
               progressionId: progressionId,
@@ -433,6 +451,10 @@ export class StudentPromotionService {
                 targetClassId: graduatedClass.id,
                 schoolId,
                 manager: queryRunner.manager,
+                note:
+                  executionScope === 'class'
+                    ? `scope:class;classId:${targetClassId};className:${executionScopeClassName || ''}`
+                    : 'scope:whole_school',
                 executionId: executionId,
                 executionAt: executionAt,
                 progressionId: progressionId,
