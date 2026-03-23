@@ -40,6 +40,7 @@ import { NotificationModule } from './notifications/notification.module';
 import { MessagesModule } from './messages/messages.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { HostelModule } from './hostel/hostel.module';
+import { InventoryModule } from './inventory/inventory.module';
 
 @Module({
   imports: [
@@ -108,6 +109,7 @@ import { HostelModule } from './hostel/hostel.module';
   MessagesModule,
   WhatsAppModule,
   HostelModule,
+  InventoryModule,
   ],
 })
 export class AppModule implements NestModule {
