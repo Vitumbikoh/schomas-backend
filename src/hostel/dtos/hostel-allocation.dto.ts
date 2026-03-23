@@ -32,6 +32,23 @@ export class CreateHostelAllocationDto {
   notes?: string;
 }
 
+export class CreateHostelClassAllocationDto {
+  @IsUUID()
+  classId: string;
+
+  @IsUUID()
+  hostelId: string;
+
+  @IsOptional()
+  @IsDateString()
+  assignedAt?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  notes?: string;
+}
+
 export class ReleaseHostelAllocationDto {
   @IsOptional()
   @IsDateString()

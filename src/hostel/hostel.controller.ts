@@ -19,6 +19,7 @@ import { CreateHostelDto, UpdateHostelDto } from './dtos/hostel.dto';
 import { CreateHostelRoomDto, UpdateHostelRoomDto } from './dtos/hostel-room.dto';
 import { UpdateHostelSetupDto } from './dtos/hostel-setup.dto';
 import {
+  CreateHostelClassAllocationDto,
   CreateHostelAllocationDto,
   ReleaseAllHostelAllocationsDto,
   ReleaseHostelAllocationDto,
@@ -97,6 +98,18 @@ export class HostelController {
     });
   }
 
+  @Get('allocations/class-preview')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  classAllocationPreview(
+    @Request() req,
+    @Query('classId') classId: string,
+    @Query('hostelId') hostelId: string,
+    @Query('schoolId') schoolId?: string,
+  ) {
+    const resolvedSchoolId = this.resolveSchoolId(req, schoolId);
+    return this.hostelService.getClassAllocationPreview(resolvedSchoolId, classId, hostelId);
+  }
+
   @Post('allocations')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   allocate(
@@ -106,6 +119,17 @@ export class HostelController {
   ) {
     const resolvedSchoolId = this.resolveSchoolId(req, schoolId);
     return this.hostelService.allocateStudent(resolvedSchoolId, dto);
+  }
+
+  @Post('allocations/class')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  allocateClass(
+    @Request() req,
+    @Body() dto: CreateHostelClassAllocationDto,
+    @Query('schoolId') schoolId?: string,
+  ) {
+    const resolvedSchoolId = this.resolveSchoolId(req, schoolId);
+    return this.hostelService.allocateClassStudents(resolvedSchoolId, dto);
   }
 
   @Post('allocations/:id/release')

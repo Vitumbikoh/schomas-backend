@@ -11,10 +11,12 @@ import { HostelRoom } from './entities/hostel-room.entity';
 import { HostelAllocation } from './entities/hostel-allocation.entity';
 import { HostelRoomNamingMode, HostelSetup } from './entities/hostel-setup.entity';
 import { Student } from '../user/entities/student.entity';
+import { Class } from '../classes/entity/class.entity';
 import { CreateHostelDto, UpdateHostelDto } from './dtos/hostel.dto';
 import { CreateHostelRoomDto, UpdateHostelRoomDto } from './dtos/hostel-room.dto';
 import { UpdateHostelSetupDto } from './dtos/hostel-setup.dto';
 import {
+  CreateHostelClassAllocationDto,
   CreateHostelAllocationDto,
   ReleaseHostelAllocationDto,
   ReleaseAllHostelAllocationsDto,
@@ -33,6 +35,8 @@ export class HostelService {
     private readonly setupRepo: Repository<HostelSetup>,
     @InjectRepository(Student)
     private readonly studentRepo: Repository<Student>,
+    @InjectRepository(Class)
+    private readonly classRepo: Repository<Class>,
   ) {}
 
   private async getOrCreateSetup(schoolId: string) {
@@ -72,6 +76,79 @@ export class HostelService {
     }
 
     return [];
+  }
+
+  private async buildClassAllocationSummary(schoolId: string, classId: string, hostelId: string) {
+    const [classRow, hostel] = await Promise.all([
+      this.classRepo.findOne({ where: { id: classId, schoolId } }),
+      this.hostelRepo.findOne({ where: { id: hostelId, schoolId } }),
+    ]);
+
+    if (!classRow) {
+      throw new NotFoundException('Class not found.');
+    }
+    if (!hostel) {
+      throw new NotFoundException('Hostel not found.');
+    }
+    if (!hostel.isActive) {
+      throw new ForbiddenException('Allocation is only allowed in active hostels.');
+    }
+
+    const roomData = await this.listRooms(schoolId, hostel.id);
+    const activeRooms = roomData.filter((room) => room.isActive && room.capacity > 0);
+    const availableBedsAtStart = activeRooms.reduce((sum, room) => sum + Math.max(room.availableBeds ?? 0, 0), 0);
+
+    const classStudents = await this.studentRepo.find({
+      where: {
+        schoolId,
+        classId: classRow.id,
+        isActive: true,
+      },
+      order: {
+        studentId: 'ASC',
+      },
+    });
+
+    const activeAllocations = await this.allocationRepo.find({
+      where: {
+        schoolId,
+        status: 'active',
+      },
+      select: ['studentId'],
+    });
+    const alreadyAllocatedIds = new Set(activeAllocations.map((row) => row.studentId));
+
+    const hostelGender = hostel.gender?.toLowerCase() || 'mixed';
+    const notAllocatedStudents = classStudents.filter((student) => !alreadyAllocatedIds.has(student.id));
+    const genderEligibleStudents =
+      hostelGender === 'mixed'
+        ? notAllocatedStudents
+        : notAllocatedStudents.filter((student) => (student.gender || '').toLowerCase() === hostelGender);
+    const genderMismatchCount = notAllocatedStudents.length - genderEligibleStudents.length;
+    const toBeAssignedNow = Math.min(genderEligibleStudents.length, availableBedsAtStart);
+    const unassignedDueToCapacity = Math.max(genderEligibleStudents.length - toBeAssignedNow, 0);
+
+    return {
+      classRow,
+      hostel,
+      activeRooms,
+      classStudents,
+      genderEligibleStudents,
+      summary: {
+        success: true,
+        classId: classRow.id,
+        className: classRow.name,
+        hostelId: hostel.id,
+        hostelName: hostel.name,
+        totalClassStudents: classStudents.length,
+        alreadyAllocatedCount: classStudents.length - notAllocatedStudents.length,
+        genderMismatchCount,
+        notYetAssignedCount: genderEligibleStudents.length,
+        toBeAssignedNow,
+        unassignedDueToCapacity,
+        availableBedsAtStart,
+      },
+    };
   }
 
   async getSetup(schoolId: string) {
@@ -598,6 +675,103 @@ export class HostelService {
     });
 
     return this.allocationRepo.save(allocation);
+  }
+
+  async allocateClassStudents(schoolId: string, dto: CreateHostelClassAllocationDto) {
+    const { classRow, hostel, activeRooms, classStudents, genderEligibleStudents, summary } =
+      await this.buildClassAllocationSummary(schoolId, dto.classId, dto.hostelId);
+
+    if (activeRooms.length === 0) {
+      throw new BadRequestException('No active rooms with available capacity in the selected hostel.');
+    }
+
+    if (classStudents.length === 0) {
+      return {
+        assignedCount: 0,
+        ...summary,
+        message: 'No active students found in this class.',
+      };
+    }
+
+    if (genderEligibleStudents.length === 0) {
+      return {
+        assignedCount: 0,
+        ...summary,
+        message:
+          summary.genderMismatchCount > 0
+            ? 'No students matched the selected hostel gender policy.'
+            : 'All class students are already allocated.',
+      };
+    }
+
+    return this.allocationRepo.manager.transaction(async (manager) => {
+      const txAllocationRepo = manager.getRepository(HostelAllocation);
+
+      const roomOccupancy = await txAllocationRepo
+        .createQueryBuilder('allocation')
+        .select('allocation.roomId', 'roomId')
+        .addSelect('COUNT(*)', 'occupied')
+        .where('allocation.schoolId = :schoolId', { schoolId })
+        .andWhere('allocation.hostelId = :hostelId', { hostelId: hostel.id })
+        .andWhere('allocation.status = :status', { status: 'active' })
+        .groupBy('allocation.roomId')
+        .getRawMany<{ roomId: string; occupied: string }>();
+
+      const occupiedMap = new Map(roomOccupancy.map((row) => [row.roomId, Number(row.occupied)]));
+      const roomQueue = activeRooms.map((room) => ({
+        id: room.id,
+        remaining: Math.max(room.capacity - (occupiedMap.get(room.id) ?? 0), 0),
+      }));
+
+      let roomIndex = 0;
+      const toCreate: HostelAllocation[] = [];
+      const assignedAt = dto.assignedAt ? new Date(dto.assignedAt) : new Date();
+
+      for (const student of genderEligibleStudents) {
+        while (roomIndex < roomQueue.length && roomQueue[roomIndex].remaining <= 0) {
+          roomIndex += 1;
+        }
+
+        if (roomIndex >= roomQueue.length) {
+          break;
+        }
+
+        const targetRoom = roomQueue[roomIndex];
+        toCreate.push(
+          txAllocationRepo.create({
+            schoolId,
+            studentId: student.id,
+            hostelId: hostel.id,
+            roomId: targetRoom.id,
+            notes: dto.notes,
+            assignedAt,
+            status: 'active',
+          }),
+        );
+        targetRoom.remaining -= 1;
+      }
+
+      if (toCreate.length > 0) {
+        await txAllocationRepo.save(toCreate);
+      }
+
+      const unassignedDueToCapacity = Math.max(summary.notYetAssignedCount - toCreate.length, 0);
+
+      return {
+        ...summary,
+        assignedCount: toCreate.length,
+        unassignedDueToCapacity,
+        message:
+          unassignedDueToCapacity > 0
+            ? `${toCreate.length} students assigned. ${unassignedDueToCapacity} students left unassigned due to insufficient room capacity.`
+            : `${toCreate.length} students assigned successfully.`,
+      };
+    });
+  }
+
+  async getClassAllocationPreview(schoolId: string, classId: string, hostelId: string) {
+    const { summary } = await this.buildClassAllocationSummary(schoolId, classId, hostelId);
+    return summary;
   }
 
   async releaseAllocation(schoolId: string, allocationId: string, dto: ReleaseHostelAllocationDto) {
