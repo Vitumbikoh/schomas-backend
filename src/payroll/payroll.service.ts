@@ -19,7 +19,7 @@ import { Term } from '../settings/entities/term.entity';
 import { Role } from '../user/enums/role.enum';
 import { NotificationService } from '../notifications/notification.service';
 import { NotificationPriority, NotificationType } from '../notifications/entities/notification.entity';
-import * as PDFDocument from 'pdfkit';
+import PDFDocument = require('pdfkit');
 
 @Injectable()
 export class PayrollService {
@@ -59,8 +59,28 @@ export class PayrollService {
       return `${user.finance.firstName} ${user.finance.lastName}`;
     }
     
-    // Fallback to username or email
-    return user.username || user.email || 'Unknown User';
+    // Fallback to username/email with readable formatting
+    const raw = user.username || user.email;
+    if (!raw || typeof raw !== 'string') return 'Unknown User';
+
+    const trimmed = raw.split('@')[0].replace(/[._-]+/g, ' ').trim();
+    if (!trimmed) return raw;
+
+    return trimmed
+      .split(' ')
+      .filter(Boolean)
+      .map((part: string) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(' ');
+  }
+
+  private toAmount(value: any): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private formatMoney(value: any, currency = 'MK'): string {
+    const amount = this.toAmount(value);
+    return `${currency} ${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
   private getDepartmentFromUser(user: any): string {
@@ -1417,16 +1437,23 @@ export class PayrollService {
 
     // Get school information
     let schoolName = '';
-    let schoolLogo = '';
     try {
       const school = await this.schoolRepository.findOne({ where: { id: schoolId } });
       if (school) {
         schoolName = school.name || '';
-        schoolLogo = (school.metadata as any)?.logo || '';
       }
     } catch (e) {
       // ignore school fetch errors
     }
+
+    const grossPay = this.toAmount(item.grossPay);
+    const taxablePay = this.toAmount(item.taxablePay);
+    const paye = this.toAmount(item.paye);
+    const nhif = this.toAmount(item.nhif);
+    const nssf = this.toAmount(item.nssf);
+    const otherDeductions = this.toAmount(item.otherDeductions);
+    const netPay = this.toAmount(item.netPay);
+    const totalDeductions = paye + nhif + nssf + otherDeductions;
 
     // Generate PDF using PDFKit
     const doc = new PDFDocument({ margin: 50 });
@@ -1446,101 +1473,102 @@ export class PayrollService {
       });
 
       try {
-        // Header with school information
-        if (schoolName) {
-          doc.fontSize(20).font('Helvetica-Bold').text(schoolName, { align: 'center' });
-          doc.moveDown(0.5);
-        }
+        const pageWidth = doc.page.width;
+        const left = 50;
+        const contentWidth = pageWidth - left * 2;
 
-        // Title
-        doc.fontSize(18).font('Helvetica-Bold').text('PAYSLIP', { align: 'center' });
-        doc.fontSize(14).font('Helvetica').text(`Pay Period: ${run.period}`, { align: 'center' });
-        doc.moveDown(1);
+        // Header band
+        doc.rect(0, 0, pageWidth, 85).fill('#0b3d2e');
+        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(19)
+          .text(schoolName || 'School Payslip', left, 28, { width: contentWidth, align: 'left' });
+        doc.font('Helvetica').fontSize(11)
+          .text('OFFICIAL PAYSLIP', left, 54, { width: contentWidth, align: 'left' });
 
-        // Horizontal line
-        doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
-        doc.moveDown(1);
+        // Document meta block
+        doc.fillColor('#111111');
+        const detailsTop = 100;
+        doc.roundedRect(left, detailsTop, contentWidth, 86, 6).stroke('#d8dee6');
+        doc.font('Helvetica-Bold').fontSize(10).text('PAY PERIOD', left + 12, detailsTop + 12);
+        doc.font('Helvetica').fontSize(11).text(run.period, left + 12, detailsTop + 28);
+        doc.font('Helvetica-Bold').fontSize(10).text('GENERATED', left + 190, detailsTop + 12);
+        doc.font('Helvetica').fontSize(11).text(new Date().toLocaleString(), left + 190, detailsTop + 28);
+        doc.font('Helvetica-Bold').fontSize(10).text('RUN ID', left + 360, detailsTop + 12);
+        doc.font('Helvetica').fontSize(9).text(run.id, left + 360, detailsTop + 28, { width: 170 });
 
-        // Staff Information Section
-        doc.fontSize(16).font('Helvetica-Bold').text('STAFF INFORMATION', { underline: true });
-        doc.moveDown(0.5);
-        
-        const leftX = 70;
-        const rightX = 320;
-        let currentY = doc.y;
+        // Staff section
+        const staffTop = detailsTop + 102;
+        doc.font('Helvetica-Bold').fontSize(12).text('STAFF INFORMATION', left, staffTop);
+        doc.moveTo(left, staffTop + 16).lineTo(left + 170, staffTop + 16).stroke('#0b3d2e');
 
-        doc.fontSize(12).font('Helvetica');
-        doc.text('Staff Name:', leftX, currentY);
-        doc.text(this.getStaffName(item.user), leftX + 100, currentY);
-        
-        currentY += 20;
-        doc.text('Department:', leftX, currentY);
-        doc.text(this.getDepartmentFromUser(item.user), leftX + 100, currentY);
+        const staffName = this.getStaffName(item.user);
+        const employeeRef = item.user?.email || item.user?.username || item.userId;
+        const department = this.getDepartmentFromUser(item.user);
+        doc.font('Helvetica').fontSize(10)
+          .text(`Name: ${staffName}`, left, staffTop + 26)
+          .text(`Employee Ref: ${employeeRef}`, left, staffTop + 42, { width: 270 })
+          .text(`Department: ${department}`, left + 290, staffTop + 26)
+          .text(`Status: ${run.status}`, left + 290, staffTop + 42);
 
-        currentY += 20;
-        doc.text('Period:', leftX, currentY);
-        doc.text(run.period, leftX + 100, currentY);
+        // Earnings and deductions tables
+        const sectionTop = staffTop + 82;
+        const colGap = 20;
+        const colWidth = (contentWidth - colGap) / 2;
+        const rowHeight = 20;
 
-        doc.y = currentY + 30;
+        const drawSection = (
+          x: number,
+          y: number,
+          title: string,
+          rows: Array<{ label: string; value: string }>,
+          accentColor: string,
+        ) => {
+          doc.roundedRect(x, y, colWidth, 26, 4).fill(accentColor);
+          doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(11).text(title, x + 10, y + 8);
+          let rowY = y + 34;
+          rows.forEach((row, idx) => {
+            if (idx % 2 === 0) {
+              doc.rect(x, rowY - 2, colWidth, rowHeight).fill('#f7f9fc');
+            }
+            doc.fillColor('#111111').font('Helvetica').fontSize(10).text(row.label, x + 10, rowY + 3, { width: colWidth - 145 });
+            doc.font('Helvetica-Bold').text(row.value, x + colWidth - 125, rowY + 3, { width: 115, align: 'right' });
+            rowY += rowHeight;
+          });
+          return rowY;
+        };
 
-        // Earnings Section
-        doc.fontSize(16).font('Helvetica-Bold').text('EARNINGS', { underline: true });
-        doc.moveDown(0.5);
+        const earningsRows = [
+          { label: 'Gross Pay', value: this.formatMoney(grossPay) },
+          { label: 'Taxable Pay', value: this.formatMoney(taxablePay) },
+        ];
 
-        currentY = doc.y;
-        doc.fontSize(12).font('Helvetica');
-        doc.text('Gross Pay:', leftX, currentY);
-        doc.text(`MK ${item.grossPay.toLocaleString()}`, rightX, currentY);
+        const deductionRows = [
+          { label: 'PAYE Tax', value: this.formatMoney(paye) },
+          { label: 'NHIF', value: this.formatMoney(nhif) },
+          { label: 'NSSF', value: this.formatMoney(nssf) },
+          { label: 'Other Deductions', value: this.formatMoney(otherDeductions) },
+          { label: 'Total Deductions', value: this.formatMoney(totalDeductions) },
+        ];
 
-        currentY += 20;
-        doc.text('Taxable Pay:', leftX, currentY);
-        doc.text(`MK ${item.taxablePay.toLocaleString()}`, rightX, currentY);
+        const earningsBottom = drawSection(left, sectionTop, 'EARNINGS', earningsRows, '#1f7a8c');
+        const deductionsBottom = drawSection(left + colWidth + colGap, sectionTop, 'DEDUCTIONS', deductionRows, '#a12d2f');
 
-        doc.y = currentY + 30;
-
-        // Deductions Section
-        doc.fontSize(16).font('Helvetica-Bold').text('DEDUCTIONS', { underline: true });
-        doc.moveDown(0.5);
-
-        currentY = doc.y;
-        doc.fontSize(12).font('Helvetica');
-        doc.text('PAYE Tax:', leftX, currentY);
-        doc.text(`MK ${item.paye.toLocaleString()}`, rightX, currentY);
-
-        currentY += 20;
-        doc.text('NHIF:', leftX, currentY);
-        doc.text(`MK ${item.nhif.toLocaleString()}`, rightX, currentY);
-
-        currentY += 20;
-        doc.text('NSSF:', leftX, currentY);
-        doc.text(`MK ${item.nssf.toLocaleString()}`, rightX, currentY);
-
-        currentY += 20;
-        doc.text('Other Deductions:', leftX, currentY);
-        doc.text(`MK ${item.otherDeductions.toLocaleString()}`, rightX, currentY);
-
-        const totalDeductions = item.paye + item.nhif + item.nssf + item.otherDeductions;
-        currentY += 30;
-        doc.fontSize(14).font('Helvetica-Bold');
-        doc.text('Total Deductions:', leftX, currentY);
-        doc.text(`MK ${totalDeductions.toLocaleString()}`, rightX, currentY);
-
-        doc.y = currentY + 40;
-
-        // Net Pay Section (highlighted)
-        doc.rect(50, doc.y - 10, 500, 40).fillAndStroke('#f0f0f0', '#333');
-        doc.fontSize(18).font('Helvetica-Bold').fillColor('#000');
-        doc.text('NET PAY:', leftX, doc.y + 5);
-        doc.text(`MK ${item.netPay.toLocaleString()}`, rightX, doc.y);
-
-        doc.y += 60;
+        // Net pay highlight
+        const netTop = Math.max(earningsBottom, deductionsBottom) + 12;
+        doc.roundedRect(left, netTop, contentWidth, 52, 8).fill('#e9f8ef');
+        doc.fillColor('#106b39').font('Helvetica-Bold').fontSize(14)
+          .text('NET PAY', left + 14, netTop + 18);
+        doc.fontSize(20).text(this.formatMoney(netPay), left + 250, netTop + 14, {
+          width: contentWidth - 264,
+          align: 'right',
+        });
 
         // Footer
-        doc.fontSize(10).font('Helvetica').fillColor('#666');
-        doc.text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
-        doc.text('This is a system-generated document', { align: 'center' });
+        doc.fillColor('#666666').font('Helvetica').fontSize(9)
+          .text('This is a system-generated document. Keep this payslip for your records.', left, doc.page.height - 46, {
+            width: contentWidth,
+            align: 'center',
+          });
 
-        // End the document
         doc.end();
 
       } catch (error) {
@@ -1582,12 +1610,10 @@ export class PayrollService {
     } else {
       // Generate proper PDF using PDFKit
       let schoolName = '';
-      let schoolLogo = '';
       try {
         const school = await this.schoolRepository.findOne({ where: { id: schoolId } });
         if (school) {
           schoolName = school.name || '';
-          schoolLogo = (school.metadata as any)?.logo || '';
         }
       } catch (e) {
         // ignore
@@ -1610,98 +1636,90 @@ export class PayrollService {
         });
 
         try {
+          const pageWidth = doc.page.width;
+          const left = 40;
+          const contentWidth = pageWidth - left * 2;
+
           // Header
-          if (schoolName) {
-            doc.fontSize(20).font('Helvetica-Bold').text(schoolName, { align: 'center' });
-            doc.moveDown(0.5);
-          }
+          doc.rect(0, 0, pageWidth, 74).fill('#102a43');
+          doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(17)
+            .text(schoolName || 'School Payroll', left, 24, { width: contentWidth });
+          doc.font('Helvetica').fontSize(10)
+            .text(`Payroll Report • Period ${run.period}`, left, 47, { width: contentWidth });
 
-          doc.fontSize(18).font('Helvetica-Bold').text('PAYROLL REPORT', { align: 'center' });
-          doc.fontSize(14).font('Helvetica').text(`Pay Period: ${run.period}`, { align: 'center' });
-          doc.moveDown(1);
+          // Summary chips
+          const summaryY = 90;
+          const cardW = (contentWidth - 20) / 3;
+          const cardH = 54;
+          const cards = [
+            { title: 'Total Staff', value: String(run.staffCount) },
+            { title: 'Total Gross', value: this.formatMoney(run.totalGross) },
+            { title: 'Total Net', value: this.formatMoney(run.totalNet) },
+          ];
+          cards.forEach((card, index) => {
+            const x = left + index * (cardW + 10);
+            doc.roundedRect(x, summaryY, cardW, cardH, 5).fill('#f7fafc').stroke('#d5dde5');
+            doc.fillColor('#334e68').font('Helvetica').fontSize(9).text(card.title, x + 10, summaryY + 10);
+            doc.fillColor('#102a43').font('Helvetica-Bold').fontSize(12).text(card.value, x + 10, summaryY + 26, {
+              width: cardW - 20,
+              align: 'left',
+            });
+          });
 
-          // Summary section
-          doc.fontSize(16).font('Helvetica-Bold').text('PAYROLL SUMMARY', { underline: true });
-          doc.moveDown(0.5);
+          const totalDeductions = this.toAmount(run.totalGross) - this.toAmount(run.totalNet);
+          doc.fillColor('#334e68').font('Helvetica').fontSize(9)
+            .text(`Total Deductions: ${this.formatMoney(totalDeductions)}`, left, summaryY + 64);
 
-          const leftX = 60;
-          const rightX = 300;
-          let currentY = doc.y;
+          // Staff table
+          let tableY = summaryY + 90;
+          const colName = left;
+          const colDept = left + 180;
+          const colGross = left + 290;
+          const colDed = left + 390;
+          const colNet = left + 485;
 
-          doc.fontSize(12).font('Helvetica');
-          doc.text('Total Staff:', leftX, currentY);
-          doc.text(run.staffCount.toString(), rightX, currentY);
+          const drawTableHeader = () => {
+            doc.rect(left, tableY, contentWidth, 20).fill('#243b53');
+            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(9)
+              .text('Name', colName + 8, tableY + 6)
+              .text('Department', colDept + 8, tableY + 6)
+              .text('Gross', colGross + 8, tableY + 6)
+              .text('Deductions', colDed + 8, tableY + 6)
+              .text('Net', colNet + 8, tableY + 6);
+            tableY += 20;
+          };
 
-          currentY += 20;
-          doc.text('Total Gross Pay:', leftX, currentY);
-          doc.text(`MK ${run.totalGross.toLocaleString()}`, rightX, currentY);
-
-          currentY += 20;
-          doc.text('Total Net Pay:', leftX, currentY);
-          doc.text(`MK ${run.totalNet.toLocaleString()}`, rightX, currentY);
-
-          const totalDeductions = run.totalGross - run.totalNet;
-          currentY += 20;
-          doc.text('Total Deductions:', leftX, currentY);
-          doc.text(`MK ${totalDeductions.toLocaleString()}`, rightX, currentY);
-
-          doc.y = currentY + 30;
-
-          // Staff details table
-          doc.fontSize(16).font('Helvetica-Bold').text('STAFF DETAILS', { underline: true });
-          doc.moveDown(1);
-
-          // Table headers
-          const tableTop = doc.y;
-          const col1X = 40;  // Name
-          const col2X = 180; // Department
-          const col3X = 280; // Gross
-          const col4X = 360; // Deductions
-          const col5X = 450; // Net
-
-          doc.fontSize(11).font('Helvetica-Bold');
-          doc.text('Name', col1X, tableTop);
-          doc.text('Department', col2X, tableTop);
-          doc.text('Gross Pay', col3X, tableTop);
-          doc.text('Deductions', col4X, tableTop);
-          doc.text('Net Pay', col5X, tableTop);
-
-          // Draw header line
-          doc.moveTo(40, tableTop + 15).lineTo(550, tableTop + 15).stroke();
-
-          let rowY = tableTop + 25;
-          doc.fontSize(10).font('Helvetica');
+          drawTableHeader();
 
           items.forEach((item, index) => {
-            // Check if we need a new page
-            if (rowY > 720) {
+            if (tableY > 740) {
               doc.addPage();
-              rowY = 50;
+              tableY = 40;
+              drawTableHeader();
             }
 
-            const totalItemDeductions = item.paye + item.nhif + item.nssf + item.otherDeductions;
-            
-            doc.text(this.getStaffName(item.user).substring(0, 18), col1X, rowY);
-            doc.text(this.getDepartmentFromUser(item.user).substring(0, 12), col2X, rowY);
-            doc.text(`MK ${item.grossPay.toLocaleString()}`, col3X, rowY);
-            doc.text(`MK ${totalItemDeductions.toLocaleString()}`, col4X, rowY);
-            doc.text(`MK ${item.netPay.toLocaleString()}`, col5X, rowY);
+            const rowBg = index % 2 === 0 ? '#ffffff' : '#f8fafc';
+            doc.rect(left, tableY, contentWidth, 18).fill(rowBg);
 
-            rowY += 18;
+            const rowDeductions = this.toAmount(item.paye) + this.toAmount(item.nhif) + this.toAmount(item.nssf) + this.toAmount(item.otherDeductions);
 
-            // Add a subtle line between rows
-            if (index < items.length - 1) {
-              doc.strokeColor('#e0e0e0').moveTo(40, rowY - 2).lineTo(550, rowY - 2).stroke();
-            }
+            doc.fillColor('#102a43').font('Helvetica').fontSize(8.5)
+              .text(this.getStaffName(item.user).slice(0, 28), colName + 8, tableY + 5, { width: 170 })
+              .text(this.getDepartmentFromUser(item.user).slice(0, 16), colDept + 8, tableY + 5, { width: 100 })
+              .text(this.formatMoney(item.grossPay), colGross + 8, tableY + 5, { width: 95, align: 'right' })
+              .text(this.formatMoney(rowDeductions), colDed + 8, tableY + 5, { width: 85, align: 'right' })
+              .text(this.formatMoney(item.netPay), colNet + 8, tableY + 5, { width: 65, align: 'right' });
+
+            tableY += 18;
           });
 
           // Footer
-          doc.y = Math.max(rowY + 30, 720);
-          doc.fontSize(10).font('Helvetica').fillColor('#666');
-          doc.text(`Generated on: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`, { align: 'center' });
-          doc.text('This is a system-generated document', { align: 'center' });
+          doc.fillColor('#66788a').font('Helvetica').fontSize(9)
+            .text(`Generated ${new Date().toLocaleString()}`, left, doc.page.height - 36, {
+              width: contentWidth,
+              align: 'center',
+            });
 
-          // End the document
           doc.end();
 
         } catch (error) {
