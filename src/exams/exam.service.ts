@@ -329,7 +329,7 @@ export class ExamService {
     // Get current term
     const Term = await this.settingsService.getCurrentTerm();
     const baseWhere: any = {};
-    if (Term) baseWhere.termId = Term.id;
+    if (Term) baseWhere.TermId = Term.id;
     if (!superAdmin) {
       if (!schoolId) {
         return { totalExams: 0, administeredExams: 0, gradedExams: 0, upcomingExams: 0 };
