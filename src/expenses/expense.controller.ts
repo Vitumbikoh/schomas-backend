@@ -38,8 +38,10 @@ export class ExpenseController {
   }
 
   @Get('analytics')
-  getAnalytics(@Query() analyticsDto: ExpenseAnalyticsDto) {
-    return this.expenseService.getAnalytics(analyticsDto);
+  getAnalytics(@Query() analyticsDto: ExpenseAnalyticsDto, @Request() req) {
+    const userId = req.user?.id || req.user?.sub;
+    const isSuper = req.user?.role === 'SUPER_ADMIN';
+    return this.expenseService.getAnalytics(analyticsDto, userId, isSuper);
   }
 
   @Get(':id')
@@ -68,19 +70,11 @@ export class ExpenseController {
     @Body() approveExpenseDto: ApproveExpenseDto,
     @Request() req
   ) {
-    console.log('CONTROLLER APPROVE - req.user:', JSON.stringify(req.user, null, 2));
-    console.log('CONTROLLER APPROVE - req.user.id:', req.user?.id);
-    console.log('CONTROLLER APPROVE - req.user.sub:', req.user?.sub);
-    
-    // Use sub if id is undefined (Passport.js uses sub as the user identifier)
     const userId = req.user?.id || req.user?.sub;
-    console.log('CONTROLLER APPROVE - Extracted userId:', userId);
     if (!userId) {
-      console.error('CONTROLLER APPROVE - Failed to extract userId from req.user');
       throw new Error('User ID not found in request');
     }
-    
-    console.log('CONTROLLER APPROVE - Calling service with userId:', userId);
+
     return this.expenseService.approve(id, approveExpenseDto, userId);
   }
 

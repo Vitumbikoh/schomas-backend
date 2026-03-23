@@ -56,21 +56,22 @@ export class ExpenseService {
       throw new NotFoundException('User not found');
     }
 
-    // Find a finance user to set as the requester
+    // Prefer a finance requester in the same school, but fall back to the current user.
+    const fallbackSchoolId = createExpenseDto.schoolId || user.schoolId || null;
     const financeUser = await this.userRepository.findOne({
-      where: { role: Role.FINANCE },
-      relations: ['finance']
+      where: {
+        role: Role.FINANCE,
+        ...(fallbackSchoolId ? { schoolId: fallbackSchoolId } : {}),
+      },
     });
 
-    if (!financeUser) {
-      throw new BadRequestException('No finance user found to assign the expense request');
-    }
+    const requesterUser = financeUser || user;
 
     // Generate unique expense number
     const expenseNumber = await this.generateExpenseNumber();
 
     // Determine effective termId for this expense
-    const targetSchoolId = createExpenseDto.schoolId || financeUser.schoolId || user.schoolId || null;
+    const targetSchoolId = createExpenseDto.schoolId || requesterUser.schoolId || user.schoolId || null;
     let effectiveTermId = createExpenseDto.termId || null;
     if (!effectiveTermId && targetSchoolId) {
       // Prefer current active term for the school
@@ -86,8 +87,8 @@ export class ExpenseService {
     const expense = this.expenseRepository.create({
       ...createExpenseDto,
       expenseNumber,
-      requestedBy: financeUser.username,
-      requestedByUserId: financeUser.id,
+      requestedBy: requesterUser.username,
+      requestedByUserId: requesterUser.id,
       schoolId: targetSchoolId,
       termId: effectiveTermId,
       status: ExpenseStatus.PENDING,
@@ -101,7 +102,7 @@ export class ExpenseService {
     // Create initial approval history entry
     await this.createApprovalHistory(savedExpense.id, userId, ApprovalAction.SUBMITTED, 'Expense submitted for approval');
 
-    await this.notificationService.createForRoles(['ADMIN'], {
+    await this.notificationService.createForRoles(['ADMIN', 'FINANCE'], {
       schoolId: savedExpense.schoolId || undefined,
       title: 'Expense awaiting approval',
       message: `${savedExpense.title} (${savedExpense.expenseNumber}) has been submitted and is awaiting approval.`,
@@ -230,28 +231,73 @@ export class ExpenseService {
       throw new ForbiddenException('You can only update your own expenses');
     }
 
+    const changedFields: string[] = [];
+    const updatableFields: Array<keyof UpdateExpenseDto> = [
+      'title',
+      'description',
+      'amount',
+      'category',
+      'department',
+      'budgetCode',
+      'priority',
+      'dueDate',
+      'attachments',
+      'notes',
+      'schoolId',
+    ];
+
+    for (const field of updatableFields) {
+      if (updateExpenseDto[field] === undefined) continue;
+
+      const oldValue = (expense as any)[field];
+      const newValue = (updateExpenseDto as any)[field];
+      if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+        changedFields.push(String(field));
+      }
+    }
+
+    if (!changedFields.length) {
+      throw new BadRequestException('No changes detected for expense update');
+    }
+
     const updatedExpense = await this.expenseRepository.save({
       ...expense,
       ...updateExpenseDto,
       updatedAt: new Date(),
     });
 
-    await this.createApprovalHistory(id, userId, ApprovalAction.COMMENTED, 'Expense updated');
+    await this.createApprovalHistory(
+      id,
+      userId,
+      ApprovalAction.COMMENTED,
+      `Expense updated fields: ${changedFields.join(', ')}`
+    );
+
+    await this.notificationService.createForRoles(['ADMIN', 'FINANCE'], {
+      schoolId: updatedExpense.schoolId || undefined,
+      title: 'Expense updated',
+      message: `${updatedExpense.title} (${updatedExpense.expenseNumber}) was updated by ${updatedExpense.requestedBy || 'requester'}.`,
+      type: NotificationType.SYSTEM,
+      priority: NotificationPriority.LOW,
+      metadata: {
+        module: 'expenses',
+        action: 'updated',
+        expenseId: updatedExpense.id,
+        expenseNumber: updatedExpense.expenseNumber,
+        changedFields,
+      },
+    });
 
     return updatedExpense;
   }
 
   async approve(id: string, approveExpenseDto: ApproveExpenseDto, userId: string): Promise<Expense> {
-    console.log('Expense approval - Received userId:', userId);
-    
     if (!userId) {
-      console.error('Expense approval - userId is undefined or null');
       throw new BadRequestException('User ID is required for expense approval');
     }
 
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
-      console.error('Expense approval - User not found for ID:', userId);
       throw new NotFoundException('User not found');
     }
 
@@ -263,14 +309,8 @@ export class ExpenseService {
       throw new BadRequestException('Expense is not pending approval');
     }
 
-    // Debug logging
-    console.log('Expense approval - User found (from DB):', { id: user.id, username: user.username, role: user.role, userIdFromRequest: userId });
-    console.log('Expense approval - Expected ADMIN role:', Role.ADMIN);
-    console.log('Expense approval - Role comparison:', user.role === Role.ADMIN);
-
-    // Check if user has approval permissions (simplified - in real app, check roles)
+    // Check if user has approval permissions
     if (!this.canApproveExpense(user, expense)) {
-      console.log('Expense approval - User does not have permission to approve. User role:', user.role);
       throw new ForbiddenException('You do not have permission to approve this expense');
     }
 
@@ -293,7 +333,7 @@ export class ExpenseService {
       `Expense approved. ${approveExpenseDto.comments || ''}`.trim()
     );
 
-    await this.notificationService.createForRoles(['FINANCE'], {
+    await this.notificationService.createForRoles(['FINANCE', 'ADMIN'], {
       schoolId: updatedExpense.schoolId || undefined,
       title: 'Expense approved',
       message: `${updatedExpense.title} (${updatedExpense.expenseNumber}) was approved${updatedExpense.approvedAmount ? ` for ${updatedExpense.approvedAmount}` : ''}.`,
@@ -347,7 +387,7 @@ export class ExpenseService {
       `Expense rejected: ${rejectExpenseDto.reason}. ${rejectExpenseDto.comments || ''}`.trim()
     );
 
-    await this.notificationService.createForRoles(['FINANCE'], {
+    await this.notificationService.createForRoles(['FINANCE', 'ADMIN'], {
       schoolId: updatedExpense.schoolId || undefined,
       title: 'Expense rejected',
       message: `${updatedExpense.title} (${updatedExpense.expenseNumber}) was rejected: ${rejectExpenseDto.reason}.`,
@@ -381,8 +421,37 @@ export class ExpenseService {
     await this.expenseRepository.remove(expense);
   }
 
-  async getAnalytics(analyticsDto: ExpenseAnalyticsDto): Promise<any> {
+  async getAnalytics(analyticsDto: ExpenseAnalyticsDto, userId?: string, superAdmin = false): Promise<any> {
     const queryBuilder = this.expenseRepository.createQueryBuilder('expense');
+
+    if (!superAdmin && userId) {
+      const user = await this.userRepository.findOne({ where: { id: userId } });
+      if (!user?.schoolId) {
+        return {
+          summary: {
+            budgetUtilization: '0.0%',
+            avgExpense: '$0',
+            approvalRate: '0.0%',
+            avgApprovalTime: '0.0 days'
+          },
+          totals: {
+            totalExpenses: 0,
+            totalAmount: 0,
+            approvedAmount: 0,
+            pendingAmount: 0,
+          },
+          categoryBreakdown: {},
+          monthlyTrend: {},
+          performance: {
+            approvalRate: 0,
+            avgApprovalTime: 0,
+            budgetUtilization: 0,
+            avgExpense: 0,
+          },
+        };
+      }
+      queryBuilder.andWhere('expense.schoolId = :schoolId', { schoolId: user.schoolId });
+    }
 
     if (analyticsDto.startDate && analyticsDto.endDate) {
       queryBuilder.andWhere('expense.createdAt BETWEEN :startDate AND :endDate', {
