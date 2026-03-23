@@ -205,7 +205,7 @@ export class TeacherController {
 
   @Get('teachers')
   @UseGuards(AuthGuard('jwt'))
-  @Roles(Role.ADMIN, Role.TEACHER)
+  @Roles(Role.ADMIN, Role.TEACHER, Role.PRINCIPAL)
   async getAllTeachers(
     @Request() req,
     @Query('page') page: string = '1',

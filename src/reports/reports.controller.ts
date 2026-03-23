@@ -28,7 +28,7 @@ import { StudentFeeExpectationService } from '../finance/student-fee-expectation
 @ApiBearerAuth()
 @Controller('admin/reports')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles(Role.ADMIN, Role.SUPER_ADMIN)
+@Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.PRINCIPAL)
 export class ReportsController {
   constructor(
     private readonly studentsService: StudentsService,

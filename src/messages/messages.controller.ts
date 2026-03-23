@@ -22,7 +22,7 @@ export class MessagesController {
   constructor(private readonly messagesService: MessagesService) {}
 
   @Get('inbox')
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.STUDENT, Role.TEACHER, Role.PARENT, Role.FINANCE)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.PRINCIPAL, Role.STUDENT, Role.TEACHER, Role.PARENT, Role.FINANCE)
   async inbox(@Request() req, @Query('search') search?: string) {
     const result = await this.messagesService.getInbox(req.user, search);
     return {
@@ -33,21 +33,21 @@ export class MessagesController {
   }
 
   @Get('sent')
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.STUDENT, Role.TEACHER, Role.PARENT, Role.FINANCE)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.PRINCIPAL, Role.STUDENT, Role.TEACHER, Role.PARENT, Role.FINANCE)
   async sent(@Request() req, @Query('search') search?: string) {
     const messages = await this.messagesService.getSent(req.user, search);
     return { success: true, messages };
   }
 
   @Get('recipients')
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.STUDENT, Role.TEACHER, Role.PARENT, Role.FINANCE)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.PRINCIPAL, Role.STUDENT, Role.TEACHER, Role.PARENT, Role.FINANCE)
   async recipients(@Request() req, @Query('search') search?: string) {
     const recipients = await this.messagesService.searchRecipients(req.user, search);
     return { success: true, recipients };
   }
 
   @Post()
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.STUDENT, Role.TEACHER, Role.PARENT, Role.FINANCE)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.PRINCIPAL, Role.STUDENT, Role.TEACHER, Role.PARENT, Role.FINANCE)
   async send(@Request() req, @Body() payload: SendMessageDto) {
     const message = await this.messagesService.send(req.user, payload);
     return {
@@ -58,7 +58,7 @@ export class MessagesController {
   }
 
   @Patch(':id/read')
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.STUDENT, Role.TEACHER, Role.PARENT, Role.FINANCE)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.PRINCIPAL, Role.STUDENT, Role.TEACHER, Role.PARENT, Role.FINANCE)
   async markAsRead(@Request() req, @Param('id') id: string) {
     const message = await this.messagesService.markAsRead(req.user, id);
     return {

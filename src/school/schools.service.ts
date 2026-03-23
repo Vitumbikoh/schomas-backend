@@ -171,16 +171,11 @@ export class SchoolsService {
 
       // Always auto-provision an initial ADMIN account with predefined credentials
       const { username, email, password, displayPassword } = this.generateAdminCredentials(school.name, school.code);
-      
+
       // Check if username already exists and add suffix if needed
       const adminRepo = manager.getRepository(User);
-      let finalUsername = username;
-      let counter = 1;
-      while (await adminRepo.findOne({ where: { username: finalUsername } })) {
-        finalUsername = `${username}${counter}`;
-        counter++;
-      }
-      
+      const finalUsername = await this.generateUniqueUsername(adminRepo, username);
+
       const hashed = await bcrypt.hash(password, 10);
       const adminUser = adminRepo.create({
         username: finalUsername,
@@ -192,6 +187,21 @@ export class SchoolsService {
         forcePasswordReset: true,
       });
       await adminRepo.save(adminUser);
+
+      // Auto-provision principal account using the same setup approach as admin.
+      const principalCredentialsSeed = this.generatePrincipalCredentials(school.name, school.code);
+      const finalPrincipalUsername = await this.generateUniqueUsername(adminRepo, principalCredentialsSeed.username);
+      const principalHashed = await bcrypt.hash(principalCredentialsSeed.password, 10);
+      const principalUser = adminRepo.create({
+        username: finalPrincipalUsername,
+        email: principalCredentialsSeed.email,
+        password: principalHashed,
+        role: Role.PRINCIPAL,
+        schoolId: school.id,
+        isActive: true,
+        forcePasswordReset: true,
+      });
+      await adminRepo.save(principalUser);
 
       // Store the credentials for super admin reference
       const credentialsRepo = manager.getRepository(SchoolAdminCredentials);
@@ -218,9 +228,18 @@ export class SchoolsService {
           tempPassword: displayPassword, // show only once to caller
           forcePasswordReset: true,
         },
+        principal: {
+          id: principalUser.id,
+          username: finalPrincipalUsername,
+          email: principalUser.email,
+          tempPassword: principalCredentialsSeed.displayPassword,
+          forcePasswordReset: true,
+        },
         seeded: !!dto.seedDefaults,
         finalUsername,
-        email
+        email,
+        finalPrincipalUsername,
+        principalEmail: principalUser.email,
       };
     });
 
@@ -229,17 +248,19 @@ export class SchoolsService {
       console.log(`🔔 Creating notification for school: ${result.school.name} (${result.school.id})`);
       const notification = await this.notificationService.create({
         title: 'New School Created',
-        message: `School "${result.school.name}" (${result.school.code}) has been successfully created with admin account`,
+        message: `School "${result.school.name}" (${result.school.code}) has been successfully created with admin and principal accounts`,
         type: NotificationType.SYSTEM,
         priority: NotificationPriority.HIGH,
         schoolId: result.school.id,
-        targetRoles: ['ADMIN'],
+        targetRoles: ['ADMIN', 'PRINCIPAL'],
         metadata: {
           schoolId: result.school.id,
           schoolName: result.school.name,
           schoolCode: result.school.code,
           adminUsername: result.finalUsername,
-          adminEmail: result.email
+          adminEmail: result.email,
+          principalUsername: result.finalPrincipalUsername,
+          principalEmail: result.principalEmail,
         }
       });
       console.log(`✅ School creation notification created:`, notification.id);
@@ -256,6 +277,23 @@ export class SchoolsService {
         email: result.admin.email,
         tempPassword: result.admin.tempPassword,
         forcePasswordReset: true,
+      },
+      principal: {
+        id: result.principal.id,
+        username: result.finalPrincipalUsername,
+        email: result.principal.email,
+        tempPassword: result.principal.tempPassword,
+        forcePasswordReset: true,
+      },
+      adminCredentials: {
+        username: result.finalUsername,
+        email: result.admin.email,
+        password: result.admin.tempPassword,
+      },
+      principalCredentials: {
+        username: result.finalPrincipalUsername,
+        email: result.principal.email,
+        password: result.principal.tempPassword,
       },
       seeded: result.seeded,
     };
@@ -518,6 +556,16 @@ export class SchoolsService {
     return updatedSchool;
   }
 
+  private async generateUniqueUsername(userRepo: Repository<User>, baseUsername: string): Promise<string> {
+    let candidate = baseUsername;
+    let counter = 1;
+    while (await userRepo.findOne({ where: { username: candidate } })) {
+      candidate = `${baseUsername}${counter}`;
+      counter++;
+    }
+    return candidate;
+  }
+
   private generateAdminCredentials(name: string, code: string) {
     // Extract first word from school name and convert to lowercase
     const firstWord = name.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -533,6 +581,17 @@ export class SchoolsService {
     // Default password (admin will change on first login)
     const password = '12345678';
     
+    return { username, email, password, displayPassword: password };
+  }
+
+  private generatePrincipalCredentials(name: string, code: string) {
+    const cleanCode = code.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normalizedCode = cleanCode || 'school';
+    const username = `${normalizedCode}principal`;
+    const email = `principal@${cleanCode}.com`;
+
+    const password = '12345678';
+
     return { username, email, password, displayPassword: password };
   }
 

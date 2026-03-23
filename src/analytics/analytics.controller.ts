@@ -39,7 +39,7 @@ export class AnalyticsController {
   }
 
   @Get('attendance-overview')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.PRINCIPAL)
   async attendanceOverview(
     @Request() req,
     @Query('TermId') TermId?: string,
@@ -64,6 +64,7 @@ export class AnalyticsController {
   }
 
   @Get('fee-collection-status')
+  @Roles(Role.ADMIN, Role.PRINCIPAL)
   async feeCollectionStatus(
     @Request() req,
     @Query('TermId') TermId?: string,
@@ -82,7 +83,7 @@ export class AnalyticsController {
   }
 
   @Get('dashboard-summary')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.PRINCIPAL)
   async dashboardSummary(
     @Request() req,
     @Query('schoolId') schoolIdFilter?: string, // optional for super admin

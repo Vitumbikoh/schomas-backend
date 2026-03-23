@@ -25,6 +25,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed:admin": "ts-node src/seed-admin.ts",
     "seed:superadmin": "ts-node -r tsconfig-paths/register src/scripts/create-super-admin.ts",
+    "backfill:principals": "node backfill-principal-accounts.js",
     "backfill:user-settings": "ts-node -r tsconfig-paths/register src/scripts/backfill-user-settings.ts",
     "fix:user-settings": "ts-node -r tsconfig-paths/register src/scripts/fix-user-settings-orphans.ts",
     "repair:user-settings": "ts-node src/scripts/repair-user-settings.ts",

@@ -14,6 +14,7 @@ export class NotificationController {
   @Roles(
     Role.ADMIN,
     Role.SUPER_ADMIN,
+    Role.PRINCIPAL,
     Role.STUDENT,
     Role.TEACHER,
     Role.PARENT,
@@ -58,6 +59,7 @@ export class NotificationController {
   @Roles(
     Role.ADMIN,
     Role.SUPER_ADMIN,
+    Role.PRINCIPAL,
     Role.STUDENT,
     Role.TEACHER,
     Role.PARENT,
@@ -103,6 +105,7 @@ export class NotificationController {
   @Roles(
     Role.ADMIN,
     Role.SUPER_ADMIN,
+    Role.PRINCIPAL,
     Role.STUDENT,
     Role.TEACHER,
     Role.PARENT,
@@ -140,6 +143,7 @@ export class NotificationController {
   @Roles(
     Role.ADMIN,
     Role.SUPER_ADMIN,
+    Role.PRINCIPAL,
     Role.STUDENT,
     Role.TEACHER,
     Role.PARENT,

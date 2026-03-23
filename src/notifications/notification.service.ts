@@ -162,6 +162,7 @@ export class NotificationService {
   /** Roles that have a restricted (audience-scoped) view of notifications. */
   private readonly roleScopedRoles = ['STUDENT', 'TEACHER', 'PARENT', 'FINANCE'];
   private readonly adminRole = 'ADMIN';
+  private readonly principalRole = 'PRINCIPAL';
   private readonly superAdminRole = 'SUPER_ADMIN';
 
   private applyRoleAudienceFilter(
@@ -174,11 +175,12 @@ export class NotificationService {
     }
 
     // Admins see admin notices plus legacy notices with no explicit targets.
-    if (normalizedRole === this.adminRole) {
+    if (normalizedRole === this.adminRole || normalizedRole === this.principalRole) {
       qb.andWhere(
-        `(n."targetRoles" IS NULL OR n."targetRoles" @> :adminRole::jsonb)`,
+        `(n."targetRoles" IS NULL OR n."targetRoles" @> :adminRole::jsonb OR n."targetRoles" @> :principalRole::jsonb)`,
         {
           adminRole: JSON.stringify([this.adminRole]),
+          principalRole: JSON.stringify([this.principalRole]),
         },
       );
       return;

@@ -75,7 +75,7 @@ export class StudentController {
   }
 
   @Get('students/stats')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.PRINCIPAL)
   @ApiOperation({ summary: 'Get student statistics for admin dashboard' })
   @ApiResponse({ status: 200, description: 'Student statistics retrieved successfully' })
   async getStudentStats(@Request() req) {
