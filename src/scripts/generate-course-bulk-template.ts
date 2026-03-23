@@ -10,7 +10,7 @@ const sampleRows = [
   { code: 'MATH101', name: 'Mathematics Form 1', description: 'Basic mathematics for form 1 students', status: 'active', className: 'Form one', teacherName: 'John Doe', schedule: 'Monday 8:00-9:00' },
   { code: 'ENG101', name: 'English Form 1', description: 'English language and literature', status: 'active', className: 'Form one', teacherName: 'Jane Smith', schedule: 'Tuesday 9:00-10:00' },
   { code: 'SCI101', name: 'Science Form 1', description: 'General science concepts', status: 'active', className: 'Form one', teacherName: 'Dr. Johnson', schedule: 'Wednesday 10:00-11:00' },
-  { code: 'HIST101', name: 'History Form 1', description: 'World and Kenyan history', status: 'upcoming', className: 'Form one', teacherName: 'Prof. Wilson', schedule: 'Thursday 11:00-12:00' },
+  { code: 'HIST101', name: 'History Form 1', description: 'World and Malawian history', status: 'upcoming', className: 'Form one', teacherName: 'Prof. Wilson', schedule: 'Thursday 11:00-12:00' },
   { code: 'MATH201', name: 'Mathematics Form 2', description: 'Intermediate mathematics', status: 'active', className: 'Form two', teacherName: 'John Doe', schedule: 'Monday 10:00-11:00' },
   { code: 'ENG201', name: 'English Form 2', description: 'Advanced English concepts', status: 'active', className: 'Form two', teacherName: 'Jane Smith', schedule: 'Tuesday 11:00-12:00' },
   { code: 'PHYS201', name: 'Physics Form 2', description: 'Basic physics principles', status: 'active', className: 'Form two', teacherName: 'Dr. Brown', schedule: 'Friday 8:00-9:00' },

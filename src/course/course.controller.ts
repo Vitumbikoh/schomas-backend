@@ -360,7 +360,7 @@ async getAllCourses(
       { code: 'MATH101', name: 'Mathematics Form 1', description: 'Basic mathematics for form 1 students', status: 'active', className: 'Form one', teacherUsername: 'matthewsgondwe2@teacher' },
       { code: 'ENG101', name: 'English Form 1', description: 'English language and literature', status: 'active', className: 'Form one', teacherUsername: 'memorygondwe2@teacher' },
       { code: 'SCI101', name: 'Science Form 1', description: 'General science concepts', status: 'active', className: 'Form one', teacherUsername: 'matthewsgondwe2@teacher' },
-      { code: 'HIST101', name: 'History Form 1', description: 'World and Kenyan history', status: 'active', className: 'Form one', teacherUsername: 'memorygondwe2@teacher' },
+      { code: 'HIST101', name: 'History Form 1', description: 'World and Malawian history', status: 'active', className: 'Form one', teacherUsername: 'memorygondwe2@teacher' },
       { code: 'GEOG101', name: 'Geography Form 1', description: 'Basic geography concepts', status: 'active', className: 'Form one', teacherUsername: 'matthewsgondwe2@teacher' },
       { code: 'KISW101', name: 'Kiswahili Form 1', description: 'Kiswahili language and literature', status: 'active', className: 'Form one', teacherUsername: 'memorygondwe2@teacher' },
       { code: 'CRE101', name: 'CRE Form 1', description: 'Christian Religious Education', status: 'active', className: 'Form one', teacherUsername: 'matthewsgondwe2@teacher' },
