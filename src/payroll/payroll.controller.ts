@@ -22,9 +22,15 @@ export class PayrollController {
   @ApiOperation({ summary: 'List salary runs' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
-  async listRuns(@Request() req, @Query('page') page = 1, @Query('limit') limit = 20) {
+  @ApiQuery({ name: 'status', required: false, type: String })
+  async listRuns(
+    @Request() req,
+    @Query('page') page = 1,
+    @Query('limit') limit = 20,
+    @Query('status') status?: string,
+  ) {
     const user = req.user;
-    return this.payrollService.listRuns(user.schoolId, Number(page), Number(limit));
+    return this.payrollService.listRuns(user.schoolId, Number(page), Number(limit), status);
   }
 
   @Post('runs')

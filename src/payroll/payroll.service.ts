@@ -265,13 +265,33 @@ export class PayrollService {
     return run;
   }
 
-  async listRuns(schoolId: string, page = 1, limit = 20) {
+  async listRuns(schoolId: string, page = 1, limit = 20, status?: string) {
+    const whereClause: any = { schoolId };
+    if (status) {
+      whereClause.status = status;
+    }
+
     const [data, total] = await this.runRepo.findAndCount({
-      where: { schoolId },
+      where: whereClause,
       order: { period: 'DESC', createdAt: 'DESC' },
       take: limit,
       skip: (page - 1) * limit,
     });
+
+    // Self-heal legacy/inconsistent runs that were posted but left in APPROVED status.
+    const runsNeedingNormalization = data.filter(
+      (run) => run.status === 'APPROVED' && !!run.postedExpenseId,
+    );
+    if (runsNeedingNormalization.length > 0) {
+      for (const run of runsNeedingNormalization) {
+        run.status = 'FINALIZED';
+        if (!run.finalizedBy) {
+          run.finalizedBy = run.approvedBy || null;
+        }
+      }
+      await this.runRepo.save(runsNeedingNormalization);
+    }
+
     return { data, total, page, limit };
   }
 
@@ -888,6 +908,20 @@ export class PayrollService {
 
   async finalizeRun(id: string, user: any) {
     const run = await this.getRun(id, user.schoolId);
+
+    // Idempotency/self-healing: if already posted, ensure status reflects FINALIZED.
+    if (run.postedExpenseId) {
+      if (run.status !== 'FINALIZED') {
+        run.status = 'FINALIZED';
+        if (!run.finalizedBy) {
+          run.finalizedBy = user.sub || user.id;
+        }
+        await this.runRepo.save(run);
+      }
+      return run;
+    }
+
+    if (run.status === 'FINALIZED') return run;
     if (run.status !== 'APPROVED') throw new BadRequestException('Run must be APPROVED to finalize');
 
     return await this.dataSource.transaction(async (trx) => {
