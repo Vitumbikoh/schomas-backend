@@ -7,9 +7,12 @@ import {
   import { Observable } from 'rxjs';
   import { tap } from 'rxjs/operators';
   import { Request } from 'express';
+  import { ConfigService } from 'src/config/config.service';
+
+  const configService = new ConfigService();
   
   export class Logger {
-    private static logLevel = process.env.LOG_LEVEL || 'debug';
+    private static logLevel = configService.getOptional('LOG_LEVEL', 'debug') || 'debug';
   
     static log(message: string, context?: string) {
       if (['debug', 'info', 'warn', 'error'].includes(this.logLevel)) {

@@ -50,6 +50,7 @@ import { StudentPromotionService } from '../student/services/student-promotion.s
 import { NotificationService } from '../notifications/notification.service';
 import { NotificationType, NotificationPriority } from '../notifications/entities/notification.entity';
 import { StudentClassPromotion } from '../student/entities/student-class-promotion.entity';
+import { ConfigService } from '../config/config.service';
 
 type ProgressionExecutionScope = 'whole_school' | 'class';
 
@@ -71,6 +72,7 @@ export class SettingsController {
     private readonly settingsService: SettingsService,
     private readonly dataSource: DataSource,
     private readonly systemLoggingService: SystemLoggingService,
+    private readonly configService: ConfigService,
     private readonly studentPromotionService: StudentPromotionService,
     private readonly notificationService: NotificationService,
     @InjectRepository(AcademicCalendar)
@@ -119,7 +121,10 @@ export class SettingsController {
       throw new InternalServerErrorException({
         message: 'Failed to retrieve settings',
         error: error.message,
-        stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined,
+        stack:
+          this.configService.getOptional('NODE_ENV', 'development') !== 'production'
+            ? error.stack
+            : undefined,
       });
     }
   }

@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import './config/env';
 import { AppModule } from './app.module';
 import { ConfigService } from './config/config.service';
 import { ValidationPipe } from '@nestjs/common';
@@ -21,6 +22,14 @@ const isPrivateIpv4Host = (host: string): boolean => {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
+
+  configService.validateRequired([
+    'DB_USERNAME',
+    'DB_PASSWORD',
+    'DB_HOST',
+    'DB_PORT',
+    'DB_DATABASE',
+  ]);
 
   // Ensure critical one-off tables exist (e.g., student_academic_history created by manual SQL)
   try {
@@ -55,18 +64,8 @@ async function bootstrap() {
   app.setGlobalPrefix('api/v1');
 
   // CORS configuration: allow list via CORS_ORIGIN env (comma-separated)
-  let corsEnv: string | undefined;
-  let nodeEnv = 'development';
-  try {
-    corsEnv = configService.get('CORS_ORIGIN');
-  } catch (e) {
-    corsEnv = undefined;
-  }
-  try {
-    nodeEnv = configService.get('NODE_ENV');
-  } catch (e) {
-    nodeEnv = process.env.NODE_ENV || 'development';
-  }
+  const corsEnv = configService.getOptional('CORS_ORIGIN');
+  const nodeEnv = configService.getOptional('NODE_ENV', 'development') || 'development';
 
   const allowedOrigins = corsEnv ? corsEnv.split(',').map(s => s.trim()) : ['http://localhost:8080'];
 
@@ -108,18 +107,8 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
-  let port = 5000;
-  let host = '0.0.0.0';
-  try {
-    port = Number.parseInt(configService.get('PORT'), 10) || 5000;
-  } catch (e) {
-    port = 5000;
-  }
-  try {
-    host = configService.get('HOST') || '0.0.0.0';
-  } catch (e) {
-    host = '0.0.0.0';
-  }
+  const port = Number.parseInt(configService.getOptional('PORT', '5000') || '5000', 10);
+  const host = configService.getOptional('HOST', '0.0.0.0') || '0.0.0.0';
 
   await app.listen(port, host);
 

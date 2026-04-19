@@ -9,6 +9,7 @@ import { RequestMethod } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ROUTES_GENERATED, GeneratedRouteMeta } from './routes.generated';
+import { ConfigService } from 'src/config/config.service';
 
 interface RouteMeta {
   method: string;       // HTTP method
@@ -28,10 +29,11 @@ export class RoutesController {
   constructor(
     private readonly modulesContainer: ModulesContainer,
     private readonly reflector: Reflector,
+    private readonly configService: ConfigService,
   ) {
     this.cache = this.collectRoutes();
     // Only write generated files if explicitly enabled to avoid watch restart loops
-    if (process.env.GENERATE_ROUTES_ON_BOOT === 'true') {
+    if (this.configService.getOptional('GENERATE_ROUTES_ON_BOOT') === 'true') {
       this.writeGeneratedFiles();
     }
   }

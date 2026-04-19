@@ -8,11 +8,11 @@ async function run() {
   const config = new ConfigService();
   const ds = new DataSource({
     type: 'postgres',
-    host: config.get('DB_HOST') || 'localhost',
-    port: parseInt(config.get('DB_PORT') || '5432'),
-    username: config.get('DB_USERNAME') || 'postgres',
-    password: config.get('DB_PASSWORD') || 'postgres',
-    database: config.get('DB_DATABASE') || 'edunexus',
+    host: config.get('DB_HOST'),
+    port: config.getNumber('DB_PORT'),
+    username: config.get('DB_USERNAME'),
+    password: config.get('DB_PASSWORD'),
+    database: config.get('DB_DATABASE'),
     entities: [User, UserSettings],
     synchronize: false,
     logging: false,

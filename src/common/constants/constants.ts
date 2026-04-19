@@ -1,14 +1,18 @@
+import { ConfigService } from 'src/config/config.service';
+
+const configService = new ConfigService();
+
 export const JWT_CONSTANTS = {
-    SECRET: process.env.JWT_SECRET || 'school-management-secret-key',
-    EXPIRES_IN: process.env.JWT_EXPIRES_IN || '60m',
+    SECRET: configService.get('JWT_SECRET'),
+    EXPIRES_IN: configService.get('JWT_EXPIRES_IN'),
   };
   
   export const DATABASE_CONSTANTS = {
-    HOST: process.env.DB_HOST || 'localhost',
-    PORT: parseInt(process.env.DB_PORT || '5432', 10),
-    USERNAME: process.env.DB_USERNAME || 'postgres',
-    PASSWORD: process.env.DB_PASSWORD || 'g1Bird fly',
-    DATABASE: process.env.DB_DATABASE || 'edunexus',
+    HOST: configService.get('DB_HOST'),
+    PORT: configService.getNumber('DB_PORT'),
+    USERNAME: configService.get('DB_USERNAME'),
+    PASSWORD: configService.get('DB_PASSWORD'),
+    DATABASE: configService.get('DB_DATABASE'),
   };
   
   export enum CacheTTL {

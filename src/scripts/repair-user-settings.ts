@@ -1,13 +1,15 @@
 import 'reflect-metadata';
 import { Client } from 'pg';
+import { ConfigService } from '../config/config.service';
 
 async function run() {
+  const configService = new ConfigService();
   const client = new Client({
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432'),
-    user: process.env.DB_USERNAME || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres',
-    database: process.env.DB_DATABASE || 'edunexus',
+    host: configService.get('DB_HOST'),
+    port: configService.getNumber('DB_PORT'),
+    user: configService.get('DB_USERNAME'),
+    password: configService.get('DB_PASSWORD'),
+    database: configService.get('DB_DATABASE'),
   });
   await client.connect();
   console.log('Connected to DB, starting user_settings repair...');

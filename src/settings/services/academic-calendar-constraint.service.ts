@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, QueryRunner } from 'typeorm';
 import { AcademicCalendar } from '../entities/academic-calendar.entity';
 import { Term } from '../entities/term.entity';
+import { ConfigService } from 'src/config/config.service';
 
 @Injectable()
 export class AcademicCalendarConstraintService {
@@ -13,6 +14,7 @@ export class AcademicCalendarConstraintService {
     private academicCalendarRepository: Repository<AcademicCalendar>,
     @InjectRepository(Term)
     private termRepository: Repository<Term>,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -149,7 +151,10 @@ export class AcademicCalendarConstraintService {
 
     // Check if the term has actually ended
     const currentDate = new Date();
-    const allowEarlyCompletion = process.env.ALLOW_EARLY_TERM_COMPLETION === 'true' || process.env.NODE_ENV === 'development' || options?.force === true;
+    const allowEarlyCompletion =
+      this.configService.getOptional('ALLOW_EARLY_TERM_COMPLETION') === 'true' ||
+      this.configService.getOptional('NODE_ENV', 'development') === 'development' ||
+      options?.force === true;
     if (!allowEarlyCompletion && currentDate < term.endDate) {
       throw new BadRequestException(
         `Term ${term.termNumber} has not ended yet. End date: ${term.endDate.toDateString()}`

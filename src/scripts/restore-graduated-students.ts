@@ -1,14 +1,16 @@
 import { DataSource } from 'typeorm';
+import { ConfigService } from '../config/config.service';
 
 async function restoreGraduatedStudents() {
+  const configService = new ConfigService();
   // Database connection
   const dataSource = new DataSource({
     type: 'postgres',
-    host: 'localhost',
-    port: 5432,
-    username: 'postgres',
-    password: 'g1Bird fly',
-    database: 'edunexus',
+    host: configService.get('DB_HOST'),
+    port: configService.getNumber('DB_PORT'),
+    username: configService.get('DB_USERNAME'),
+    password: configService.get('DB_PASSWORD'),
+    database: configService.get('DB_DATABASE'),
   });
 
   try {
