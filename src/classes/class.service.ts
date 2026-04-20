@@ -98,9 +98,23 @@ export class ClassService {
   }
 
   async updateClass(id: string, updateClassDto: UpdateClassDto, schoolId?: string): Promise<ClassResponseDto> {
-    const classEntity = await this.classRepository.findOne({ where: { id, schoolId } });
+    // Find by id only so we can assign schoolId to classes that currently have null schoolId
+    const classEntity = await this.classRepository.findOne({ where: { id } });
     if (!classEntity) {
       throw new NotFoundException('Class not found');
+    }
+
+    // If caller provided a schoolId, ensure we don't accidentally reassign a class
+    // that already belongs to another school. Allow assigning when the class currently
+    // has no schoolId (legacy/global class being claimed by a specific school).
+    if (schoolId) {
+      // Disallow claiming a global/unassigned class. Each school must create its own Graduated class.
+      if (!classEntity.schoolId) {
+        throw new BadRequestException('Cannot claim an unassigned class. Please create a Graduated class for this school instead.');
+      }
+      if (classEntity.schoolId !== schoolId) {
+        throw new BadRequestException('Class belongs to a different school and cannot be reassigned');
+      }
     }
 
     // Check for duplicates if name or numericalName is being updated
