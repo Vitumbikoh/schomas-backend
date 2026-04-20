@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { Log } from './logs.entity';
 import { RequestContext } from '../common/request-context/request-context';
+import { Logger } from '@nestjs/common';
 
 // Entities we don't want to log automatically (log table itself, auth tokens etc.)
 const EXCLUDED_ENTITIES = new Set<string>(['Log']);
@@ -23,7 +24,27 @@ const REDACTED_KEYS = new Set([
 
 @EventSubscriber()
 export class ActivitySubscriber implements EntitySubscriberInterface<any> {
+  private readonly logger = new Logger(ActivitySubscriber.name);
+
   // No constructor; TypeORM/Nest will instantiate automatically using pattern-based discovery
+
+  private isMissingLogsTableError(error: unknown): boolean {
+    const code = (error as any)?.code;
+    const message = String((error as any)?.message || '').toLowerCase();
+    return code === '42P01' || message.includes('relation "logs" does not exist');
+  }
+
+  private async persistLogSafely(event: InsertEvent<any> | UpdateEvent<any> | RemoveEvent<any>, logData: any): Promise<void> {
+    try {
+      await event.manager.getRepository(Log).insert(logData as any);
+    } catch (error) {
+      if (this.isMissingLogsTableError(error)) {
+        this.logger.warn('Skipping activity log insert because table "logs" is missing. Run migrations to create it.');
+        return;
+      }
+      throw error;
+    }
+  }
 
   /** Skip logging for internal or excluded entities */
   private shouldSkip(name?: string): boolean {
@@ -157,7 +178,7 @@ export class ActivitySubscriber implements EntitySubscriberInterface<any> {
       (event as any).entityId,
     );
     if (!logData) return;
-    await event.manager.getRepository(Log).insert(logData as any);
+    await this.persistLogSafely(event, logData);
   }
 
   async afterUpdate(event: UpdateEvent<any>) {
@@ -200,7 +221,7 @@ export class ActivitySubscriber implements EntitySubscriberInterface<any> {
       (event as any).entityId,
     );
     if (!logData) return;
-    await event.manager.getRepository(Log).insert(logData as any);
+    await this.persistLogSafely(event, logData);
   }
 
   async afterRemove(event: RemoveEvent<any>) {
@@ -224,6 +245,6 @@ export class ActivitySubscriber implements EntitySubscriberInterface<any> {
       event.entityId as any,
     );
     if (!logData) return;
-    await event.manager.getRepository(Log).insert(logData as any);
+    await this.persistLogSafely(event, logData);
   }
 }
