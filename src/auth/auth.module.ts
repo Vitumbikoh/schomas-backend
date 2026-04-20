@@ -12,6 +12,7 @@ import { ConfigModule } from '../config/config.module';
 import { ConfigService } from '../config/config.service';
 import { UsersModule } from '../user/users.module';
 import { School } from '../school/entities/school.entity';
+import type { StringValue } from 'ms';
 
 @Module({
   imports: [
@@ -20,10 +21,18 @@ import { School } from '../school/entities/school.entity';
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get('JWT_SECRET'),
-        signOptions: { expiresIn: configService.get('JWT_EXPIRES_IN') },
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const expiresInRaw = configService.get('JWT_EXPIRES_IN');
+        const parsedExpiresIn = Number(expiresInRaw);
+        const expiresIn = Number.isNaN(parsedExpiresIn)
+          ? (expiresInRaw as StringValue)
+          : parsedExpiresIn;
+
+        return {
+          secret: configService.get('JWT_SECRET'),
+          signOptions: { expiresIn },
+        };
+      },
       inject: [ConfigService],
     }),
     ConfigModule,
