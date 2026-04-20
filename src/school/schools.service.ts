@@ -556,6 +556,44 @@ export class SchoolsService {
     return updatedSchool;
   }
 
+  private quoteIdentifier(identifier: string): string {
+    return `"${identifier.replace(/"/g, '""')}"`;
+  }
+
+  async removeSchoolWithAssociatedData(id: string) {
+    const school = await this.findOne(id);
+
+    return this.dataSource.transaction(async (manager) => {
+      // Delete from all school-scoped tables first to avoid FK violations when deleting the school.
+      const schoolScopedTables: Array<{ table_name: string }> = await manager.query(
+        `
+          SELECT DISTINCT c.table_name
+          FROM information_schema.columns c
+          WHERE c.table_schema = 'public'
+            AND c.column_name = 'schoolId'
+            AND c.table_name <> 'schools'
+        `,
+      );
+
+      for (const row of schoolScopedTables) {
+        const tableName = row.table_name;
+        const quotedTable = this.quoteIdentifier(tableName);
+        await manager.query(`DELETE FROM ${quotedTable} WHERE "schoolId" = $1`, [id]);
+      }
+
+      const deleteResult = await manager.delete(School, { id });
+      if (!deleteResult.affected) {
+        throw new NotFoundException('School not found');
+      }
+
+      return {
+        success: true,
+        message: `School \"${school.name}\" and associated school-scoped data deleted successfully`,
+        schoolId: id,
+      };
+    });
+  }
+
   private async generateUniqueUsername(userRepo: Repository<User>, baseUsername: string): Promise<string> {
     let candidate = baseUsername;
     let counter = 1;

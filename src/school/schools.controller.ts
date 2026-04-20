@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -65,6 +66,11 @@ export class SchoolsController {
   @Patch(':id/activate')
   activate(@Param('id') id: string) {
     return this.schoolsService.activate(id);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.schoolsService.removeSchoolWithAssociatedData(id);
   }
 
   @Get('credentials/all')
