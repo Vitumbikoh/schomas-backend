@@ -19,6 +19,34 @@ const isPrivateIpv4Host = (host: string): boolean => {
   );
 };
 
+const normalizeOrigin = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+};
+
+const parseOrigins = (value: string | undefined, fallback: string[]): string[] => {
+  const rawValues = value
+    ? value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : fallback;
+
+  const normalizedValues = rawValues
+    .map((origin) => normalizeOrigin(origin))
+    .filter((origin): origin is string => Boolean(origin));
+
+  const uniqueOrigins = [...new Set(normalizedValues)];
+  return uniqueOrigins.length > 0 ? uniqueOrigins : fallback;
+};
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
@@ -63,11 +91,29 @@ async function bootstrap() {
   // API prefix
   app.setGlobalPrefix('api/v1');
 
-  // CORS configuration: allow list via CORS_ORIGIN env (comma-separated)
-  const corsEnv = configService.getOptional('CORS_ORIGIN');
+  // CORS configuration:
+  // - CORS_ORIGIN_DEVELOPMENT for development
+  // - CORS_ORIGIN_PRODUCTION for production
+  // - CORS_ORIGIN as legacy fallback
+  // Values can be comma-separated and may include full URLs (e.g. https://site.com/login).
+  // Only the origin portion is used by CORS.
+  const devCorsEnv = configService.getOptional('CORS_ORIGIN_DEVELOPMENT');
+  const prodCorsEnv = configService.getOptional('CORS_ORIGIN_PRODUCTION');
+  const fallbackCorsEnv = configService.getOptional('CORS_ORIGIN');
   const nodeEnv = configService.getOptional('NODE_ENV', 'development') || 'development';
+  const isProduction = nodeEnv === 'production';
 
-  const allowedOrigins = corsEnv ? corsEnv.split(',').map(s => s.trim()) : ['http://localhost:8080'];
+  const defaultDevOrigins = ['http://localhost:8080'];
+  const defaultProdOrigins = ['https://educnexus.tech', 'https://admin.educnexus.tech'];
+
+  const selectedCorsEnv = isProduction
+    ? prodCorsEnv || fallbackCorsEnv
+    : devCorsEnv || fallbackCorsEnv;
+
+  const allowedOrigins = parseOrigins(
+    selectedCorsEnv,
+    isProduction ? defaultProdOrigins : defaultDevOrigins,
+  );
 
   app.enableCors({
     origin: (origin, callback) => {
