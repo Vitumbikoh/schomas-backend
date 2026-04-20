@@ -4,6 +4,11 @@ export class UpdatePaymentMethodEnum1736966300000 implements MigrationInterface 
     name = 'UpdatePaymentMethodEnum1736966300000'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
+        const hasFeePayment = await queryRunner.hasTable('fee_payment');
+        if (!hasFeePayment) {
+            return;
+        }
+
         // Update existing records that use the old enum values
         await queryRunner.query(`
             UPDATE fee_payment 
@@ -26,6 +31,11 @@ export class UpdatePaymentMethodEnum1736966300000 implements MigrationInterface 
     }
 
     public async down(queryRunner: QueryRunner): Promise<void> {
+        const hasFeePayment = await queryRunner.hasTable('fee_payment');
+        if (!hasFeePayment) {
+            return;
+        }
+
         // Drop the constraint
         await queryRunner.query(`
             ALTER TABLE "fee_payment" 

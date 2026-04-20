@@ -9,6 +9,16 @@ export class CreateNotificationReadsTable1761900000000
     const hasTable = await queryRunner.hasTable('notification_reads');
     if (hasTable) return;
 
+    const [hasNotifications, hasUsers, hasSchools] = await Promise.all([
+      queryRunner.hasTable('notifications'),
+      queryRunner.hasTable('users'),
+      queryRunner.hasTable('schools'),
+    ]);
+
+    if (!hasNotifications || !hasUsers || !hasSchools) {
+      return;
+    }
+
     await queryRunner.createTable(
       new Table({
         name: 'notification_reads',

@@ -4,6 +4,31 @@ export class ConvertIdsToUuid1690000000000 implements MigrationInterface {
   name = 'ConvertIdsToUuid1690000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // This migration targets legacy schemas that already had these tables.
+    // On fresh installs, skip so newer create-table migrations can run.
+    const [hasStudent, hasCourse, hasEnrollment] = await Promise.all([
+      queryRunner.hasTable('student'),
+      queryRunner.hasTable('course'),
+      queryRunner.hasTable('enrollment'),
+    ]);
+
+    if (!hasStudent || !hasCourse || !hasEnrollment) {
+      return;
+    }
+
+    const [hasStudentId, hasCourseId, hasEnrollmentCourseId, hasEnrollmentStudentId] = await Promise.all([
+      queryRunner.hasColumn('student', 'id'),
+      queryRunner.hasColumn('course', 'id'),
+      queryRunner.hasColumn('enrollment', 'courseId'),
+      queryRunner.hasColumn('enrollment', 'studentId'),
+    ]);
+
+    if (!hasStudentId || !hasCourseId || !hasEnrollmentCourseId || !hasEnrollmentStudentId) {
+      return;
+    }
+
+    await queryRunner.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
+
     // 1. Drop existing constraints
     await queryRunner.query(`
       ALTER TABLE "enrollment" 

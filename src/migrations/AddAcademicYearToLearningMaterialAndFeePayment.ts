@@ -4,21 +4,40 @@ export class AddTermToLearningMaterialAndFeePayment1705920000000 implements Migr
     name = 'AddTermToLearningMaterialAndFeePayment1705920000000';
 
     public async up(queryRunner: QueryRunner): Promise<void> {
+        const [hasLearningMaterial, hasFeePayment, hasTermTable] = await Promise.all([
+            queryRunner.hasTable('learning_material'),
+            queryRunner.hasTable('fee_payment'),
+            queryRunner.hasTable('Term'),
+        ]);
+
+        if (!hasLearningMaterial || !hasFeePayment || !hasTermTable) {
+            return;
+        }
+
+        const [hasLearningMaterialTermId, hasFeePaymentTermId] = await Promise.all([
+            queryRunner.hasColumn('learning_material', 'TermId'),
+            queryRunner.hasColumn('fee_payment', 'TermId'),
+        ]);
+
         // Add TermId column to learning_material table
-        await queryRunner.addColumn('learning_material', new TableColumn({
-            name: 'TermId',
-            type: 'uuid',
-            isNullable: false,
-            default: "'00000000-0000-0000-0000-000000000000'", // Temporary default, should be updated with actual current term
-        }));
+        if (!hasLearningMaterialTermId) {
+            await queryRunner.addColumn('learning_material', new TableColumn({
+                name: 'TermId',
+                type: 'uuid',
+                isNullable: false,
+                default: "'00000000-0000-0000-0000-000000000000'", // Temporary default, should be updated with actual current term
+            }));
+        }
 
         // Add TermId column to fee_payment table
-        await queryRunner.addColumn('fee_payment', new TableColumn({
-            name: 'TermId',
-            type: 'uuid',
-            isNullable: false,
-            default: "'00000000-0000-0000-0000-000000000000'", // Temporary default, should be updated with actual current term
-        }));
+        if (!hasFeePaymentTermId) {
+            await queryRunner.addColumn('fee_payment', new TableColumn({
+                name: 'TermId',
+                type: 'uuid',
+                isNullable: false,
+                default: "'00000000-0000-0000-0000-000000000000'", // Temporary default, should be updated with actual current term
+            }));
+        }
 
         // Add foreign key constraint for learning_material
         await queryRunner.createForeignKey('learning_material', new TableForeignKey({
@@ -76,6 +95,15 @@ export class AddTermToLearningMaterialAndFeePayment1705920000000 implements Migr
     }
 
     public async down(queryRunner: QueryRunner): Promise<void> {
+        const [hasLearningMaterial, hasFeePayment] = await Promise.all([
+            queryRunner.hasTable('learning_material'),
+            queryRunner.hasTable('fee_payment'),
+        ]);
+
+        if (!hasLearningMaterial && !hasFeePayment) {
+            return;
+        }
+
         // Drop foreign key constraints
         const learningMaterialTable = await queryRunner.getTable('learning_material');
         const feePaymentTable = await queryRunner.getTable('fee_payment');
@@ -96,7 +124,11 @@ export class AddTermToLearningMaterialAndFeePayment1705920000000 implements Migr
         }
 
         // Drop columns
-        await queryRunner.dropColumn('learning_material', 'TermId');
-        await queryRunner.dropColumn('fee_payment', 'TermId');
+        if (hasLearningMaterial && (await queryRunner.hasColumn('learning_material', 'TermId'))) {
+            await queryRunner.dropColumn('learning_material', 'TermId');
+        }
+        if (hasFeePayment && (await queryRunner.hasColumn('fee_payment', 'TermId'))) {
+            await queryRunner.dropColumn('fee_payment', 'TermId');
+        }
     }
 }

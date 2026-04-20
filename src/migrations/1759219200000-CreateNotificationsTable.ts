@@ -4,6 +4,11 @@ export class CreateNotificationsTable1759219200000 implements MigrationInterface
     name = 'CreateNotificationsTable1759219200000'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
+        const hasSchools = await queryRunner.hasTable('schools');
+        if (!hasSchools) {
+            return;
+        }
+
         await queryRunner.createTable(new Table({
             name: "notifications",
             columns: [
@@ -93,6 +98,10 @@ export class CreateNotificationsTable1759219200000 implements MigrationInterface
     }
 
     public async down(queryRunner: QueryRunner): Promise<void> {
+        const hasNotifications = await queryRunner.hasTable('notifications');
+        if (!hasNotifications) {
+            return;
+        }
         await queryRunner.dropTable("notifications");
     }
 }

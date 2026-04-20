@@ -4,24 +4,41 @@ export class AddClassIdToBook1759004700000 implements MigrationInterface {
     name = 'AddClassIdToBook1759004700000';
 
     public async up(queryRunner: QueryRunner): Promise<void> {
+        const hasBookTable = await queryRunner.hasTable('book');
+        if (!hasBookTable) {
+            return;
+        }
+
+        const hasClassIdColumn = await queryRunner.hasColumn('book', 'classId');
+
         // Add classId column to book table
-        await queryRunner.addColumn('book', new TableColumn({
-            name: 'classId',
-            type: 'uuid',
-            isNullable: true, // Allow null for N/A books that anyone can borrow
-        }));
+        if (!hasClassIdColumn) {
+            await queryRunner.addColumn('book', new TableColumn({
+                name: 'classId',
+                type: 'uuid',
+                isNullable: true, // Allow null for N/A books that anyone can borrow
+            }));
+        }
 
         // Add foreign key constraint for book.classId -> classes.id
-        await queryRunner.createForeignKey('book', new TableForeignKey({
-            columnNames: ['classId'],
-            referencedTableName: 'classes',
-            referencedColumnNames: ['id'],
-            onDelete: 'SET NULL', // If class is deleted, set book.classId to null (N/A)
-            onUpdate: 'CASCADE',
-        }));
+        const hasClassesTable = await queryRunner.hasTable('classes');
+        if (hasClassesTable) {
+            await queryRunner.createForeignKey('book', new TableForeignKey({
+                columnNames: ['classId'],
+                referencedTableName: 'classes',
+                referencedColumnNames: ['id'],
+                onDelete: 'SET NULL', // If class is deleted, set book.classId to null (N/A)
+                onUpdate: 'CASCADE',
+            }));
+        }
     }
 
     public async down(queryRunner: QueryRunner): Promise<void> {
+        const hasBookTable = await queryRunner.hasTable('book');
+        if (!hasBookTable) {
+            return;
+        }
+
         // Drop foreign key constraint
         const table = await queryRunner.getTable('book');
         if (table) {
@@ -32,6 +49,9 @@ export class AddClassIdToBook1759004700000 implements MigrationInterface {
         }
 
         // Drop classId column
-        await queryRunner.dropColumn('book', 'classId');
+        const hasClassIdColumn = await queryRunner.hasColumn('book', 'classId');
+        if (hasClassIdColumn) {
+            await queryRunner.dropColumn('book', 'classId');
+        }
     }
 }

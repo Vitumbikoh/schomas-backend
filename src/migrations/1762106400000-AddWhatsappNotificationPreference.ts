@@ -4,6 +4,16 @@ export class AddWhatsappNotificationPreference1762106400000 implements Migration
   name = 'AddWhatsappNotificationPreference1762106400000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    const hasUserSettings = await queryRunner.hasTable('user_settings');
+    if (!hasUserSettings) {
+      return;
+    }
+
+    const hasNotifications = await queryRunner.hasColumn('user_settings', 'notifications');
+    if (!hasNotifications) {
+      return;
+    }
+
     await queryRunner.query(
       `ALTER TABLE "user_settings" ALTER COLUMN "notifications" SET DEFAULT '{"email": true, "sms": false, "browser": true, "whatsapp": false, "weeklySummary": false}'`,
     );
@@ -23,6 +33,16 @@ export class AddWhatsappNotificationPreference1762106400000 implements Migration
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    const hasUserSettings = await queryRunner.hasTable('user_settings');
+    if (!hasUserSettings) {
+      return;
+    }
+
+    const hasNotifications = await queryRunner.hasColumn('user_settings', 'notifications');
+    if (!hasNotifications) {
+      return;
+    }
+
     await queryRunner.query(
       `ALTER TABLE "user_settings" ALTER COLUMN "notifications" SET DEFAULT '{"email": true, "sms": false, "browser": true, "weeklySummary": true}'`,
     );
