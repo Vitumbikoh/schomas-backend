@@ -564,7 +564,7 @@ export class SchoolsService {
     const school = await this.findOne(id);
 
     return this.dataSource.transaction(async (manager) => {
-      // Delete from all school-scoped tables first to avoid FK violations when deleting the school.
+      // Discover all school-scoped tables.
       const schoolScopedTables: Array<{ table_name: string }> = await manager.query(
         `
           SELECT DISTINCT c.table_name
@@ -575,8 +575,78 @@ export class SchoolsService {
         `,
       );
 
-      for (const row of schoolScopedTables) {
-        const tableName = row.table_name;
+      const tableNames = schoolScopedTables.map((row) => row.table_name);
+
+      // Build FK dependency edges among school-scoped tables so we can delete children before parents.
+      // Edge direction for ordering: child -> parent
+      const fkRows: Array<{ child_table: string; parent_table: string }> =
+        tableNames.length > 0
+          ? await manager.query(
+              `
+                SELECT
+                  tc.table_name AS child_table,
+                  ccu.table_name AS parent_table
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_name = kcu.constraint_name
+                 AND tc.table_schema = kcu.table_schema
+                JOIN information_schema.constraint_column_usage ccu
+                  ON ccu.constraint_name = tc.constraint_name
+                 AND ccu.table_schema = tc.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                  AND tc.table_schema = 'public'
+                  AND tc.table_name = ANY($1::text[])
+                  AND ccu.table_name = ANY($1::text[])
+              `,
+              [tableNames],
+            )
+          : [];
+
+      const indegree = new Map<string, number>();
+      const adjacency = new Map<string, string[]>();
+
+      for (const tableName of tableNames) {
+        indegree.set(tableName, 0);
+        adjacency.set(tableName, []);
+      }
+
+      for (const fk of fkRows) {
+        const child = fk.child_table;
+        const parent = fk.parent_table;
+        if (!indegree.has(child) || !indegree.has(parent)) continue;
+        adjacency.get(child)!.push(parent);
+        indegree.set(parent, (indegree.get(parent) || 0) + 1);
+      }
+
+      // Kahn topological sort on child->parent edges => children are deleted first.
+      const queue: string[] = [];
+      for (const [tableName, degree] of indegree.entries()) {
+        if (degree === 0) queue.push(tableName);
+      }
+
+      const orderedTables: string[] = [];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        orderedTables.push(current);
+        for (const parent of adjacency.get(current) || []) {
+          const nextDegree = (indegree.get(parent) || 0) - 1;
+          indegree.set(parent, nextDegree);
+          if (nextDegree === 0) {
+            queue.push(parent);
+          }
+        }
+      }
+
+      // If any tables were not resolved due to cycles, append them as a best effort.
+      if (orderedTables.length < tableNames.length) {
+        for (const tableName of tableNames) {
+          if (!orderedTables.includes(tableName)) {
+            orderedTables.push(tableName);
+          }
+        }
+      }
+
+      for (const tableName of orderedTables) {
         const quotedTable = this.quoteIdentifier(tableName);
         await manager.query(`DELETE FROM ${quotedTable} WHERE "schoolId" = $1`, [id]);
       }
