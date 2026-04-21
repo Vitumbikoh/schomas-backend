@@ -564,8 +564,10 @@ export class SchoolsService {
     const school = await this.findOne(id);
 
     return this.dataSource.transaction(async (manager) => {
-      // Discover all school-scoped tables.
-      const schoolScopedTables: Array<{ table_name: string }> = await manager.query(
+      const aliasPredicate = (predicate: string, alias: string) =>
+        predicate.replace(/\bt\./g, `${alias}.`);
+
+      const schoolTablesRows: Array<{ table_name: string }> = await manager.query(
         `
           SELECT DISTINCT c.table_name
           FROM information_schema.columns c
@@ -575,37 +577,83 @@ export class SchoolsService {
         `,
       );
 
-      const tableNames = schoolScopedTables.map((row) => row.table_name);
+      const schoolIdTables = new Set(schoolTablesRows.map((r) => r.table_name));
 
-      // Build FK dependency edges among school-scoped tables so we can delete children before parents.
-      // Edge direction for ordering: child -> parent
-      const fkRows: Array<{ child_table: string; parent_table: string }> =
-        tableNames.length > 0
-          ? await manager.query(
-              `
-                SELECT
-                  tc.table_name AS child_table,
-                  ccu.table_name AS parent_table
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu
-                  ON tc.constraint_name = kcu.constraint_name
-                 AND tc.table_schema = kcu.table_schema
-                JOIN information_schema.constraint_column_usage ccu
-                  ON ccu.constraint_name = tc.constraint_name
-                 AND ccu.table_schema = tc.table_schema
-                WHERE tc.constraint_type = 'FOREIGN KEY'
-                  AND tc.table_schema = 'public'
-                  AND tc.table_name = ANY($1::text[])
-                  AND ccu.table_name = ANY($1::text[])
-              `,
-              [tableNames],
+      // Only single-column FK constraints are needed for current schema and are easier to handle safely.
+      const fkRows: Array<{
+        child_table: string;
+        child_column: string;
+        parent_table: string;
+        parent_column: string;
+      }> = await manager.query(
+        `
+          SELECT
+            tc.table_name AS child_table,
+            kcu.column_name AS child_column,
+            ccu.table_name AS parent_table,
+            ccu.column_name AS parent_column
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu
+            ON tc.constraint_name = kcu.constraint_name
+           AND tc.table_schema = kcu.table_schema
+          JOIN information_schema.constraint_column_usage ccu
+            ON ccu.constraint_name = tc.constraint_name
+           AND ccu.table_schema = tc.table_schema
+          WHERE tc.constraint_type = 'FOREIGN KEY'
+            AND tc.table_schema = 'public'
+            AND (
+              tc.table_name = ANY($1::text[])
+              OR ccu.table_name = ANY($1::text[])
             )
-          : [];
+            AND tc.constraint_name IN (
+              SELECT tc2.constraint_name
+              FROM information_schema.table_constraints tc2
+              JOIN information_schema.key_column_usage kcu2
+                ON tc2.constraint_name = kcu2.constraint_name
+               AND tc2.table_schema = kcu2.table_schema
+              WHERE tc2.constraint_type = 'FOREIGN KEY'
+                AND tc2.table_schema = 'public'
+              GROUP BY tc2.constraint_name, tc2.table_schema
+              HAVING COUNT(*) = 1
+            )
+        `,
+        [Array.from(schoolIdTables)],
+      );
 
+      // Build recursive predicates for tables related to the school via FK chains.
+      const predicates = new Map<string, string>();
+      for (const tableName of schoolIdTables) {
+        predicates.set(tableName, `t."schoolId" = $1`);
+      }
+
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const fk of fkRows) {
+          const parentPredicate = predicates.get(fk.parent_table);
+          if (!parentPredicate) continue;
+
+          const parentTable = this.quoteIdentifier(fk.parent_table);
+          const parentCondition = aliasPredicate(parentPredicate, 'p');
+          const relationPredicate = `EXISTS (SELECT 1 FROM ${parentTable} p WHERE p.${this.quoteIdentifier(fk.parent_column)} = t.${this.quoteIdentifier(fk.child_column)} AND (${parentCondition}))`;
+
+          const existing = predicates.get(fk.child_table);
+          if (!existing) {
+            predicates.set(fk.child_table, relationPredicate);
+            changed = true;
+          } else if (!existing.includes(relationPredicate)) {
+            predicates.set(fk.child_table, `(${existing}) OR (${relationPredicate})`);
+            changed = true;
+          }
+        }
+      }
+
+      const relatedTables = Array.from(predicates.keys()).filter((t) => t !== 'schools');
+
+      // Order related tables so child tables are deleted before parent tables.
       const indegree = new Map<string, number>();
       const adjacency = new Map<string, string[]>();
-
-      for (const tableName of tableNames) {
+      for (const tableName of relatedTables) {
         indegree.set(tableName, 0);
         adjacency.set(tableName, []);
       }
@@ -618,7 +666,6 @@ export class SchoolsService {
         indegree.set(parent, (indegree.get(parent) || 0) + 1);
       }
 
-      // Kahn topological sort on child->parent edges => children are deleted first.
       const queue: string[] = [];
       for (const [tableName, degree] of indegree.entries()) {
         if (degree === 0) queue.push(tableName);
@@ -631,24 +678,20 @@ export class SchoolsService {
         for (const parent of adjacency.get(current) || []) {
           const nextDegree = (indegree.get(parent) || 0) - 1;
           indegree.set(parent, nextDegree);
-          if (nextDegree === 0) {
-            queue.push(parent);
-          }
+          if (nextDegree === 0) queue.push(parent);
         }
       }
 
-      // If any tables were not resolved due to cycles, append them as a best effort.
-      if (orderedTables.length < tableNames.length) {
-        for (const tableName of tableNames) {
-          if (!orderedTables.includes(tableName)) {
-            orderedTables.push(tableName);
-          }
-        }
+      // Best-effort fallback in case of cycles.
+      for (const tableName of relatedTables) {
+        if (!orderedTables.includes(tableName)) orderedTables.push(tableName);
       }
 
       for (const tableName of orderedTables) {
+        const predicate = predicates.get(tableName);
+        if (!predicate) continue;
         const quotedTable = this.quoteIdentifier(tableName);
-        await manager.query(`DELETE FROM ${quotedTable} WHERE "schoolId" = $1`, [id]);
+        await manager.query(`DELETE FROM ${quotedTable} t WHERE ${predicate}`, [id]);
       }
 
       const deleteResult = await manager.delete(School, { id });
