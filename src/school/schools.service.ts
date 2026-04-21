@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike, DataSource } from 'typeorm';
+import { Repository, ILike, DataSource, EntityManager } from 'typeorm';
 import { School } from './entities/school.entity';
 import { SchoolAdminCredentials } from './entities/school-admin-credentials.entity';
 import { User } from '../user/entities/user.entity';
@@ -153,6 +153,37 @@ export class SchoolsService {
     };
   }
 
+  private async ensureGraduatedClassForSchool(
+    manager: EntityManager,
+    schoolId: string,
+  ): Promise<Class> {
+    const classRepo = manager.getRepository(Class) as Repository<Class>;
+
+    const existing = await classRepo
+      .createQueryBuilder('class')
+      .where('class.schoolId = :schoolId', { schoolId })
+      .andWhere('LOWER(class.name) = :name', { name: 'graduated' })
+      .getOne();
+
+    if (existing) {
+      if (existing.numericalName !== 999) {
+        existing.numericalName = 999;
+        return await classRepo.save(existing);
+      }
+      return existing;
+    }
+
+    const graduatedClass = classRepo.create({
+      name: 'Graduated',
+      numericalName: 999,
+      description: 'Default graduation class for completed students',
+      isActive: true,
+      schoolId,
+    });
+
+    return await classRepo.save(graduatedClass);
+  }
+
   async create(dto: CreateSchoolDto) {
     // Enforce uniqueness of code & name early
     const existing = await this.repo.findOne({ where: [{ code: dto.code }, { name: dto.name }] });
@@ -215,9 +246,8 @@ export class SchoolsService {
       });
       await credentialsRepo.save(adminCredentials);
 
-      if (dto.seedDefaults) {
-        await this.seedDefaults(school.id);
-      }
+      // Always ensure each new school has its own Graduated class.
+      await this.ensureGraduatedClassForSchool(manager, school.id);
 
       return {
         school,
@@ -301,18 +331,9 @@ export class SchoolsService {
 
   // Seed default data for new schools
   async seedDefaults(schoolId: string) {
-    const classRepo = this.dataSource.getRepository(Class);
-    
-    // Create the default "Graduated" class for the school
-    const graduatedClass = classRepo.create({
-      name: 'Graduated',
-      numericalName: 999, // Very high number to ensure it's always last
-      description: 'Default graduation class for completed students',
-      isActive: true,
-      schoolId: schoolId,
+    const graduatedClass = await this.dataSource.transaction(async (manager) => {
+      return this.ensureGraduatedClassForSchool(manager, schoolId);
     });
-    
-    await classRepo.save(graduatedClass);
     
     return { 
       schoolId, 
