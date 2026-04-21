@@ -246,8 +246,16 @@ export class SchoolsService {
       });
       await credentialsRepo.save(adminCredentials);
 
-      // Always ensure each new school has its own Graduated class.
-      await this.ensureGraduatedClassForSchool(manager, school.id);
+      // On school creation, always create a school-scoped Graduated class directly.
+      const classRepo = manager.getRepository(Class) as Repository<Class>;
+      const graduatedClass = classRepo.create({
+        name: 'Graduated',
+        numericalName: 999,
+        description: 'Default graduation class for completed students',
+        isActive: true,
+        schoolId: school.id,
+      });
+      const savedGraduatedClass = await classRepo.save(graduatedClass);
 
       return {
         school,
@@ -270,6 +278,7 @@ export class SchoolsService {
         email,
         finalPrincipalUsername,
         principalEmail: principalUser.email,
+        graduatedClass: savedGraduatedClass,
       };
     });
 
@@ -324,6 +333,12 @@ export class SchoolsService {
         username: result.finalPrincipalUsername,
         email: result.principal.email,
         password: result.principal.tempPassword,
+      },
+      graduatedClass: {
+        id: result.graduatedClass.id,
+        name: result.graduatedClass.name,
+        schoolId: result.graduatedClass.schoolId,
+        numericalName: result.graduatedClass.numericalName,
       },
       seeded: result.seeded,
     };
