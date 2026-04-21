@@ -564,9 +564,6 @@ export class SchoolsService {
     const school = await this.findOne(id);
 
     return this.dataSource.transaction(async (manager) => {
-      const aliasPredicate = (predicate: string, alias: string) =>
-        predicate.replace(/\bt\./g, `${alias}.`);
-
       const schoolTablesRows: Array<{ table_name: string }> = await manager.query(
         `
           SELECT DISTINCT c.table_name
@@ -601,10 +598,6 @@ export class SchoolsService {
            AND ccu.table_schema = tc.table_schema
           WHERE tc.constraint_type = 'FOREIGN KEY'
             AND tc.table_schema = 'public'
-            AND (
-              tc.table_name = ANY($1::text[])
-              OR ccu.table_name = ANY($1::text[])
-            )
             AND tc.constraint_name IN (
               SELECT tc2.constraint_name
               FROM information_schema.table_constraints tc2
@@ -617,38 +610,23 @@ export class SchoolsService {
               HAVING COUNT(*) = 1
             )
         `,
-        [Array.from(schoolIdTables)],
       );
 
-      // Build recursive predicates for tables related to the school via FK chains.
-      const predicates = new Map<string, string>();
-      for (const tableName of schoolIdTables) {
-        predicates.set(tableName, `t."schoolId" = $1`);
-      }
-
-      let changed = true;
-      while (changed) {
-        changed = false;
+      // Discover all related tables via FK reachability from tables that have schoolId.
+      const relatedTablesSet = new Set<string>(Array.from(schoolIdTables));
+      let discovered = true;
+      while (discovered) {
+        discovered = false;
         for (const fk of fkRows) {
-          const parentPredicate = predicates.get(fk.parent_table);
-          if (!parentPredicate) continue;
-
-          const parentTable = this.quoteIdentifier(fk.parent_table);
-          const parentCondition = aliasPredicate(parentPredicate, 'p');
-          const relationPredicate = `EXISTS (SELECT 1 FROM ${parentTable} p WHERE p.${this.quoteIdentifier(fk.parent_column)} = t.${this.quoteIdentifier(fk.child_column)} AND (${parentCondition}))`;
-
-          const existing = predicates.get(fk.child_table);
-          if (!existing) {
-            predicates.set(fk.child_table, relationPredicate);
-            changed = true;
-          } else if (!existing.includes(relationPredicate)) {
-            predicates.set(fk.child_table, `(${existing}) OR (${relationPredicate})`);
-            changed = true;
+          if (relatedTablesSet.has(fk.parent_table) && !relatedTablesSet.has(fk.child_table)) {
+            relatedTablesSet.add(fk.child_table);
+            discovered = true;
           }
         }
       }
 
-      const relatedTables = Array.from(predicates.keys()).filter((t) => t !== 'schools');
+      relatedTablesSet.delete('schools');
+      const relatedTables = Array.from(relatedTablesSet);
 
       // Order related tables so child tables are deleted before parent tables.
       const indegree = new Map<string, number>();
@@ -687,9 +665,59 @@ export class SchoolsService {
         if (!orderedTables.includes(tableName)) orderedTables.push(tableName);
       }
 
+      // Build bounded predicates with cycle protection.
+      const outgoingByChild = new Map<string, Array<{ parentTable: string; childColumn: string; parentColumn: string }>>();
+      for (const fk of fkRows) {
+        if (!relatedTablesSet.has(fk.child_table) || !relatedTablesSet.has(fk.parent_table)) continue;
+        if (!outgoingByChild.has(fk.child_table)) {
+          outgoingByChild.set(fk.child_table, []);
+        }
+        outgoingByChild.get(fk.child_table)!.push({
+          parentTable: fk.parent_table,
+          childColumn: fk.child_column,
+          parentColumn: fk.parent_column,
+        });
+      }
+
+      const predicateMemo = new Map<string, string>();
+      const buildPredicate = (tableName: string, alias: string, stack: Set<string>): string => {
+        const memoKey = `${tableName}|${alias}`;
+        if (predicateMemo.has(memoKey)) {
+          return predicateMemo.get(memoKey)!;
+        }
+
+        if (stack.has(tableName)) {
+          return 'FALSE';
+        }
+
+        const terms = new Set<string>();
+
+        if (schoolIdTables.has(tableName)) {
+          terms.add(`${alias}."schoolId" = $1`);
+        }
+
+        const nextStack = new Set(stack);
+        nextStack.add(tableName);
+
+        const relations = outgoingByChild.get(tableName) || [];
+        relations.forEach((rel, index) => {
+          const parentAlias = `p_${tableName.replace(/[^a-zA-Z0-9_]/g, '_')}_${index}`;
+          const parentPredicate = buildPredicate(rel.parentTable, parentAlias, nextStack);
+          if (parentPredicate !== 'FALSE') {
+            const parentTableQuoted = this.quoteIdentifier(rel.parentTable);
+            const clause = `EXISTS (SELECT 1 FROM ${parentTableQuoted} ${parentAlias} WHERE ${parentAlias}.${this.quoteIdentifier(rel.parentColumn)} = ${alias}.${this.quoteIdentifier(rel.childColumn)} AND (${parentPredicate}))`;
+            terms.add(clause);
+          }
+        });
+
+        const predicate = terms.size > 0 ? Array.from(terms).join(' OR ') : 'FALSE';
+        predicateMemo.set(memoKey, predicate);
+        return predicate;
+      };
+
       for (const tableName of orderedTables) {
-        const predicate = predicates.get(tableName);
-        if (!predicate) continue;
+        const predicate = buildPredicate(tableName, 't', new Set());
+        if (predicate === 'FALSE') continue;
         const quotedTable = this.quoteIdentifier(tableName);
         await manager.query(`DELETE FROM ${quotedTable} t WHERE ${predicate}`, [id]);
       }
